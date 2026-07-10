@@ -29,6 +29,19 @@ def load_model(model_key: str, device_map: str = "auto", dtype: torch.dtype = to
     hf_id = cfg["hf_id"]
     revision = cfg["revision"]
 
+    if torch.cuda.is_available():
+        print(
+            f"[model_loader] CUDA available — {torch.cuda.get_device_name(0)}. "
+            f"device_map='{device_map}' will place model layers on GPU."
+        )
+    else:
+        print(
+            "[model_loader] WARNING: CUDA NOT available — model will run on CPU, "
+            "which is impractically slow for 8B-class models. If this machine has "
+            "an NVIDIA GPU, you likely installed the CPU-only torch wheel; see "
+            "requirements.txt for the CUDA install command."
+        )
+
     if cfg["gated"] and revision is None:
         print(
             f"[model_loader] WARNING: '{model_key}' is a gated model. Make sure you have "

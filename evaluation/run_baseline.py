@@ -15,6 +15,8 @@ import csv
 import json
 import time
 
+import torch
+
 from config import CORPORA, MODELS, RESULTS_DIR, SEED
 from data.build_index import build_index
 from data.normalize import extract_gold_answers, extract_question
@@ -26,6 +28,16 @@ from harness.pipeline import run_query
 def run_baseline_sweep(model_keys=None, corpus_names=None, split="dev"):
     model_keys = model_keys or list(MODELS)
     corpus_names = corpus_names or list(CORPORA)
+
+    # Surface the compute device up front — a full sweep on CPU would take
+    # days and should never start silently.
+    if torch.cuda.is_available():
+        print(f"[baseline] Running on GPU: {torch.cuda.get_device_name(0)} "
+              f"(CUDA {torch.version.cuda})")
+    else:
+        print("[baseline] WARNING: CUDA not available — the sweep will run on CPU. "
+              "For 4 models x 3 corpora this is impractical. Install the CUDA torch "
+              "wheel (see requirements.txt) or run on a GPU machine.")
 
     raw_path = RESULTS_DIR / "baseline_raw.jsonl"
     summary_rows = []
@@ -91,7 +103,6 @@ def run_baseline_sweep(model_keys=None, corpus_names=None, split="dev"):
                       f"EM={mean_em:.4f}  F1={mean_f1:.4f}  n={len(em_scores)}")
 
             del model  # free memory before loading the next model
-            import torch
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 

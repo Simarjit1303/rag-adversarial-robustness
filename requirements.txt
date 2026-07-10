@@ -1,4 +1,12 @@
 # Verified current and confirmed Python 3.14-compatible as of July 2026
+
+# GPU NOTE — on Windows, `pip install torch` gives the CPU-ONLY build
+# (version shows as e.g. "2.13.0+cpu" and torch.cuda.is_available() is False).
+# For NVIDIA GPU support install from the CUDA wheel index instead, e.g.:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128
+# (pick the cuXXX tag matching your driver; see pytorch.org/get-started).
+# On Linux the default PyPI wheel already bundles CUDA. The harness prints a
+# loud warning at startup if it detects a CPU-only install.
 torch>=2.13
 transformers>=5.13
 accelerate>=1.0
