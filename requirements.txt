@@ -1,10 +1,26 @@
+# Verified current and confirmed Python 3.14-compatible as of July 2026
 torch>=2.13
-transformers>=5.0
+transformers>=5.13
 accelerate>=1.0
 sentence-transformers>=3.3
-faiss-cpu>=1.14
 datasets>=3.0
 langchain>=0.3
 langchain-community>=0.3
 huggingface_hub>=0.28
 numpy>=2.1
+
+# CAUTION — read before trusting this pin:
+# faiss-cpu is a compiled C++ extension. Python 3.14 (cp314) wheels exist as
+# of 1.13.2, confirmed for Windows only. Linux (manylinux) cp314 wheel
+# availability is NOT confirmed for 1.13.2 or the newer 1.14.x line. If this
+# falls back to a source build inside python:3.14-slim, it needs SWIG + BLAS
+# dev headers that the current Dockerfile does not install, and the build
+# will likely fail.
+#
+# BEFORE trusting this line, run inside the actual container:
+#   pip install faiss-cpu>=1.13.2
+# If it fails to find a wheel:
+#   Option A: add `swig libopenblas-dev` to the Dockerfile's apt-get line
+#   Option B: drop the base image to python:3.13-slim, where faiss-cpu wheel
+#             support is confirmed end to end
+faiss-cpu>=1.13.2
