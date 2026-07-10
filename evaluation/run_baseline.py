@@ -30,7 +30,9 @@ def run_baseline_sweep(model_keys=None, corpus_names=None, split="dev"):
     raw_path = RESULTS_DIR / "baseline_raw.jsonl"
     summary_rows = []
 
-    with raw_path.open("w") as raw_f:
+    # Explicit encoding: Python 3.14 still defaults to the locale encoding
+    # (cp1252 on Windows), which would corrupt non-ASCII model output.
+    with raw_path.open("w", encoding="utf-8") as raw_f:
         for model_key in model_keys:
             print(f"\n=== Loading {model_key} ===")
             model, tokenizer = load_model(model_key)
@@ -68,7 +70,7 @@ def run_baseline_sweep(model_keys=None, corpus_names=None, split="dev"):
                         "exact_match": em,
                         "f1": f1,
                         "retrieved_doc_ids": result["retrieved_doc_ids"],
-                    }) + "\n")
+                    }, ensure_ascii=False) + "\n")
 
                     if (i + 1) % 50 == 0:
                         print(f"  {i + 1}/{len(records)} done "
@@ -94,7 +96,7 @@ def run_baseline_sweep(model_keys=None, corpus_names=None, split="dev"):
                 torch.cuda.empty_cache()
 
     summary_path = RESULTS_DIR / "baseline_summary.csv"
-    with summary_path.open("w", newline="") as f:
+    with summary_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=["model", "corpus", "n", "exact_match", "f1"])
         writer.writeheader()
         writer.writerows(summary_rows)

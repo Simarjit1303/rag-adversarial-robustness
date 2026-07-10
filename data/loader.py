@@ -37,7 +37,10 @@ def load_corpus(name: str, split: str = "dev"):
     cache_path = DATA_DIR / f"{name}_{split}.jsonl"
 
     if cache_path.exists():
-        return [json.loads(line) for line in cache_path.open()]
+        # Explicit encoding: Python 3.14 still defaults to the locale encoding
+        # (cp1252 on Windows), which corrupts non-ASCII corpus text.
+        with cache_path.open(encoding="utf-8") as f:
+            return [json.loads(line) for line in f]
 
     n = cfg["dev_n"] if split == "dev" else cfg["eval_n"]
 
@@ -49,9 +52,9 @@ def load_corpus(name: str, split: str = "dev"):
     sampled = _sample(raw, n)
 
     records = [dict(row) for row in sampled]
-    with cache_path.open("w") as f:
+    with cache_path.open("w", encoding="utf-8") as f:
         for r in records:
-            f.write(json.dumps(r) + "\n")
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
     print(f"[loader] {name}/{split}: cached {len(records)} records -> {cache_path}")
     return records

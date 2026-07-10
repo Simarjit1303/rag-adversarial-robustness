@@ -14,12 +14,12 @@ def normalize_text(s: str) -> str:
     return " ".join(s.split())
 
 
-def exact_match(prediction: str, gold_answers: list) -> int:
+def exact_match(prediction: str, gold_answers: list[str]) -> int:
     pred = normalize_text(prediction)
     return int(any(pred == normalize_text(g) for g in gold_answers))
 
 
-def f1_score(prediction: str, gold_answers: list) -> float:
+def f1_score(prediction: str, gold_answers: list[str]) -> float:
     pred_tokens = normalize_text(prediction).split()
     best = 0.0
     for gold in gold_answers:
@@ -35,7 +35,7 @@ def f1_score(prediction: str, gold_answers: list) -> float:
     return best
 
 
-def recall_at_k(retrieved_doc_ids: list, relevant_doc_ids: set, k: int = 5) -> float:
+def recall_at_k(retrieved_doc_ids: list[int], relevant_doc_ids: set[int], k: int = 5) -> float:
     if not relevant_doc_ids:
         return float("nan")  # undefined when there's no labelled relevant doc to check against
     hit = any(doc_id in relevant_doc_ids for doc_id in retrieved_doc_ids[:k])

@@ -20,7 +20,8 @@ numpy>=2.1
 # BEFORE trusting this line, run inside the actual container:
 #   pip install faiss-cpu>=1.13.2
 # If it fails to find a wheel:
-#   Option A: add `swig libopenblas-dev` to the Dockerfile's apt-get line
+#   Option A (APPLIED): the Dockerfile's apt-get line now installs
+#             `swig libopenblas-dev`, so a source-build fallback can succeed
 #   Option B: drop the base image to python:3.13-slim, where faiss-cpu wheel
 #             support is confirmed end to end
 faiss-cpu>=1.13.2

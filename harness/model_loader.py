@@ -20,7 +20,7 @@ except ImportError:
     _HAS_MISTRAL3 = False
 
 
-def load_model(model_key: str, device_map: str = "auto", dtype=torch.bfloat16):
+def load_model(model_key: str, device_map: str = "auto", dtype: torch.dtype = torch.bfloat16):
     """Returns (model, tokenizer) for the given key in config.MODELS."""
     if model_key not in MODELS:
         raise ValueError(f"Unknown model '{model_key}'. Options: {list(MODELS)}")
@@ -53,12 +53,14 @@ def load_model(model_key: str, device_map: str = "auto", dtype=torch.bfloat16):
                 "check the model card on HuggingFace for the minimum version and "
                 "upgrade with `pip install -U transformers`."
             )
+        # transformers v5 renamed `torch_dtype` to `dtype` (the old kwarg was
+        # removed) — requirements.txt pins transformers>=5.13, so use `dtype`.
         model = Mistral3ForConditionalGeneration.from_pretrained(
-            hf_id, revision=revision, device_map=device_map, torch_dtype=dtype
+            hf_id, revision=revision, device_map=device_map, dtype=dtype
         )
     else:
         model = AutoModelForCausalLM.from_pretrained(
-            hf_id, revision=revision, device_map=device_map, torch_dtype=dtype
+            hf_id, revision=revision, device_map=device_map, dtype=dtype
         )
 
     model.eval()
