@@ -13,6 +13,7 @@ Run this AFTER data/loader.py and data/build_index.py have been run once
 
 import csv
 import json
+import os
 import time
 
 import torch
@@ -26,8 +27,17 @@ from harness.pipeline import run_query
 
 
 def run_baseline_sweep(model_keys=None, corpus_names=None, split="dev"):
+    # RAG_MODELS lets a deployment pick models without a code change, e.g.
+    # RAG_MODELS="qwen3-8b,phi-4-mini" — useful when a gated model (Llama)
+    # is still awaiting HF access approval.
+    if model_keys is None and os.environ.get("RAG_MODELS"):
+        model_keys = [m.strip() for m in os.environ["RAG_MODELS"].split(",") if m.strip()]
     model_keys = model_keys or list(MODELS)
     corpus_names = corpus_names or list(CORPORA)
+
+    unknown = [m for m in model_keys if m not in MODELS]
+    if unknown:
+        raise ValueError(f"Unknown model keys {unknown}. Options: {list(MODELS)}")
 
     # Surface the compute device up front — a full sweep on CPU would take
     # days and should never start silently.
@@ -47,7 +57,14 @@ def run_baseline_sweep(model_keys=None, corpus_names=None, split="dev"):
     with raw_path.open("w", encoding="utf-8") as raw_f:
         for model_key in model_keys:
             print(f"\n=== Loading {model_key} ===")
-            model, tokenizer = load_model(model_key)
+            try:
+                model, tokenizer = load_model(model_key)
+            except Exception as e:
+                # One model failing to load (gated repo, missing class, OOM)
+                # must not kill the whole paid sweep — skip and keep going.
+                print(f"[baseline] SKIPPING {model_key}: failed to load — "
+                      f"{type(e).__name__}: {e}")
+                continue
 
             for corpus_name in corpus_names:
                 print(f"--- {model_key} x {corpus_name} ---")
