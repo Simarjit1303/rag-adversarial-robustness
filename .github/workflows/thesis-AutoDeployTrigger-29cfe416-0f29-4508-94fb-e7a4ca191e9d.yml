@@ -34,9 +34,7 @@ jobs:
         uses: azure/container-apps-deploy-action@v2
         with:
           appSourcePath: ${{ github.workspace }}
-          registryUrl: 
-          registryUsername: ${{ secrets.THESIS_REGISTRY_USERNAME }}
-          registryPassword: ${{ secrets.THESIS_REGISTRY_PASSWORD }}
           containerAppName: thesis
           resourceGroup: Master-Thesis
           imageToBuild: thesis:${{ github.sha }}
+          dockerfilePath: Dockerfile
