@@ -45,12 +45,12 @@ jobs:
         with:
           inlineScript: |
             az extension add --name containerapp --upgrade
-            az containerapp registry set \
-              --name thesis \
-              --resource-group Master-Thesis \
-              --server ghcr.io \
-              --username ${{ github.actor }} \
-              --password ${{ secrets.GITHUB_TOKEN }}
+            # NOTE: no `az containerapp registry set` here on purpose. The GHCR
+            # package is public, so pulls are anonymous. Storing GITHUB_TOKEN as
+            # the registry password breaks pulls after the workflow ends (the
+            # token expires) — that caused the 2026-07-10 ImagePullUnauthorized
+            # outage. If the package ever goes private again, use a classic PAT
+            # with read:packages stored as a repo secret instead.
             az containerapp update \
               --name thesis \
               --resource-group Master-Thesis \
