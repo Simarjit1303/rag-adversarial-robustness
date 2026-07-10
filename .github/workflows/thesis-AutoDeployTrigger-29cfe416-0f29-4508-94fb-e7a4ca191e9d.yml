@@ -14,13 +14,13 @@ jobs:
     permissions: 
       id-token: write
       contents: read
-      packages: write  # Gives GitHub permission to save your container image
+      packages: write
 
     steps:
       - name: Checkout to the branch
         uses: actions/checkout@v4
 
-      # Step 1: Log directly into GitHub's completely free Container Registry
+      # Step 1: Log directly into GitHub Container Registry
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -28,14 +28,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Step 2: Build the image using your Dockerfile and save it to GitHub
+      # Step 2: Build the image with your lowercase username forced
       - name: Build and push image to GHCR
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
           push: true
-          tags: ghcr.io/${{ github.repository }}/thesis:${{ github.sha }}
+          tags: ghcr.io/simarjit1303/rag-adversarial-robustness/thesis:${{ github.sha }}
 
       # Step 3: Log into your Azure account
       - name: Azure Login
@@ -45,7 +45,7 @@ jobs:
           tenant-id: ${{ secrets.THESIS_AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.THESIS_AZURE_SUBSCRIPTION_ID }}
 
-      # Step 4: Tell Azure to just pull the finished image directly from GitHub
+      # Step 4: Tell Azure to pull the finished, lowercase image from GitHub
       - name: Deploy to Azure Container Apps
         uses: azure/CLI@v2
         with:
@@ -54,4 +54,4 @@ jobs:
             az containerapp update \
               --name thesis \
               --resource-group Master-Thesis \
-              --image ghcr.io/${{ github.repository.name }}/thesis:${{ github.sha }}
+              --image ghcr.io/simarjit1303/rag-adversarial-robustness/thesis:${{ github.sha }}
