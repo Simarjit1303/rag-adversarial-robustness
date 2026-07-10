@@ -45,12 +45,22 @@ jobs:
           tenant-id: ${{ secrets.THESIS_AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.THESIS_AZURE_SUBSCRIPTION_ID }}
 
-      # Step 4: Tell Azure to pull the finished, lowercase image from GitHub
+      # Step 4: Link GHCR credentials to Azure and pull the image
       - name: Deploy to Azure Container Apps
         uses: azure/CLI@v2
         with:
           inlineScript: |
             az extension add --name containerapp --upgrade
+            
+            # 1. Give Azure your GitHub token so it is authorized to pull from GHCR
+            az containerapp registry set \
+              --name thesis \
+              --resource-group Master-Thesis \
+              --server ghcr.io \
+              --username ${{ github.actor }} \
+              --password ${{ secrets.GITHUB_TOKEN }}
+            
+            # 2. Deploy the updated image
             az containerapp update \
               --name thesis \
               --resource-group Master-Thesis \
