@@ -10,6 +10,7 @@ import pickle
 
 import faiss
 import numpy as np
+import torch
 from sentence_transformers import SentenceTransformer
 
 from config import EMBEDDING_MODEL, INDEX_DIR
@@ -22,7 +23,19 @@ _embedder = None
 def _get_embedder():
     global _embedder
     if _embedder is None:
-        _embedder = SentenceTransformer(EMBEDDING_MODEL)
+        # Explicit device selection so embedding runs on GPU whenever CUDA is
+        # present (SentenceTransformer would pick it up anyway, but this makes
+        # the choice visible in logs and fails loudly on CPU-only installs).
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        if device == "cpu":
+            print(
+                "[index] WARNING: CUDA not available — embedding on CPU. This works "
+                "but is slow for 10k-doc corpora; see requirements.txt for the "
+                "CUDA-enabled torch install."
+            )
+        else:
+            print(f"[index] Embedding on GPU: {torch.cuda.get_device_name(0)}")
+        _embedder = SentenceTransformer(EMBEDDING_MODEL, device=device)
     return _embedder
 
 

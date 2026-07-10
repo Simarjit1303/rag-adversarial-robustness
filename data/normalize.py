@@ -46,7 +46,7 @@ def extract_question(corpus_name: str, record: dict) -> str:
     raise ValueError(f"No normalization rule for corpus '{corpus_name}'")
 
 
-def extract_gold_answers(corpus_name: str, record: dict) -> list:
+def extract_gold_answers(corpus_name: str, record: dict) -> list[str]:
     if corpus_name == "nq_open":
         return record.get("answer", [])
     if corpus_name == "hotpot_qa":

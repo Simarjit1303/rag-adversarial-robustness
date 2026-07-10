@@ -12,6 +12,9 @@ Section references in comments point back to that document.
 
 ## 1. Setup
 
+Requires **Python 3.14** (the Dockerfile pins `python:3.14-slim`; pinned
+package versions in `requirements.txt` are chosen for cp314 wheel support).
+
 ```bash
 git init
 python -m venv .venv && source .venv/bin/activate   # or your preferred env manager

@@ -20,7 +20,7 @@ except ImportError:
     _HAS_MISTRAL3 = False
 
 
-def load_model(model_key: str, device_map: str = "auto", dtype=torch.bfloat16):
+def load_model(model_key: str, device_map: str = "auto", dtype: torch.dtype = torch.bfloat16):
     """Returns (model, tokenizer) for the given key in config.MODELS."""
     if model_key not in MODELS:
         raise ValueError(f"Unknown model '{model_key}'. Options: {list(MODELS)}")
@@ -28,6 +28,19 @@ def load_model(model_key: str, device_map: str = "auto", dtype=torch.bfloat16):
     cfg = MODELS[model_key]
     hf_id = cfg["hf_id"]
     revision = cfg["revision"]
+
+    if torch.cuda.is_available():
+        print(
+            f"[model_loader] CUDA available — {torch.cuda.get_device_name(0)}. "
+            f"device_map='{device_map}' will place model layers on GPU."
+        )
+    else:
+        print(
+            "[model_loader] WARNING: CUDA NOT available — model will run on CPU, "
+            "which is impractically slow for 8B-class models. If this machine has "
+            "an NVIDIA GPU, you likely installed the CPU-only torch wheel; see "
+            "requirements.txt for the CUDA install command."
+        )
 
     if cfg["gated"] and revision is None:
         print(
@@ -53,12 +66,14 @@ def load_model(model_key: str, device_map: str = "auto", dtype=torch.bfloat16):
                 "check the model card on HuggingFace for the minimum version and "
                 "upgrade with `pip install -U transformers`."
             )
+        # transformers v5 renamed `torch_dtype` to `dtype` (the old kwarg was
+        # removed) — requirements.txt pins transformers>=5.13, so use `dtype`.
         model = Mistral3ForConditionalGeneration.from_pretrained(
-            hf_id, revision=revision, device_map=device_map, torch_dtype=dtype
+            hf_id, revision=revision, device_map=device_map, dtype=dtype
         )
     else:
         model = AutoModelForCausalLM.from_pretrained(
-            hf_id, revision=revision, device_map=device_map, torch_dtype=dtype
+            hf_id, revision=revision, device_map=device_map, dtype=dtype
         )
 
     model.eval()

@@ -1,4 +1,12 @@
 # Verified current and confirmed Python 3.14-compatible as of July 2026
+
+# GPU NOTE — on Windows, `pip install torch` gives the CPU-ONLY build
+# (version shows as e.g. "2.13.0+cpu" and torch.cuda.is_available() is False).
+# For NVIDIA GPU support install from the CUDA wheel index instead, e.g.:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128
+# (pick the cuXXX tag matching your driver; see pytorch.org/get-started).
+# On Linux the default PyPI wheel already bundles CUDA. The harness prints a
+# loud warning at startup if it detects a CPU-only install.
 torch>=2.13
 transformers>=5.13
 accelerate>=1.0
@@ -20,7 +28,8 @@ numpy>=2.1
 # BEFORE trusting this line, run inside the actual container:
 #   pip install faiss-cpu>=1.13.2
 # If it fails to find a wheel:
-#   Option A: add `swig libopenblas-dev` to the Dockerfile's apt-get line
+#   Option A (APPLIED): the Dockerfile's apt-get line now installs
+#             `swig libopenblas-dev`, so a source-build fallback can succeed
 #   Option B: drop the base image to python:3.13-slim, where faiss-cpu wheel
 #             support is confirmed end to end
 faiss-cpu>=1.13.2
