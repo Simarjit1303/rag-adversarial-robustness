@@ -1,28 +1,43 @@
 name: Trigger auto deployment for thesis
 
-# When this action will be executed
 on:
-  # Automatically trigger it when changes are detected in the repo
   push:
     branches: 
       - main
     paths:
       - '**'
-
-  # Allow manual trigger 
   workflow_dispatch:      
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
     permissions: 
-      id-token: write #This is required for requesting the OIDC JWT Token
-      contents: read #Required when GH token is used to authenticate with private repo
+      id-token: write
+      contents: read
+      packages: write  # Gives GitHub permission to save your container image
 
     steps:
       - name: Checkout to the branch
         uses: actions/checkout@v4
 
+      # Step 1: Log directly into GitHub's completely free Container Registry
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Step 2: Build the image using your Dockerfile and save it to GitHub
+      - name: Build and push image to GHCR
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository }}/thesis:${{ github.sha }}
+
+      # Step 3: Log into your Azure account
       - name: Azure Login
         uses: azure/login@v2
         with:
@@ -30,11 +45,13 @@ jobs:
           tenant-id: ${{ secrets.THESIS_AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.THESIS_AZURE_SUBSCRIPTION_ID }}
 
-      - name: Build and push container image to registry
-        uses: azure/container-apps-deploy-action@v2
+      # Step 4: Tell Azure to just pull the finished image directly from GitHub
+      - name: Deploy to Azure Container Apps
+        uses: azure/CLI@v2
         with:
-          appSourcePath: ${{ github.workspace }}
-          containerAppName: thesis
-          resourceGroup: Master-Thesis
-          imageToBuild: thesis:${{ github.sha }}
-          dockerfilePath: Dockerfile
+          inlineScript: |
+            az extension add --name containerapp --upgrade
+            az containerapp update \
+              --name thesis \
+              --resource-group Master-Thesis \
+              --image ghcr.io/${{ github.repository.name }}/thesis:${{ github.sha }}
