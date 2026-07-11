@@ -22,7 +22,7 @@ import torch
 from config import CORPORA, MODELS
 from data.build_index import build_index
 from data.normalize import extract_gold_answers, extract_question
-from evaluation.metrics import exact_match, f1_score
+from evaluation.metrics import contains_answer, exact_match, f1_score
 from harness.model_loader import load_model
 from harness.pipeline import run_query
 
@@ -73,6 +73,7 @@ def main():
                     "generated_answer": answer,
                     "exact_match": exact_match(answer, gold),
                     "f1": round(f1_score(answer, gold), 4),
+                    "contains_answer": contains_answer(answer, gold),
                 }, ensure_ascii=False))
                 shown += 1
 
