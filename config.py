@@ -46,10 +46,11 @@ SEED = 42
 # ---------------------------------------------------------------------------
 # Target models
 #
-# "revision" is left as None on purpose. Before running anything you intend
-# to report in the dissertation, pin each one to the exact commit hash shown
-# on its HuggingFace "Files and versions" tab and fill it in here. That hash
-# belongs in the reproducibility appendix, not "latest".
+# "revision" pins each model to the exact HuggingFace commit that was
+# current on 2026-07-11 (the hash from each repo's "Files and versions"
+# tab / API `sha` field). These hashes belong in the reproducibility
+# appendix. Do NOT bump them mid-study — every phase must load byte-identical
+# weights, or the Phase 4 significance tests compare different models.
 #
 # loader: which class harness/model_loader.py should use to load it.
 #   "causal_lm" -> standard AutoModelForCausalLM (Llama, Qwen3, Phi-4-mini)
@@ -62,7 +63,7 @@ SEED = 42
 MODELS = {
     "llama-3.1-8b": {
         "hf_id": "meta-llama/Llama-3.1-8B-Instruct",
-        "revision": None,
+        "revision": "0e9e39f249a16976918f6564b8830bc894c89659",  # main @ 2026-07-11
         "loader": "causal_lm",
         "gated": True,  # requires accepting Meta's license on the model page first
         "license": "Llama 3.1 Community License",
@@ -70,7 +71,7 @@ MODELS = {
     },
     "qwen3-8b": {
         "hf_id": "Qwen/Qwen3-8B",
-        "revision": None,
+        "revision": "b968826d9c46dd6066d109eabc6255188de91218",  # main @ 2026-07-11
         "loader": "causal_lm",
         "gated": False,
         "license": "Apache-2.0",
@@ -78,7 +79,7 @@ MODELS = {
     },
     "phi-4-mini": {
         "hf_id": "microsoft/Phi-4-mini-instruct",
-        "revision": None,
+        "revision": "cfbefacb99257ffa30c83adab238a50856ac3083",  # main @ 2026-07-11
         "loader": "causal_lm",
         "gated": False,
         "license": "MIT",
@@ -86,7 +87,7 @@ MODELS = {
     },
     "ministral-3-8b": {
         "hf_id": "mistralai/Ministral-3-8B-Instruct-2512",
-        "revision": None,
+        "revision": "aae06a2125402f2a89efbacf0881623c15a711d0",  # main @ 2026-07-11
         "loader": "mistral3",
         "gated": False,
         "license": "Apache-2.0",

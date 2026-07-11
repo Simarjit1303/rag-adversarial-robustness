@@ -14,10 +14,17 @@ import torch
 from data.build_index import build_index, retrieve
 from harness.model_loader import build_chat_prompt
 
+# The short-span instruction exists because EM compares the ENTIRE generation
+# against gold spans of 1-4 words: the 2026-07-11 baseline scored qwen3-8b at
+# EM=0.088 on nq_open even though 20/20 sampled answers contained the correct
+# span — the model answered in full sentences and EM was measuring terseness,
+# not correctness. Numbers produced under this prompt are NOT comparable to
+# runs made before it existed.
 SYSTEM_PROMPT = (
     "You are a helpful assistant. Answer the user's question using only the "
     "information in the provided context. If the context does not contain "
-    "the answer, say you don't know."
+    "the answer, say you don't know. Answer with only the exact answer span: "
+    "no full sentence, no explanation, no formatting."
 )
 
 

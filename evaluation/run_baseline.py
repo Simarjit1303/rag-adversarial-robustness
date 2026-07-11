@@ -21,7 +21,7 @@ import torch
 from config import CORPORA, MODELS, RESULTS_DIR, SEED
 from data.build_index import build_index
 from data.normalize import extract_gold_answers, extract_question
-from evaluation.metrics import exact_match, f1_score
+from evaluation.metrics import contains_answer, exact_match, f1_score
 from harness.model_loader import load_model
 from harness.pipeline import run_query
 
@@ -70,7 +70,7 @@ def run_baseline_sweep(model_keys=None, corpus_names=None, split="dev"):
                 print(f"--- {model_key} x {corpus_name} ---")
                 index, records = build_index(corpus_name, split=split)
 
-                em_scores, f1_scores = [], []
+                em_scores, f1_scores, ca_scores = [], [], []
                 start = time.time()
 
                 for i, record in enumerate(records):
@@ -86,8 +86,10 @@ def run_baseline_sweep(model_keys=None, corpus_names=None, split="dev"):
 
                     em = exact_match(result["generated_answer"], gold)
                     f1 = f1_score(result["generated_answer"], gold)
+                    ca = contains_answer(result["generated_answer"], gold)
                     em_scores.append(em)
                     f1_scores.append(f1)
+                    ca_scores.append(ca)
 
                     raw_f.write(json.dumps({
                         "model": model_key,
@@ -98,6 +100,7 @@ def run_baseline_sweep(model_keys=None, corpus_names=None, split="dev"):
                         "generated_answer": result["generated_answer"],
                         "exact_match": em,
                         "f1": f1,
+                        "contains_answer": ca,
                         "retrieved_doc_ids": result["retrieved_doc_ids"],
                     }, ensure_ascii=False) + "\n")
 
@@ -107,6 +110,7 @@ def run_baseline_sweep(model_keys=None, corpus_names=None, split="dev"):
 
                 mean_em = sum(em_scores) / len(em_scores) if em_scores else float("nan")
                 mean_f1 = sum(f1_scores) / len(f1_scores) if f1_scores else float("nan")
+                mean_ca = sum(ca_scores) / len(ca_scores) if ca_scores else float("nan")
 
                 summary_rows.append({
                     "model": model_key,
@@ -114,10 +118,12 @@ def run_baseline_sweep(model_keys=None, corpus_names=None, split="dev"):
                     "n": len(em_scores),
                     "exact_match": round(mean_em, 4),
                     "f1": round(mean_f1, 4),
+                    "contains_answer": round(mean_ca, 4),
                 })
 
                 print(f"  {model_key} x {corpus_name}: "
-                      f"EM={mean_em:.4f}  F1={mean_f1:.4f}  n={len(em_scores)}")
+                      f"EM={mean_em:.4f}  F1={mean_f1:.4f}  "
+                      f"Contains={mean_ca:.4f}  n={len(em_scores)}")
 
             del model  # free memory before loading the next model
             if torch.cuda.is_available():
@@ -125,7 +131,9 @@ def run_baseline_sweep(model_keys=None, corpus_names=None, split="dev"):
 
     summary_path = RESULTS_DIR / "baseline_summary.csv"
     with summary_path.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["model", "corpus", "n", "exact_match", "f1"])
+        writer = csv.DictWriter(
+            f, fieldnames=["model", "corpus", "n", "exact_match", "f1", "contains_answer"]
+        )
         writer.writeheader()
         writer.writerows(summary_rows)
 

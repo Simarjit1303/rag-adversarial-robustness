@@ -56,7 +56,14 @@ def load_model(model_key: str, device_map: str = "auto", dtype: torch.dtype = to
             f"to report in the dissertation."
         )
 
-    tokenizer = AutoTokenizer.from_pretrained(hf_id, revision=revision)
+    tokenizer_kwargs = {}
+    if cfg["loader"] == "mistral3":
+        # Without this flag, transformers warns that Ministral's tokenizer
+        # loads with an incorrect regex pattern and tokenizes incorrectly
+        # (observed on the 2026-07-11 A100 debug run; see
+        # https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84).
+        tokenizer_kwargs["fix_mistral_regex"] = True
+    tokenizer = AutoTokenizer.from_pretrained(hf_id, revision=revision, **tokenizer_kwargs)
 
     if cfg["loader"] == "mistral3":
         if not _HAS_MISTRAL3:
