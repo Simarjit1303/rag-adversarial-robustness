@@ -40,9 +40,10 @@ def contains_answer(prediction: str, gold_answers: list[str]) -> int:
     Substring containment: 1 if any normalized gold answer appears inside the
     normalized prediction. DIAGNOSTIC ONLY — kept in the raw JSONL and debug
     output for audit purposes, never in the robustness-utility trade-off
-    matrix or any headline table. The reported hierarchy is: F1 primary
-    (utility headline), EM secondary (scored on the cleaned generation from
-    harness.pipeline.clean_generation), contains_answer diagnostic.
+    matrix or any headline table. The reported hierarchy is: f1_clean primary
+    (F1 on the cleaned generation from harness.pipeline.clean_generation),
+    EM secondary (also on the cleaned generation), f1_raw kept only for
+    comparability with pre-cleanup runs, contains_answer diagnostic.
 
     Exists because EM requires the whole generation to equal the gold span:
     the 2026-07-11 baseline scored qwen3-8b at EM=0.088 on nq_open while

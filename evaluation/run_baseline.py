@@ -6,11 +6,13 @@ Produces:
                                     full generated answer + metrics, kept for
                                     the McNemar significance tests in Phase 4
   results/baseline_summary.csv -- aggregated metrics per model x corpus.
-                                    F1 is the primary utility metric (headline
-                                    number in every summary table); EM is
-                                    secondary, scored on the cleaned string;
-                                    contains_answer is diagnostic only and
-                                    never feeds a headline table.
+                                    f1_clean (F1 on the cleaned string) is the
+                                    primary utility metric (headline number in
+                                    every summary table); EM, also on the
+                                    cleaned string, is secondary; f1_raw is
+                                    kept for comparability with pre-cleanup
+                                    runs; contains_answer is diagnostic only
+                                    and never feeds a headline table.
 
 Run this AFTER data/loader.py and data/build_index.py have been run once
 (or let it build indices on the fly the first time — slower, but works).
@@ -75,7 +77,7 @@ def run_baseline_sweep(model_keys=None, corpus_names=None, split="dev"):
                 print(f"--- {model_key} x {corpus_name} ---")
                 index, records = build_index(corpus_name, split=split)
 
-                em_scores, f1_scores, ca_scores = [], [], []
+                em_scores, f1_clean_scores, f1_raw_scores, ca_scores = [], [], [], []
                 start = time.time()
 
                 for i, record in enumerate(records):
@@ -89,14 +91,17 @@ def run_baseline_sweep(model_keys=None, corpus_names=None, split="dev"):
                         index=index, records=records,
                     )
 
-                    # F1 (primary) stays on the raw generation; EM (secondary)
-                    # is scored on the cleaned string so it measures content,
-                    # not formatting; contains_answer is diagnostic only.
+                    # f1_clean (primary) and EM (secondary) are scored on the
+                    # cleaned string so they measure content, not formatting;
+                    # f1_raw is kept for comparability with pre-cleanup runs;
+                    # contains_answer is diagnostic only.
                     em = exact_match(result["generated_answer_clean"], gold)
-                    f1 = f1_score(result["generated_answer"], gold)
+                    f1_clean = f1_score(result["generated_answer_clean"], gold)
+                    f1_raw = f1_score(result["generated_answer"], gold)
                     ca = contains_answer(result["generated_answer"], gold)
                     em_scores.append(em)
-                    f1_scores.append(f1)
+                    f1_clean_scores.append(f1_clean)
+                    f1_raw_scores.append(f1_raw)
                     ca_scores.append(ca)
 
                     raw_f.write(json.dumps({
@@ -107,7 +112,8 @@ def run_baseline_sweep(model_keys=None, corpus_names=None, split="dev"):
                         "gold_answers": gold,
                         "generated_answer": result["generated_answer"],
                         "generated_answer_clean": result["generated_answer_clean"],
-                        "f1": f1,
+                        "f1_clean": f1_clean,
+                        "f1_raw": f1_raw,
                         "exact_match": em,
                         "contains_answer_diagnostic": ca,
                         "retrieved_doc_ids": result["retrieved_doc_ids"],
@@ -118,20 +124,25 @@ def run_baseline_sweep(model_keys=None, corpus_names=None, split="dev"):
                               f"({time.time() - start:.0f}s elapsed)")
 
                 mean_em = sum(em_scores) / len(em_scores) if em_scores else float("nan")
-                mean_f1 = sum(f1_scores) / len(f1_scores) if f1_scores else float("nan")
+                mean_f1_clean = (sum(f1_clean_scores) / len(f1_clean_scores)
+                                 if f1_clean_scores else float("nan"))
+                mean_f1_raw = (sum(f1_raw_scores) / len(f1_raw_scores)
+                               if f1_raw_scores else float("nan"))
                 mean_ca = sum(ca_scores) / len(ca_scores) if ca_scores else float("nan")
 
                 summary_rows.append({
                     "model": model_key,
                     "corpus": corpus_name,
                     "n": len(em_scores),
-                    "f1": round(mean_f1, 4),
+                    "f1_clean": round(mean_f1_clean, 4),
                     "exact_match": round(mean_em, 4),
+                    "f1_raw": round(mean_f1_raw, 4),
                     "contains_answer_diagnostic": round(mean_ca, 4),
                 })
 
                 print(f"  {model_key} x {corpus_name}: "
-                      f"F1={mean_f1:.4f}  EM(clean)={mean_em:.4f}  "
+                      f"F1(clean)={mean_f1_clean:.4f}  EM(clean)={mean_em:.4f}  "
+                      f"F1(raw)={mean_f1_raw:.4f}  "
                       f"contains(diagnostic)={mean_ca:.4f}  n={len(em_scores)}")
 
             del model  # free memory before loading the next model
@@ -141,8 +152,8 @@ def run_baseline_sweep(model_keys=None, corpus_names=None, split="dev"):
     summary_path = RESULTS_DIR / "baseline_summary.csv"
     with summary_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(
-            f, fieldnames=["model", "corpus", "n", "f1", "exact_match",
-                           "contains_answer_diagnostic"]
+            f, fieldnames=["model", "corpus", "n", "f1_clean", "exact_match",
+                           "f1_raw", "contains_answer_diagnostic"]
         )
         writer.writeheader()
         writer.writerows(summary_rows)

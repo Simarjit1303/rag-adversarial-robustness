@@ -112,7 +112,14 @@ def check(samples, label, expected_em_raw, expected_em_clean, expected_contains)
     em_clean = sum(exact_match(clean_generation(raw), gold) for gold, raw in samples)
     contains = sum(contains_answer(raw, gold) for gold, raw in samples)
     n = len(samples)
-    print(f"{label}: EM_raw={em_raw}/{n} EM_clean={em_clean}/{n} contains={contains}/{n}")
+    # F1 raw vs clean is informational (not part of the PASS criteria):
+    # f1_clean became the primary utility metric in the phase1-metric-fixes
+    # follow-up, so the movement should be visible here.
+    f1_raw_mean = sum(f1(raw, gold) for gold, raw in samples) / n
+    f1_clean_mean = sum(f1(clean_generation(raw), gold) for gold, raw in samples) / n
+    print(f"{label}: EM_raw={em_raw}/{n} EM_clean={em_clean}/{n} "
+          f"F1_raw={f1_raw_mean:.3f} F1_clean={f1_clean_mean:.3f} "
+          f"contains={contains}/{n}")
     ok = (em_raw == expected_em_raw and em_clean == expected_em_clean and contains == expected_contains)
     print(f"  {'PASS' if ok else 'MISMATCH vs expected — check patch against phase1_fixes_task.md'}")
     return ok

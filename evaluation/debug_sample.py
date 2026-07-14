@@ -65,7 +65,8 @@ def main():
 
                 # json.dumps keeps newlines/tabs escaped, so the raw shape of
                 # the answer (prefixes, multi-line prose) stays visible in logs.
-                # EM is scored on the cleaned string, same as run_baseline;
+                # f1_clean and EM are scored on the cleaned string, same as
+                # run_baseline; f1_raw is kept for comparability;
                 # contains_answer is diagnostic only.
                 print(json.dumps({
                     "model": model_key,
@@ -75,7 +76,8 @@ def main():
                     "gold": gold,
                     "generated_answer": answer,
                     "generated_answer_clean": answer_clean,
-                    "f1": round(f1_score(answer, gold), 4),
+                    "f1_clean": round(f1_score(answer_clean, gold), 4),
+                    "f1_raw": round(f1_score(answer, gold), 4),
                     "exact_match": exact_match(answer_clean, gold),
                     "contains_answer_diagnostic": contains_answer(answer, gold),
                 }, ensure_ascii=False))
