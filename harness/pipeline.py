@@ -9,6 +9,8 @@ against exactly the same clean baseline, rather than a slightly different
 pipeline.
 """
 
+import re
+
 import torch
 
 from data.build_index import build_index, retrieve
@@ -26,6 +28,44 @@ SYSTEM_PROMPT = (
     "the answer, say you don't know. Answer with only the exact answer span: "
     "no full sentence, no explanation, no formatting."
 )
+
+PREAMBLE_PATTERNS = [
+    r'^the answer is[:\s]*',
+    r'^the correct answer is[:\s]*',
+    r'^according to (the )?(context|passage|document)[,:]?\s*',
+    r'^the context (provided |states|indicates|says)[^,\.]*(states|indicates|says|that)[,:]?\s*',
+]
+
+
+def clean_generation(text):
+    """
+    Deterministic post-generation cleanup, applied identically to all models
+    (no per-model branching). Validated against 40 real Qwen/Ministral
+    generations from the 2026-07-11 debug run — see verify_cleanup.py.
+
+    Known limitation: this only catches template-style preambles ("The answer
+    is X."). It does NOT extract answers embedded mid-sentence ("Kirk Cousins
+    played for the Washington Redskins in 2017.") — that would require actual
+    span extraction, which is out of scope. Confirmed on real data: this
+    roughly doubles Qwen's EM and has zero effect on Ministral's EM
+    (Ministral's failure mode is mid-sentence embedding, not preambles).
+    """
+    # 1. strip markdown emphasis
+    text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
+    text = re.sub(r'\*(.*?)\*', r'\1', text)
+    # 2. strip empty/leftover think tags
+    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+    text = re.sub(r'</?think>', '', text)
+    # 3. strip leading boilerplate preambles (single pass, first match only)
+    t = text.strip()
+    for pat in PREAMBLE_PATTERNS:
+        new_t = re.sub(pat, '', t, flags=re.IGNORECASE)
+        if new_t != t:
+            t = new_t.strip()
+            break
+    # 4. strip a single trailing period
+    t = t.rstrip('.').strip()
+    return t
 
 
 def run_query(model, tokenizer, model_key: str, corpus_name: str, question: str,
@@ -56,10 +96,14 @@ def run_query(model, tokenizer, model_key: str, corpus_name: str, question: str,
     generated = tokenizer.decode(
         output_ids[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True
     )
+    generated = generated.strip()
 
     return {
         "question": question,
         "retrieved_doc_ids": [idx for idx, _ in enumerate(retrieved)],
         "retrieval_scores": [score for _, score in retrieved],
-        "generated_answer": generated.strip(),
+        # raw string is kept unmodified for the debug/audit trail; the cleaned
+        # variant is what EM should be scored on (see evaluation/metrics.py)
+        "generated_answer": generated,
+        "generated_answer_clean": clean_generation(generated),
     }
