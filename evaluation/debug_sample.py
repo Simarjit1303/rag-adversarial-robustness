@@ -61,9 +61,12 @@ def main():
                     index=index, records=records,
                 )
                 answer = result["generated_answer"]
+                answer_clean = result["generated_answer_clean"]
 
                 # json.dumps keeps newlines/tabs escaped, so the raw shape of
                 # the answer (prefixes, multi-line prose) stays visible in logs.
+                # EM is scored on the cleaned string, same as run_baseline;
+                # contains_answer is diagnostic only.
                 print(json.dumps({
                     "model": model_key,
                     "corpus": corpus_name,
@@ -71,9 +74,10 @@ def main():
                     "question": question,
                     "gold": gold,
                     "generated_answer": answer,
-                    "exact_match": exact_match(answer, gold),
+                    "generated_answer_clean": answer_clean,
                     "f1": round(f1_score(answer, gold), 4),
-                    "contains_answer": contains_answer(answer, gold),
+                    "exact_match": exact_match(answer_clean, gold),
+                    "contains_answer_diagnostic": contains_answer(answer, gold),
                 }, ensure_ascii=False))
                 shown += 1
 

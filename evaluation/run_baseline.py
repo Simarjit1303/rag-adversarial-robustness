@@ -5,7 +5,12 @@ Produces:
   results/baseline_raw.jsonl   -- one line per (model, corpus, question), the
                                     full generated answer + metrics, kept for
                                     the McNemar significance tests in Phase 4
-  results/baseline_summary.csv -- aggregated EM / F1 per model x corpus
+  results/baseline_summary.csv -- aggregated metrics per model x corpus.
+                                    F1 is the primary utility metric (headline
+                                    number in every summary table); EM is
+                                    secondary, scored on the cleaned string;
+                                    contains_answer is diagnostic only and
+                                    never feeds a headline table.
 
 Run this AFTER data/loader.py and data/build_index.py have been run once
 (or let it build indices on the fly the first time — slower, but works).
@@ -84,7 +89,10 @@ def run_baseline_sweep(model_keys=None, corpus_names=None, split="dev"):
                         index=index, records=records,
                     )
 
-                    em = exact_match(result["generated_answer"], gold)
+                    # F1 (primary) stays on the raw generation; EM (secondary)
+                    # is scored on the cleaned string so it measures content,
+                    # not formatting; contains_answer is diagnostic only.
+                    em = exact_match(result["generated_answer_clean"], gold)
                     f1 = f1_score(result["generated_answer"], gold)
                     ca = contains_answer(result["generated_answer"], gold)
                     em_scores.append(em)
@@ -98,9 +106,10 @@ def run_baseline_sweep(model_keys=None, corpus_names=None, split="dev"):
                         "question": question,
                         "gold_answers": gold,
                         "generated_answer": result["generated_answer"],
-                        "exact_match": em,
+                        "generated_answer_clean": result["generated_answer_clean"],
                         "f1": f1,
-                        "contains_answer": ca,
+                        "exact_match": em,
+                        "contains_answer_diagnostic": ca,
                         "retrieved_doc_ids": result["retrieved_doc_ids"],
                     }, ensure_ascii=False) + "\n")
 
@@ -116,14 +125,14 @@ def run_baseline_sweep(model_keys=None, corpus_names=None, split="dev"):
                     "model": model_key,
                     "corpus": corpus_name,
                     "n": len(em_scores),
-                    "exact_match": round(mean_em, 4),
                     "f1": round(mean_f1, 4),
-                    "contains_answer": round(mean_ca, 4),
+                    "exact_match": round(mean_em, 4),
+                    "contains_answer_diagnostic": round(mean_ca, 4),
                 })
 
                 print(f"  {model_key} x {corpus_name}: "
-                      f"EM={mean_em:.4f}  F1={mean_f1:.4f}  "
-                      f"Contains={mean_ca:.4f}  n={len(em_scores)}")
+                      f"F1={mean_f1:.4f}  EM(clean)={mean_em:.4f}  "
+                      f"contains(diagnostic)={mean_ca:.4f}  n={len(em_scores)}")
 
             del model  # free memory before loading the next model
             if torch.cuda.is_available():
@@ -132,7 +141,8 @@ def run_baseline_sweep(model_keys=None, corpus_names=None, split="dev"):
     summary_path = RESULTS_DIR / "baseline_summary.csv"
     with summary_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(
-            f, fieldnames=["model", "corpus", "n", "exact_match", "f1", "contains_answer"]
+            f, fieldnames=["model", "corpus", "n", "f1", "exact_match",
+                           "contains_answer_diagnostic"]
         )
         writer.writeheader()
         writer.writerows(summary_rows)
