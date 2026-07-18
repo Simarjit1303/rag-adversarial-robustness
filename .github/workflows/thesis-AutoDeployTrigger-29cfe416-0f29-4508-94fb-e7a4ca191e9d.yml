@@ -40,7 +40,15 @@ jobs:
           tenant-id: ${{ secrets.THESIS_AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.THESIS_AZURE_SUBSCRIPTION_ID }}
 
-      - name: Deploy to Azure Container Apps
+      # Stage 3: this updates a Container Apps JOB, not the old Container App.
+      # A Job does not auto-execute when its image reference changes — that
+      # structural difference is the fix for the overnight restart-loop billing
+      # scare, not a manual-trigger flag on the old resource. Deliberately NO
+      # `az containerapp job start` here, under any condition: starting a sweep
+      # is a manual, human decision (see README "Running the sweep").
+      # Until Part B provisions `rag-sweep-job`, this step fails — expected;
+      # do not add fallback logic pointing back at the old Container App.
+      - name: Update Container Apps Job image
         uses: azure/CLI@v2
         with:
           inlineScript: |
@@ -51,7 +59,7 @@ jobs:
             # token expires) — that caused the 2026-07-10 ImagePullUnauthorized
             # outage. If the package ever goes private again, use a classic PAT
             # with read:packages stored as a repo secret instead.
-            az containerapp update \
-              --name thesis \
+            az containerapp job update \
+              --name rag-sweep-job \
               --resource-group Master-Thesis \
               --image ghcr.io/simarjit1303/rag-adversarial-robustness/thesis:${{ github.sha }}
