@@ -73,8 +73,8 @@ def run_baseline_sweep(model_keys=None, corpus_names=None, split="dev"):
     raw_path = RESULTS_DIR / "baseline_raw.jsonl"
     summary_rows = []
 
-    # Explicit encoding: Python 3.14 still defaults to the locale encoding
-    # (cp1252 on Windows), which would corrupt non-ASCII model output.
+    # Explicit encoding: Python defaults to the locale encoding until 3.15
+    # (PEP 686) — cp1252 on Windows — which would corrupt non-ASCII model output.
     with raw_path.open("w", encoding="utf-8") as raw_f:
         for model_key in model_keys:
             print(f"\n=== Loading {model_key} ===")

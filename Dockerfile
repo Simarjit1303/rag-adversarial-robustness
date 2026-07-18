@@ -1,11 +1,17 @@
-FROM python:3.14-slim
+# 3.13, not 3.14: vLLM's abi3 wheel itself installs on 3.14, but its dependency
+# tree does not — flashinfer's cuda-tile, ray, numba <0.63, and outlines-core
+# <0.2.14 all lack cp314 wheels (vllm-project/vllm#34096, still a tracking
+# issue as of vllm 0.25.1). The Colab validation of vllm==0.25.1 also never
+# ran on 3.14. 3.13 additionally has confirmed Linux faiss-cpu wheels
+# (see requirements.txt).
+FROM python:3.13-slim
 
 WORKDIR /app
 
 # Install system dependencies needed for compiling packages (like FAISS or text tools).
-# swig + libopenblas-dev cover the faiss-cpu source-build fallback: Linux cp314
-# wheels are not confirmed for faiss-cpu (see requirements.txt), so if pip cannot
-# find a wheel it compiles from source and needs these headers.
+# faiss-cpu ships confirmed Linux cp313 wheels, so the swig + libopenblas-dev
+# source-build fallback should never trigger on this base image; they are kept
+# as insurance against a wheel-resolution surprise in the paid Azure build.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     swig \

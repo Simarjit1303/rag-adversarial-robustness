@@ -12,8 +12,9 @@ Section references in comments point back to that document.
 
 ## 1. Setup
 
-Requires **Python 3.14** (the Dockerfile pins `python:3.14-slim`; pinned
-package versions in `requirements.txt` are chosen for cp314 wheel support).
+Requires **Python 3.13** (the Dockerfile pins `python:3.13-slim`; 3.14 is
+blocked by vLLM's dependency tree — see vllm-project/vllm#34096 and the
+Dockerfile comment).
 
 ```bash
 git init

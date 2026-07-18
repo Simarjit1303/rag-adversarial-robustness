@@ -1,4 +1,6 @@
-# Verified current and confirmed Python 3.14-compatible as of July 2026
+# Verified current and confirmed Python 3.13-compatible as of July 2026.
+# NOT 3.14: vLLM's dependency tree (flashinfer cuda-tile, ray, numba <0.63,
+# outlines-core <0.2.14) lacks cp314 wheels — vllm-project/vllm#34096.
 
 # GPU NOTE — on Windows, `pip install torch` gives the CPU-ONLY build
 # (version shows as e.g. "2.11.0+cpu" and torch.cuda.is_available() is False).
@@ -17,15 +19,16 @@
 # from the same index in the same pip run, or not at all — same reasoning
 # as the pinned model revisions in config.py: reproducibility.
 # (Note: this moves the container's torch from >=2.13 to ==2.11.0 for the
-# HF path too; torch 2.11.0 ships cp314 wheels so the python:3.14-slim base
-# still works. If strict numeric continuity with earlier HF-path container
-# runs matters, re-run the HF smoke test before comparing across runs.)
+# HF path too; torch 2.11.0 ships cp313 wheels for the python:3.13-slim base.
+# If strict numeric continuity with earlier HF-path container runs matters,
+# re-run the HF smoke test before comparing across runs.)
 torch==2.11.0
 
 # vLLM: batched inference engine for the Stage 2 path (INFERENCE_ENGINE=vllm
 # in evaluation/run_baseline.py). 0.25.1 is the version validated on real
-# weights for all four models. Ships abi3 wheels for Python >=3.10,<3.15 —
-# compatible with the python:3.14-slim Docker base image.
+# weights for all four models. The vllm wheel is abi3 (>=3.10,<3.15), but its
+# DEPENDENCIES cap the container at Python 3.13 — see vllm-project/vllm#34096
+# and the Dockerfile base-image comment.
 vllm==0.25.1
 transformers>=5.13
 accelerate>=1.0
@@ -36,19 +39,9 @@ langchain-community>=0.3
 huggingface_hub>=0.28
 numpy>=2.1
 
-# CAUTION — read before trusting this pin:
-# faiss-cpu is a compiled C++ extension. Python 3.14 (cp314) wheels exist as
-# of 1.13.2, confirmed for Windows only. Linux (manylinux) cp314 wheel
-# availability is NOT confirmed for 1.13.2 or the newer 1.14.x line. If this
-# falls back to a source build inside python:3.14-slim, it needs SWIG + BLAS
-# dev headers that the current Dockerfile does not install, and the build
-# will likely fail.
-#
-# BEFORE trusting this line, run inside the actual container:
-#   pip install faiss-cpu>=1.13.2
-# If it fails to find a wheel:
-#   Option A (APPLIED): the Dockerfile's apt-get line now installs
-#             `swig libopenblas-dev`, so a source-build fallback can succeed
-#   Option B: drop the base image to python:3.13-slim, where faiss-cpu wheel
-#             support is confirmed end to end
+# faiss-cpu: compiled C++ extension. Linux cp313 wheels are confirmed end to
+# end for the python:3.13-slim base (this was "Option B" of the old cp314
+# caveat, now moot — the base image dropped to 3.13 for vLLM's dependency
+# tree anyway; see vllm-project/vllm#34096). The Dockerfile still installs
+# swig + libopenblas-dev as source-build insurance.
 faiss-cpu>=1.13.2

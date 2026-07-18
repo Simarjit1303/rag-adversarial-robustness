@@ -37,8 +37,8 @@ def load_corpus(name: str, split: str = "dev"):
     cache_path = DATA_DIR / f"{name}_{split}.jsonl"
 
     if cache_path.exists():
-        # Explicit encoding: Python 3.14 still defaults to the locale encoding
-        # (cp1252 on Windows), which corrupts non-ASCII corpus text.
+        # Explicit encoding: Python defaults to the locale encoding until 3.15
+        # (PEP 686) — cp1252 on Windows — which corrupts non-ASCII corpus text.
         with cache_path.open(encoding="utf-8") as f:
             return [json.loads(line) for line in f]
 
