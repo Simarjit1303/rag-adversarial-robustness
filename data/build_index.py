@@ -62,6 +62,28 @@ def _atomic_write_pickle(obj, final_path):
         raise
 
 
+# The marker is what makes the TWO-file cache trustworthy: each atomic write
+# above only guarantees its own file, so a crash between the two renames can
+# still leave a mismatched (stale + fresh) pair. The marker is written last,
+# only after both files landed, and the cache check below trusts ONLY the
+# marker — leftover index/metadata files from an interrupted build are not
+# evidence of anything. One marker per (corpus, split), NOT per directory:
+# INDEX_DIR holds every corpus, and a directory-level marker would validate
+# corpus B after only corpus A finished building.
+
+def _mark_build_complete(marker_path):
+    marker_path = str(marker_path)
+    fd, tmp_path = tempfile.mkstemp(
+        dir=os.path.dirname(marker_path), prefix=".tmp_", suffix=".marker"
+    )
+    os.close(fd)
+    os.replace(tmp_path, marker_path)
+
+
+def _is_build_complete(marker_path):
+    return os.path.exists(str(marker_path))
+
+
 def _get_embedder():
     global _embedder
     if _embedder is None:
@@ -84,12 +106,22 @@ def _get_embedder():
 def build_index(corpus_name: str, split: str = "dev", force_rebuild: bool = False):
     index_path = INDEX_DIR / f"{corpus_name}_{split}.faiss"
     meta_path = INDEX_DIR / f"{corpus_name}_{split}_meta.pkl"
+    marker_path = INDEX_DIR / f"{corpus_name}_{split}.build_complete"
 
-    if index_path.exists() and meta_path.exists() and not force_rebuild:
+    # Cache validity = marker only. Index/metadata files existing without the
+    # marker means an interrupted build — rebuild. (Pre-marker caches lack it
+    # too, so the first run after this change rebuilds once.)
+    if _is_build_complete(marker_path) and not force_rebuild:
         index = faiss.read_index(str(index_path))
         with meta_path.open("rb") as f:
             records = pickle.load(f)
         return index, records
+
+    # Invalidate BEFORE touching the files: a crash mid-rebuild over an
+    # existing valid cache must not leave the old marker validating a
+    # mismatched (old + new) file pair.
+    if marker_path.exists():
+        os.remove(marker_path)
 
     records = load_corpus(corpus_name, split=split)
     texts = [extract_passage_text(corpus_name, r) for r in records]
@@ -102,13 +134,11 @@ def build_index(corpus_name: str, split: str = "dev", force_rebuild: bool = Fals
     index = faiss.IndexFlatIP(dim)  # inner product on normalized vectors == cosine similarity
     index.add(embeddings)
 
-    # Metadata first, index second: the cache check requires BOTH files, and
-    # a crash between the two renames then leaves new-meta + missing/old
-    # index. Records only append-extend between rebuilds of the same split,
-    # so new-meta/old-index is the harmless pairing; the reverse (new index,
-    # old records) could silently misalign retrieval results.
+    # Write order between these two is no longer load-bearing — the marker,
+    # written last, is the only thing the cache check trusts.
     _atomic_write_pickle(records, meta_path)
     _atomic_write_index(index, index_path)
+    _mark_build_complete(marker_path)
 
     print(f"[index] {corpus_name}/{split}: {len(records)} vectors -> {index_path}")
     return index, records

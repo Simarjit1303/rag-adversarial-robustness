@@ -9,7 +9,9 @@ measured on, not a fresh random draw each time.
 """
 
 import json
+import os
 import random
+import tempfile
 
 from datasets import load_dataset
 
@@ -52,9 +54,20 @@ def load_corpus(name: str, split: str = "dev"):
     sampled = _sample(raw, n)
 
     records = [dict(row) for row in sampled]
-    with cache_path.open("w", encoding="utf-8") as f:
-        for r in records:
-            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    # Atomic write (temp in same dir + os.replace), same discipline as
+    # data/build_index.py: an interrupted write truncated exactly at a line
+    # boundary would otherwise SILENTLY load as a smaller corpus on the next
+    # run — the one truncation case in this pipeline that doesn't hard-crash.
+    fd, tmp_path = tempfile.mkstemp(dir=str(DATA_DIR), prefix=".tmp_", suffix=".jsonl")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            for r in records:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        os.replace(tmp_path, str(cache_path))
+    except Exception:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise
 
     print(f"[loader] {name}/{split}: cached {len(records)} records -> {cache_path}")
     return records
