@@ -1,13 +1,32 @@
 # Verified current and confirmed Python 3.14-compatible as of July 2026
 
 # GPU NOTE — on Windows, `pip install torch` gives the CPU-ONLY build
-# (version shows as e.g. "2.13.0+cpu" and torch.cuda.is_available() is False).
+# (version shows as e.g. "2.11.0+cpu" and torch.cuda.is_available() is False).
 # For NVIDIA GPU support install from the CUDA wheel index instead, e.g.:
-#   pip install torch --index-url https://download.pytorch.org/whl/cu128
+#   pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cu128
 # (pick the cuXXX tag matching your driver; see pytorch.org/get-started).
 # On Linux the default PyPI wheel already bundles CUDA. The harness prints a
 # loud warning at startup if it detects a CPU-only install.
-torch>=2.13
+#
+# torch is pinned EXACTLY, together with vllm below, because vllm 0.25.1
+# declares torch==2.11.0 (per its PyPI metadata). Installing vllm next to a
+# different torch is what caused three separate CUDA-runtime failures in one
+# session (libcudart.so.13 / libnvrtc.so.13 / libnvJitLink.so.13): unpinned
+# `pip install vllm` pulled CUDA-13 wheels in beside a cu128 torch install.
+# See stage2_vllm_task.md (Task 4). Bump these two pins together, resolved
+# from the same index in the same pip run, or not at all — same reasoning
+# as the pinned model revisions in config.py: reproducibility.
+# (Note: this moves the container's torch from >=2.13 to ==2.11.0 for the
+# HF path too; torch 2.11.0 ships cp314 wheels so the python:3.14-slim base
+# still works. If strict numeric continuity with earlier HF-path container
+# runs matters, re-run the HF smoke test before comparing across runs.)
+torch==2.11.0
+
+# vLLM: batched inference engine for the Stage 2 path (INFERENCE_ENGINE=vllm
+# in evaluation/run_baseline.py). 0.25.1 is the version validated on real
+# weights for all four models. Ships abi3 wheels for Python >=3.10,<3.15 —
+# compatible with the python:3.14-slim Docker base image.
+vllm==0.25.1
 transformers>=5.13
 accelerate>=1.0
 sentence-transformers>=3.3
