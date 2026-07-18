@@ -68,6 +68,23 @@ def clean_generation(text):
     return t
 
 
+def build_rag_user_prompt(index, records, question: str, top_k: int = 5):
+    """
+    Retrieves top_k documents and renders the user message exactly as the
+    HF path always has. Returns (user_prompt, retrieved).
+
+    Shared by run_query (HF path) and the vLLM batch path in
+    evaluation/run_baseline.py so the prompt surface cannot drift between
+    engines — cross-engine comparability depends on both engines seeing
+    byte-identical prompts.
+    """
+    retrieved = retrieve(index, records, question, k=top_k)
+    context = "\n\n".join(
+        f"[{i + 1}] {doc.get('text', doc)}" for i, (doc, score) in enumerate(retrieved)
+    )
+    return f"Context:\n{context}\n\nQuestion: {question}", retrieved
+
+
 def run_query(model, tokenizer, model_key: str, corpus_name: str, question: str,
               index=None, records=None, top_k: int = 5, max_new_tokens: int = 256):
     """
@@ -78,12 +95,7 @@ def run_query(model, tokenizer, model_key: str, corpus_name: str, question: str,
     if index is None or records is None:
         index, records = build_index(corpus_name, split="dev")
 
-    retrieved = retrieve(index, records, question, k=top_k)
-    context = "\n\n".join(
-        f"[{i + 1}] {doc.get('text', doc)}" for i, (doc, score) in enumerate(retrieved)
-    )
-
-    user_prompt = f"Context:\n{context}\n\nQuestion: {question}"
+    user_prompt, retrieved = build_rag_user_prompt(index, records, question, top_k=top_k)
     prompt = build_chat_prompt(model_key, tokenizer, SYSTEM_PROMPT, user_prompt)
 
     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)

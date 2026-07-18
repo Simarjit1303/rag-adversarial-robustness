@@ -20,6 +20,31 @@ except ImportError:
     _HAS_MISTRAL3 = False
 
 
+def load_tokenizer(model_key: str):
+    """
+    Loads the tokenizer for a model key, applying any model-specific fixes.
+
+    Shared by the HF path (load_model), the vLLM prompt-length computation
+    (scripts/compute_max_model_len.py), and anything else that needs to
+    render chat prompts without loading weights — one tokenizer setup,
+    not several copies that could drift apart.
+    """
+    if model_key not in MODELS:
+        raise ValueError(f"Unknown model '{model_key}'. Options: {list(MODELS)}")
+
+    cfg = MODELS[model_key]
+    tokenizer_kwargs = {}
+    if cfg["loader"] == "mistral3":
+        # Without this flag, transformers warns that Ministral's tokenizer
+        # loads with an incorrect regex pattern and tokenizes incorrectly
+        # (observed on the 2026-07-11 A100 debug run; see
+        # https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84).
+        tokenizer_kwargs["fix_mistral_regex"] = True
+    return AutoTokenizer.from_pretrained(
+        cfg["hf_id"], revision=cfg["revision"], **tokenizer_kwargs
+    )
+
+
 def load_model(model_key: str, device_map: str = "auto", dtype: torch.dtype = torch.bfloat16):
     """Returns (model, tokenizer) for the given key in config.MODELS."""
     if model_key not in MODELS:
@@ -56,14 +81,7 @@ def load_model(model_key: str, device_map: str = "auto", dtype: torch.dtype = to
             f"to report in the dissertation."
         )
 
-    tokenizer_kwargs = {}
-    if cfg["loader"] == "mistral3":
-        # Without this flag, transformers warns that Ministral's tokenizer
-        # loads with an incorrect regex pattern and tokenizes incorrectly
-        # (observed on the 2026-07-11 A100 debug run; see
-        # https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84).
-        tokenizer_kwargs["fix_mistral_regex"] = True
-    tokenizer = AutoTokenizer.from_pretrained(hf_id, revision=revision, **tokenizer_kwargs)
+    tokenizer = load_tokenizer(model_key)
 
     if cfg["loader"] == "mistral3":
         if not _HAS_MISTRAL3:
