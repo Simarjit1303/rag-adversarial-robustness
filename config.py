@@ -141,3 +141,27 @@ EMBEDDING_MODEL = "sentence-transformers/all-mpnet-base-v2"
 # Retrieval
 # ---------------------------------------------------------------------------
 TOP_K = 5
+
+# ---------------------------------------------------------------------------
+# vLLM engine (Stage 2)
+#
+# Gated model access (llama-3.1-8b) needs BOTH halves, on either engine:
+#   (1) an HF_TOKEN / HUGGINGFACE_HUB_TOKEN in the environment — the
+#       Container App's existing secret wiring from the original deploy
+#       setup should already cover this half; and
+#   (2) Meta's license accepted on the model page BY THE ACCOUNT THAT TOKEN
+#       BELONGS TO. This half is a human prerequisite that cannot be
+#       checked or satisfied from code — confirm it once for the deploy
+#       token's account before the first run that includes Llama.
+# ---------------------------------------------------------------------------
+# Maximum sequence length (prompt + generation budget) for the vLLM path.
+# COMPUTED, NOT GUESSED: the real prompt shape is SYSTEM_PROMPT + 5
+# retrieved docs + question, and chunk sizes differ across the three
+# corpora — run scripts/compute_max_model_len.py against the real built
+# indices and put its recommendation here. The 4096 used during Colab
+# testing was a T4-VRAM compromise, not a measured value; do not copy it.
+#
+# None means "not computed yet": evaluation/run_baseline.py refuses to
+# start a vLLM sweep until this is set (or the VLLM_MAX_MODEL_LEN env var
+# is exported, which takes precedence for machine-specific overrides).
+VLLM_MAX_MODEL_LEN = None
