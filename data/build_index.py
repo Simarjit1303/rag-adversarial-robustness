@@ -6,7 +6,9 @@ existing index takes a couple of seconds; building one from scratch depends
 on corpus size and whether you have a GPU available.
 """
 
+import os
 import pickle
+import tempfile
 
 import faiss
 import numpy as np
@@ -18,6 +20,46 @@ from data.loader import load_corpus
 from data.normalize import extract_passage_text
 
 _embedder = None
+
+
+# Atomic writes: the cache check below trusts exists(), and the Stage 3 Job
+# runs with --replica-retry-limit 0, so an interrupted write would leave a
+# truncated file that permanently wedges the cache (faiss.read_index and
+# pickle.load both hard-crash on truncated input — verified empirically, see
+# PR; safe but requires manual cleanup). Writing to a temp file in the SAME
+# directory and os.replace()-ing it in means the final path only ever holds
+# nothing or a complete file. Same-directory matters: os.replace is only
+# atomic within one filesystem. NOTE: atomicity over an Azure Files SMB
+# mount is NOT yet verified — re-test on /mnt/rag-scratch after Part B.
+
+def _atomic_write_index(index, final_path):
+    final_path = str(final_path)
+    fd, tmp_path = tempfile.mkstemp(
+        dir=os.path.dirname(final_path), prefix=".tmp_", suffix=".faiss"
+    )
+    os.close(fd)
+    try:
+        faiss.write_index(index, tmp_path)
+        os.replace(tmp_path, final_path)
+    except Exception:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise
+
+
+def _atomic_write_pickle(obj, final_path):
+    final_path = str(final_path)
+    fd, tmp_path = tempfile.mkstemp(
+        dir=os.path.dirname(final_path), prefix=".tmp_", suffix=".pkl"
+    )
+    try:
+        with os.fdopen(fd, "wb") as f:
+            pickle.dump(obj, f)
+        os.replace(tmp_path, final_path)
+    except Exception:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise
 
 
 def _get_embedder():
@@ -60,9 +102,13 @@ def build_index(corpus_name: str, split: str = "dev", force_rebuild: bool = Fals
     index = faiss.IndexFlatIP(dim)  # inner product on normalized vectors == cosine similarity
     index.add(embeddings)
 
-    faiss.write_index(index, str(index_path))
-    with meta_path.open("wb") as f:
-        pickle.dump(records, f)
+    # Metadata first, index second: the cache check requires BOTH files, and
+    # a crash between the two renames then leaves new-meta + missing/old
+    # index. Records only append-extend between rebuilds of the same split,
+    # so new-meta/old-index is the harmless pairing; the reverse (new index,
+    # old records) could silently misalign retrieval results.
+    _atomic_write_pickle(records, meta_path)
+    _atomic_write_index(index, index_path)
 
     print(f"[index] {corpus_name}/{split}: {len(records)} vectors -> {index_path}")
     return index, records

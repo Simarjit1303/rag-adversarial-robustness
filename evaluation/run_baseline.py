@@ -22,7 +22,9 @@ import csv
 import gc
 import json
 import os
+import tempfile
 import time
+from contextlib import contextmanager
 
 import torch
 
@@ -32,6 +34,32 @@ from data.normalize import extract_gold_answers, extract_question
 from evaluation.metrics import contains_answer, exact_match, f1_score
 from harness.model_loader import load_model
 from harness.pipeline import SYSTEM_PROMPT, build_rag_user_prompt, clean_generation, run_query
+
+
+@contextmanager
+def _atomic_open(final_path, newline=None):
+    """Open for writing via a temp file in the SAME directory, os.replace()d
+    onto final_path only after the with-block completes without raising.
+
+    Same rationale as data/build_index.py's atomic writes: the final path
+    only ever holds nothing, the last complete version, or the new complete
+    version — never a partial file. For the hours-long raw JSONL this means
+    a crashed sweep leaves its partial rows in a .tmp_* file (recoverable by
+    hand) instead of a truncated file at the path later tooling trusts.
+    Explicit encoding: locale default (cp1252 on Windows) until PEP 686/3.15.
+    """
+    final_path = str(final_path)
+    fd, tmp_path = tempfile.mkstemp(
+        dir=os.path.dirname(final_path), prefix=".tmp_"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline=newline) as f:
+            yield f
+        os.replace(tmp_path, final_path)
+    except Exception:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise
 
 
 def run_baseline_sweep(model_keys=None, corpus_names=None, split="dev"):
@@ -73,9 +101,7 @@ def run_baseline_sweep(model_keys=None, corpus_names=None, split="dev"):
     raw_path = RESULTS_DIR / "baseline_raw.jsonl"
     summary_rows = []
 
-    # Explicit encoding: Python defaults to the locale encoding until 3.15
-    # (PEP 686) — cp1252 on Windows — which would corrupt non-ASCII model output.
-    with raw_path.open("w", encoding="utf-8") as raw_f:
+    with _atomic_open(raw_path) as raw_f:
         for model_key in model_keys:
             print(f"\n=== Loading {model_key} ===")
             try:
@@ -164,7 +190,7 @@ def run_baseline_sweep(model_keys=None, corpus_names=None, split="dev"):
                 torch.cuda.empty_cache()
 
     summary_path = RESULTS_DIR / "baseline_summary.csv"
-    with summary_path.open("w", newline="", encoding="utf-8") as f:
+    with _atomic_open(summary_path, newline="") as f:
         writer = csv.DictWriter(
             f, fieldnames=["model", "corpus", "n", "f1_clean", "exact_match",
                            "f1_raw", "contains_answer_diagnostic"]
@@ -229,7 +255,7 @@ def _run_vllm_sweep(model_keys, corpus_names, split):
     raw_path = RESULTS_DIR / "baseline_raw.jsonl"
     summary_rows = []
 
-    with raw_path.open("w", encoding="utf-8") as raw_f:
+    with _atomic_open(raw_path) as raw_f:
         for model_key in model_keys:
             print(f"\n=== Loading {model_key} (vLLM) ===")
             # Deliberately NOT wrapped in try/except, unlike the HF loop: a
@@ -331,7 +357,7 @@ def _run_vllm_sweep(model_keys, corpus_names, split):
                 torch.cuda.empty_cache()
 
     summary_path = RESULTS_DIR / "baseline_summary.csv"
-    with summary_path.open("w", newline="", encoding="utf-8") as f:
+    with _atomic_open(summary_path, newline="") as f:
         writer = csv.DictWriter(
             f, fieldnames=["model", "corpus", "n", "f1_clean", "exact_match",
                            "f1_raw", "contains_answer_diagnostic"]
