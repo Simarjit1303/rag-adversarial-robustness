@@ -15,7 +15,7 @@ import numpy as np
 import torch
 from sentence_transformers import SentenceTransformer
 
-from config import EMBEDDING_MODEL, INDEX_DIR
+from config import CORPORA, EMBEDDING_MODEL, INDEX_DIR
 from data.loader import load_corpus
 from data.normalize import extract_passage_text
 
@@ -70,18 +70,35 @@ def _atomic_write_pickle(obj, final_path):
 # evidence of anything. One marker per (corpus, split), NOT per directory:
 # INDEX_DIR holds every corpus, and a directory-level marker would validate
 # corpus B after only corpus A finished building.
+#
+# The marker also CARRIES the config.CORPORA revision the cache was built
+# from: a marker whose content doesn't match the currently pinned revision is
+# treated exactly like a missing marker. Bumping a pin in config.py therefore
+# auto-invalidates every cache built under the old snapshot — no manual
+# force_rebuild=True, no silent staleness. (Content-less markers from before
+# this change fail the comparison too, so those caches rebuild once.)
 
-def _mark_build_complete(marker_path):
+def _mark_build_complete(marker_path, revision):
     marker_path = str(marker_path)
     fd, tmp_path = tempfile.mkstemp(
         dir=os.path.dirname(marker_path), prefix=".tmp_", suffix=".marker"
     )
-    os.close(fd)
-    os.replace(tmp_path, marker_path)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(revision)
+        os.replace(tmp_path, marker_path)
+    except Exception:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise
 
 
-def _is_build_complete(marker_path):
-    return os.path.exists(str(marker_path))
+def _is_build_complete(marker_path, expected_revision):
+    marker_path = str(marker_path)
+    if not os.path.exists(marker_path):
+        return False
+    with open(marker_path, encoding="utf-8") as f:
+        return f.read().strip() == expected_revision
 
 
 def _get_embedder():
@@ -107,11 +124,12 @@ def build_index(corpus_name: str, split: str = "dev", force_rebuild: bool = Fals
     index_path = INDEX_DIR / f"{corpus_name}_{split}.faiss"
     meta_path = INDEX_DIR / f"{corpus_name}_{split}_meta.pkl"
     marker_path = INDEX_DIR / f"{corpus_name}_{split}.build_complete"
+    revision = CORPORA[corpus_name]["revision"]
 
-    # Cache validity = marker only. Index/metadata files existing without the
-    # marker means an interrupted build — rebuild. (Pre-marker caches lack it
-    # too, so the first run after this change rebuilds once.)
-    if _is_build_complete(marker_path) and not force_rebuild:
+    # Cache validity = marker only, and the marker must record the currently
+    # pinned corpus revision. Files present without a matching marker mean an
+    # interrupted build or a stale snapshot — rebuild either way.
+    if _is_build_complete(marker_path, revision) and not force_rebuild:
         index = faiss.read_index(str(index_path))
         with meta_path.open("rb") as f:
             records = pickle.load(f)
@@ -138,7 +156,7 @@ def build_index(corpus_name: str, split: str = "dev", force_rebuild: bool = Fals
     # written last, is the only thing the cache check trusts.
     _atomic_write_pickle(records, meta_path)
     _atomic_write_index(index, index_path)
-    _mark_build_complete(marker_path)
+    _mark_build_complete(marker_path, revision)
 
     print(f"[index] {corpus_name}/{split}: {len(records)} vectors -> {index_path}")
     return index, records
@@ -152,6 +170,5 @@ def retrieve(index, records, query: str, k: int = 5):
 
 
 if __name__ == "__main__":
-    from config import CORPORA
     for corpus_name in CORPORA:
         build_index(corpus_name, split="dev")
