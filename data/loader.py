@@ -5,7 +5,9 @@ Run this once per corpus to produce a fixed dev slice (1,000 docs) and,
 later, a fixed eval slice (10,000 docs). Sampling is seeded so re-running
 produces the exact same split — this matters because Phase 2/3/4 attack
 results need to be measured against the same documents the baseline was
-measured on, not a fresh random draw each time.
+measured on, not a fresh random draw each time. The pool being sampled is
+itself fixed too: every load_dataset() call is pinned to the revision in
+config.CORPORA, so an upstream re-upload can't silently change the corpus.
 """
 
 import json
@@ -46,7 +48,9 @@ def load_corpus(name: str, split: str = "dev"):
 
     n = cfg["dev_n"] if split == "dev" else cfg["eval_n"]
 
-    load_kwargs = {"path": cfg["hf_id"]}
+    # revision pins the dataset snapshot, same shape as harness/model_loader.py
+    # does for model weights — see the CORPORA comment in config.py.
+    load_kwargs = {"path": cfg["hf_id"], "revision": cfg["revision"]}
     if "hf_config" in cfg:
         load_kwargs["name"] = cfg["hf_config"]
 

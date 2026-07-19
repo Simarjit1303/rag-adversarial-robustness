@@ -106,22 +106,35 @@ QWEN3_ENABLE_THINKING = False  # False = non-thinking mode, closer latency profi
 
 # ---------------------------------------------------------------------------
 # Knowledge-base corpora (retrieval side)
+#
+# "revision" pins each dataset repo to the exact HF commit that was current
+# on 2026-07-19 — fetched with scripts/fetch_corpus_revisions.py, the same
+# "API `sha` field" method as the MODELS pins above. The sampling seed alone
+# only fixes WHICH rows are drawn; it cannot guarantee the pool being drawn
+# from if the upstream dataset is ever re-uploaded. Do NOT bump these
+# mid-study — every phase must sample from a byte-identical snapshot, or the
+# Phase 4 significance tests compare different corpora. Phase 3's
+# adversarial/utility datasets (JBB-Behaviors, HarmBench, XSTest) get the
+# identical treatment when that work begins — not before.
 # ---------------------------------------------------------------------------
 CORPORA = {
     "nq_open": {
         "hf_id": "google-research-datasets/nq_open",
+        "revision": "5dd9790a83002ad084ddeb7c420dc716852c6f28",  # main @ 2026-07-19
         "dev_n": 1000,
         "eval_n": 10000,
     },
     "hotpot_qa": {
         "hf_id": "hotpotqa/hotpot_qa",
         "hf_config": "distractor",
+        "revision": "1908d6afbbead072334abe2965f91bd2709910ab",  # main @ 2026-07-19
         "dev_n": 1000,
         "eval_n": 10000,
     },
     "ms_marco": {
         "hf_id": "microsoft/ms_marco",
         "hf_config": "v2.1",
+        "revision": "a47ee7aae8d7d466ba15f9f0bfac3b3681087b3a",  # main @ 2026-07-19
         "dev_n": 1000,
         "eval_n": 10000,
     },
