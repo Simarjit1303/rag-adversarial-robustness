@@ -45,3 +45,11 @@ numpy>=2.1
 # tree anyway; see vllm-project/vllm#34096). The Dockerfile still installs
 # swig + libopenblas-dev as source-build insurance.
 faiss-cpu>=1.13.2
+
+# runpod: only used by scripts/run_and_terminate.py, the RunPod entrypoint
+# wrapper that self-terminates the pod after a confirmed-successful sweep.
+# The Azure path never imports it. Pinned exactly (latest stable on
+# 2026-07-24, `pip index versions runpod`) — same reproducibility discipline
+# as every other dependency here; the terminate call bills real money, so the
+# SDK version it runs against should not drift silently.
+runpod==1.11.0
