@@ -46,10 +46,12 @@ numpy>=2.1
 # swig + libopenblas-dev as source-build insurance.
 faiss-cpu>=1.13.2
 
-# runpod: only used by scripts/run_and_terminate.py, the RunPod entrypoint
-# wrapper that self-terminates the pod after a confirmed-successful sweep.
-# The Azure path never imports it. Pinned exactly (latest stable on
-# 2026-07-24, `pip index versions runpod`) — same reproducibility discipline
-# as every other dependency here; the terminate call bills real money, so the
-# SDK version it runs against should not drift silently.
-runpod==1.11.0
+# NOTE: the `runpod` SDK is deliberately NOT listed here. It cannot coexist
+# with vllm: runpod 1.11.0 requires fastapi>=0.139.2 while vllm 0.25.1 caps
+# fastapi<0.137.0, and fastapi is a hard (non-extras) dependency of runpod, so
+# there is no pip-level way to install it without the web stack. A full
+# `pip install -r requirements.txt` fails outright on those two ranges.
+# scripts/run_and_terminate.py therefore calls RunPod's REST terminate
+# endpoint (DELETE https://rest.runpod.io/v1/pods/{podId}) directly via
+# `requests`, which vllm already pulls in transitively (requests>=2.26.0).
+# No new package, no new conflict surface.

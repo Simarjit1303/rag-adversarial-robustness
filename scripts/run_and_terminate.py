@@ -24,6 +24,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import requests
+
 # The full pipeline the Azure Dockerfile CMD runs, minus the trailing
 # `sleep infinity` (which is exactly the part that must NOT happen on RunPod).
 # Cache the corpora, build the FAISS indices, then run the sweep -- same three
@@ -82,17 +84,25 @@ def run_pipeline() -> int:
     return 0
 
 
-def terminate_pod() -> None:
+def terminate_pod(pod_id: str, api_key: str) -> None:
     """
-    Destroy the current pod via the RunPod API. Imported lazily so the
-    failure paths above (and the unit tests) never need the runpod SDK or a
-    real API key just to decide NOT to terminate.
-    """
-    import runpod
+    Destroy the current pod via RunPod's REST API.
 
-    runpod.api_key = os.environ["RUNPOD_API_KEY"]
-    pod_id = os.environ["RUNPOD_POD_ID"]
-    runpod.terminate_pod(pod_id)
+    This deliberately does NOT use the `runpod` SDK. That package hard-depends
+    on fastapi>=0.139.2 while vllm 0.25.1 caps fastapi<0.137.0, so the two
+    cannot be installed together at all -- `pip install -r requirements.txt`
+    fails outright on the non-overlapping ranges. Terminate is a plain HTTP
+    DELETE, so issuing it directly needs only `requests`, which vllm already
+    pulls in transitively. Returns 204 on success; raise_for_status() turns
+    anything else into a loud exception rather than a silently-unterminated
+    (still billing) pod.
+    """
+    response = requests.delete(
+        f"https://rest.runpod.io/v1/pods/{pod_id}",
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=30,
+    )
+    response.raise_for_status()  # raises on anything other than 2xx
 
 
 def main() -> None:
@@ -123,7 +133,7 @@ def main() -> None:
         sys.exit(1)
 
     print("[run_and_terminate] sweep confirmed successful. Terminating pod.")
-    terminate_pod()
+    terminate_pod(os.environ["RUNPOD_POD_ID"], os.environ["RUNPOD_API_KEY"])
 
 
 if __name__ == "__main__":

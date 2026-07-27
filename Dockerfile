@@ -20,7 +20,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Copy requirements first to leverage Docker's caching layer
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+
+# The wheel set here is ~4 GB (torch 530 MB, vllm 250 MB, flashinfer_cubin
+# 458 MB, plus several nvidia_* wheels of 170-370 MB each). Two local builds
+# on 2026-07-27 died mid-download with
+# `ProtocolError: Connection broken: IncompleteRead`, and because the install
+# ran with --no-cache-dir, each retry restarted the whole 4 GB from zero.
+#
+# --mount=type=cache keeps pip's HTTP cache across builds, so a dropped
+# connection costs only the wheels not yet fetched rather than all of them.
+# This is a BuildKit mount, not an image layer -- the cache never lands in
+# the final image, so it does not undo what --no-cache-dir was there for
+# (image size). --retries/--timeout make pip itself ride out the flaky reads
+# that killed both earlier attempts.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    PIP_DEFAULT_TIMEOUT=120 pip install --retries 10 -r requirements.txt
 
 # Copy the rest of your RAG application source code
 COPY . .
