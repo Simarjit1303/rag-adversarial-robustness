@@ -222,5 +222,30 @@ def main() -> None:
         return
 
 
+def _main_with_backstop() -> None:
+    """
+    The final backstop, not a replacement for main()'s 5 specific failure
+    sites (missing scratch dir, non-zero stage exit, pipeline timeout,
+    verify_success()-False, termination-call failure) -- those still matter
+    because they give a clear, specific error message at each known point
+    rather than a generic one. Bug 4's audit covered every failure path
+    CURRENTLY WRITTEN into this file, but it can't cover an exception type
+    nobody's hit yet: a KeyError from an env var that isn't one of the ones
+    explicitly checked, an OSError if the Network Volume runs low on space,
+    something raised deep inside torch or sentence-transformers that's
+    never been triggered before. Any of those would crash exactly the same
+    way -- process exits, RunPod restarts, full paid re-run -- without ever
+    touching one of the 5 known sites, purely because it isn't one of them.
+
+    `Exception` (not a bare `except:`) deliberately still lets
+    KeyboardInterrupt/SystemExit propagate normally, rather than swallowing
+    genuine intentional interrupts too.
+    """
+    try:
+        main()
+    except Exception as e:
+        _fail_and_idle(f"unhandled exception: {e!r}")
+
+
 if __name__ == "__main__":
-    main()
+    _main_with_backstop()

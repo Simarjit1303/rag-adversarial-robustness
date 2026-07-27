@@ -414,3 +414,90 @@ def test_timeout_never_reaches_terminate_pod_call_site(
 
     mock_delete.assert_not_called()  # terminate_pod's call site never reached
     assert mock_idle == [True]  # still routed through the shared choke point
+
+
+# --------------------------------------------------------------------------
+# Final backstop: catch anything the 5 known failure sites (tested above)
+# don't. Bug 4's audit covers every failure path currently written into
+# main() -- this catches an exception type nobody's hit yet: a KeyError
+# from an unchecked env var, an OSError from a full Network Volume,
+# something raised deep inside a dependency that's never been triggered
+# before. Specifically testing the UNKNOWN case, not re-testing the 5
+# already-covered ones.
+# --------------------------------------------------------------------------
+
+def test_backstop_catches_an_unrelated_exception_type_not_among_the_5_known_sites(
+    monkeypatch, tmp_path, mock_delete, mock_idle
+):
+    monkeypatch.setenv("RAG_SCRATCH_DIR", str(tmp_path))
+    monkeypatch.setenv("RUNPOD_API_KEY", "test-key")
+    monkeypatch.setenv("RUNPOD_POD_ID", "pod-abc123")
+
+    def raise_unexpected():
+        raise RuntimeError("cudaErrorDevicesUnavailable: unrelated to any of the 5 known sites")
+
+    monkeypatch.setattr(rt, "run_pipeline", raise_unexpected)
+
+    rt._main_with_backstop()  # must NOT raise and must NOT sys.exit
+
+    assert mock_idle == [True]
+    mock_delete.assert_not_called()
+
+
+def test_backstop_logs_message_includes_the_exception_repr(
+    monkeypatch, tmp_path, mock_idle, capsys
+):
+    monkeypatch.setenv("RAG_SCRATCH_DIR", str(tmp_path))
+
+    def raise_unexpected():
+        raise KeyError("SOME_UNCHECKED_ENV_VAR")
+
+    monkeypatch.setattr(rt, "run_pipeline", raise_unexpected)
+
+    rt._main_with_backstop()
+
+    err = capsys.readouterr().err
+    assert "unhandled exception" in err
+    assert "SOME_UNCHECKED_ENV_VAR" in err
+
+
+def test_backstop_lets_keyboard_interrupt_and_system_exit_propagate(monkeypatch, mock_idle):
+    # Exception, not a bare except: -- genuine intentional interrupts must
+    # NOT be swallowed into the idle loop.
+    monkeypatch.setattr(
+        rt, "main", mock.Mock(side_effect=KeyboardInterrupt("interactive Ctrl-C"))
+    )
+    with pytest.raises(KeyboardInterrupt):
+        rt._main_with_backstop()
+    assert mock_idle == []
+
+    monkeypatch.setattr(rt, "main", mock.Mock(side_effect=SystemExit(0)))
+    with pytest.raises(SystemExit):
+        rt._main_with_backstop()
+    assert mock_idle == []
+
+
+def test_backstop_does_not_interfere_with_the_5_known_failure_sites(
+    monkeypatch, tmp_path, mock_delete, mock_idle
+):
+    # The 5 known sites still route through main()'s own _fail_and_idle
+    # calls -- confirm the outer backstop doesn't double-trigger or change
+    # that behavior when wrapping a normal (non-exception) failure path.
+    monkeypatch.delenv("RAG_SCRATCH_DIR", raising=False)
+
+    rt._main_with_backstop()
+
+    assert mock_idle == [True]  # exactly once, not twice
+    mock_delete.assert_not_called()
+
+
+def test_backstop_does_not_interfere_with_genuine_success_path(
+    monkeypatch, tmp_path, mock_delete, mock_idle, capsys
+):
+    _happy_path_env(monkeypatch, tmp_path)
+
+    rt._main_with_backstop()
+
+    mock_delete.assert_called_once()
+    assert mock_idle == []
+    assert "pod terminated successfully." in capsys.readouterr().out
