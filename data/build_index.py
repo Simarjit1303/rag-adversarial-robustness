@@ -169,6 +169,32 @@ def retrieve(index, records, query: str, k: int = 5):
     return [(records[i], float(scores[0][rank])) for rank, i in enumerate(idxs[0])]
 
 
-if __name__ == "__main__":
-    for corpus_name in CORPORA:
+def main() -> None:
+    """
+    Entry point for `python -m data.build_index`. Pulled out of the
+    __main__ block (rather than left inline) so tests can call it directly
+    with build_index() stubbed, instead of needing a real subprocess.
+
+    RAG_CORPORA mirrors evaluation/run_baseline.py's RAG_MODELS/RAG_CORPORA
+    handling -- without this, this stage (which runs BEFORE run_baseline in
+    the pipeline) built every corpus in CORPORA regardless of the env var,
+    which is what a real RunPod smoke test with RAG_CORPORA=nq_open actually
+    hit: indices got built for nq_open AND ms_marco even though only nq_open
+    was requested.
+    """
+    corpora_env = os.environ.get("RAG_CORPORA")
+    corpus_names = (
+        [c.strip() for c in corpora_env.split(",") if c.strip()]
+        if corpora_env
+        else list(CORPORA)
+    )
+    unknown_corpora = [c for c in corpus_names if c not in CORPORA]
+    if unknown_corpora:
+        raise ValueError(f"Unknown corpus names {unknown_corpora}. Options: {list(CORPORA)}")
+
+    for corpus_name in corpus_names:
         build_index(corpus_name, split="dev")
+
+
+if __name__ == "__main__":
+    main()

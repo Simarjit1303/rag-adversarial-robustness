@@ -69,11 +69,23 @@ def run_baseline_sweep(model_keys=None, corpus_names=None, split="dev"):
     if model_keys is None and os.environ.get("RAG_MODELS"):
         model_keys = [m.strip() for m in os.environ["RAG_MODELS"].split(",") if m.strip()]
     model_keys = model_keys or list(MODELS)
+
+    # RAG_CORPORA mirrors RAG_MODELS above -- lets a deployment restrict the
+    # corpus loop (e.g. a smoke test with RAG_CORPORA=nq_open) without a code
+    # change. Previously documented/assumed but never actually wired up: a
+    # RunPod run launched with RAG_CORPORA=nq_open still built indices for
+    # every corpus in CORPORA.
+    if corpus_names is None and os.environ.get("RAG_CORPORA"):
+        corpus_names = [c.strip() for c in os.environ["RAG_CORPORA"].split(",") if c.strip()]
     corpus_names = corpus_names or list(CORPORA)
 
     unknown = [m for m in model_keys if m not in MODELS]
     if unknown:
         raise ValueError(f"Unknown model keys {unknown}. Options: {list(MODELS)}")
+
+    unknown_corpora = [c for c in corpus_names if c not in CORPORA]
+    if unknown_corpora:
+        raise ValueError(f"Unknown corpus names {unknown_corpora}. Options: {list(CORPORA)}")
 
     # INFERENCE_ENGINE selects the generation backend. "hf" (the default —
     # zero config changes needed) is the original per-question transformers

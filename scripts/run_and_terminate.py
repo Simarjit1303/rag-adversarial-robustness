@@ -20,11 +20,22 @@ non-empty. Anything less leaves the pod alive for inspection.
 """
 
 import os
+import signal
 import subprocess
 import sys
 from pathlib import Path
 
 import requests
+
+# 6h default is generous for a real sweep; override to something short (e.g.
+# 1800 = 30 min) for smoke tests via the pod's env vars. Exists because a
+# genuine hang (phi-4-mini loaded, then 0% CPU/GPU for 12+ minutes with zero
+# telemetry movement) sat unbounded on a real RunPod run: the success/failure
+# check below only runs AFTER the subprocess exits, so a hang that never
+# exits never reaches it, and the pod billed indefinitely until stopped by
+# hand -- the exact failure mode self-termination exists to prevent, from a
+# different angle (a hang instead of a restart loop).
+PIPELINE_TIMEOUT_SECONDS = int(os.environ.get("RAG_PIPELINE_TIMEOUT_SECONDS", 21600))
 
 # The full pipeline the Azure Dockerfile CMD runs, minus the trailing
 # `sleep infinity` (which is exactly the part that must NOT happen on RunPod).
@@ -66,21 +77,44 @@ def verify_success(scratch_dir: str) -> bool:
     return True
 
 
-def run_pipeline() -> int:
+def run_pipeline():
     """
-    Run every pipeline stage in order. Return 0 only if all stages exit 0;
-    otherwise return the first non-zero exit code and stop (a failed stage
-    makes every later stage meaningless).
+    Run every pipeline stage in order, each bounded by PIPELINE_TIMEOUT_SECONDS.
+    Return 0 only if all stages exit 0; the first non-zero exit code and stop
+    (a failed stage makes every later stage meaningless); or None if a stage
+    hung past the timeout and had to be killed -- distinct from a real exit
+    code so the caller can log "TIMEOUT" specifically, not just "exit != 0".
+
+    Each stage runs in its own process group (start_new_session=True) so a
+    timeout kill takes any child processes with it -- a plain proc.kill()
+    only kills the direct child, not grandchildren a hung stage may have
+    spawned.
     """
     for cmd in PIPELINE_STAGES:
-        result = subprocess.run(cmd)
-        if result.returncode != 0:
+        proc = subprocess.Popen(cmd, start_new_session=True)
+        try:
+            returncode = proc.wait(timeout=PIPELINE_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            # SIGKILL doesn't exist on Windows (this runs in Linux Docker on
+            # RunPod/Azure, but the getattr fallback keeps the module
+            # importable/testable on a Windows dev machine too).
+            os.killpg(os.getpgid(proc.pid), getattr(signal, "SIGKILL", signal.SIGTERM))
+            proc.wait()
             print(
-                f"[run_and_terminate] stage {' '.join(cmd)} exited "
-                f"{result.returncode} -- stopping pipeline.",
+                f"[run_and_terminate] stage {' '.join(cmd)} exceeded "
+                f"{PIPELINE_TIMEOUT_SECONDS}s -- killed. NOT terminating pod "
+                f"(same as any other failure), but this bounds the hang "
+                f"instead of leaving it unbounded.",
                 file=sys.stderr,
             )
-            return result.returncode
+            return None
+        if returncode != 0:
+            print(
+                f"[run_and_terminate] stage {' '.join(cmd)} exited "
+                f"{returncode} -- stopping pipeline.",
+                file=sys.stderr,
+            )
+            return returncode
     return 0
 
 
@@ -115,6 +149,15 @@ def main() -> None:
         sys.exit(1)
 
     returncode = run_pipeline()
+    if returncode is None:
+        # Timeout, not a real exit code -- sys.exit(None) would exit 0, which
+        # would look like success. Exit 1 instead, same as any other failure.
+        print(
+            "[run_and_terminate] sweep TIMED OUT -- NOT terminating. Pod "
+            "stays alive for inspection.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     if returncode != 0:
         print(
             f"[run_and_terminate] sweep exited {returncode} -- NOT "

@@ -168,17 +168,123 @@ def test_terminate_pod_raises_on_non_2xx(mock_delete):
         rt.terminate_pod("pod-abc123", "bad-key")
 
 
+class _FakeProc:
+    """Stand-in for subprocess.Popen's return value."""
+
+    def __init__(self, returncode=0, hang=False, pid=4242):
+        self._returncode = returncode
+        self._hang = hang
+        self.pid = pid
+
+    def wait(self, timeout=None):
+        # Only the first wait() (the bounded one, called with a timeout) hangs.
+        # The post-kill proc.wait() (no timeout arg) reflects a process that
+        # has now actually died, same as a real killed process would.
+        if self._hang and timeout is not None:
+            self._hang = False
+            raise rt.subprocess.TimeoutExpired(cmd="fake", timeout=timeout)
+        return self._returncode
+
+
 def test_run_pipeline_stops_at_first_failing_stage(monkeypatch):
     calls = []
 
-    def fake_run(cmd, *a, **k):
+    def fake_popen(cmd, *a, **k):
         calls.append(cmd)
         # second stage (build_index) fails; third must never run
         rc = 2 if "data.build_index" in cmd else 0
-        return mock.Mock(returncode=rc)
+        return _FakeProc(returncode=rc)
 
-    monkeypatch.setattr(rt.subprocess, "run", fake_run)
+    monkeypatch.setattr(rt.subprocess, "Popen", fake_popen)
     assert rt.run_pipeline() == 2
     # loader ran, build_index ran and failed, run_baseline never invoked
     assert len(calls) == 2
     assert not any("evaluation.run_baseline" in c for c in calls)
+
+
+# --------------------------------------------------------------------------
+# Bug 1 -- a hang must be bounded by a real timeout, not left to run forever.
+# --------------------------------------------------------------------------
+
+def test_run_pipeline_returns_none_and_kills_process_group_on_timeout(monkeypatch):
+    def fake_popen(cmd, *a, **k):
+        # own process group, so a timeout kill takes any child processes
+        # with it -- a plain proc.kill() only kills the direct child
+        assert k.get("start_new_session") is True
+        return _FakeProc(hang=True, pid=777)
+
+    killpg_calls = []
+    monkeypatch.setattr(rt.subprocess, "Popen", fake_popen)
+    # raising=False: os.getpgid/os.killpg are POSIX-only and don't exist as
+    # attributes on Windows' os module at all, so setattr must be allowed to
+    # create them rather than requiring a pre-existing attribute.
+    monkeypatch.setattr(
+        rt.os, "getpgid", lambda pid: 999 if pid == 777 else pid, raising=False
+    )
+    monkeypatch.setattr(
+        rt.os,
+        "killpg",
+        lambda pgid, sig: killpg_calls.append((pgid, sig)),
+        raising=False,
+    )
+    monkeypatch.setattr(rt, "PIPELINE_TIMEOUT_SECONDS", 1)
+
+    assert rt.run_pipeline() is None
+    # killed the process GROUP (via getpgid), not the raw pid, with SIGKILL
+    assert killpg_calls == [(999, getattr(rt.signal, "SIGKILL", rt.signal.SIGTERM))]
+
+
+def test_run_pipeline_unaffected_by_timeout_on_normal_fast_completion(monkeypatch):
+    monkeypatch.setattr(
+        rt.subprocess, "Popen", lambda cmd, *a, **k: _FakeProc(returncode=0)
+    )
+    assert rt.run_pipeline() == 0
+
+
+def test_main_exits_1_and_does_not_terminate_on_timeout(
+    monkeypatch, tmp_path, mock_delete
+):
+    monkeypatch.setenv("RAG_SCRATCH_DIR", str(tmp_path))
+    monkeypatch.setenv("RUNPOD_API_KEY", "should-never-be-used")
+    monkeypatch.setenv("RUNPOD_POD_ID", "should-never-be-used")
+    # None is what run_pipeline returns on timeout -- distinct from a real
+    # exit code, since sys.exit(None) would exit 0 and silently report a
+    # hang as success. This proves main() catches that case specifically.
+    monkeypatch.setattr(rt, "run_pipeline", lambda: None)
+
+    with pytest.raises(SystemExit) as exc:
+        rt.main()
+
+    assert exc.value.code == 1
+    mock_delete.assert_not_called()
+
+
+@pytest.mark.skipif(
+    rt.os.name != "posix",
+    reason="os.killpg/os.getpgid are POSIX-only; production runs in Linux Docker",
+)
+def test_run_pipeline_real_hang_is_actually_killed_within_timeout_window(tmp_path):
+    """
+    End-to-end with a real subprocess (no mocking), per the task brief: a
+    genuinely hanging process, bounded by a short timeout, is actually killed
+    within roughly the timeout window -- not merely reported as timed out
+    while still running in the background.
+    """
+    import time
+
+    script = tmp_path / "hang.py"
+    script.write_text("import time\ntime.sleep(999)\n", encoding="utf-8")
+    original_stages, original_timeout = rt.PIPELINE_STAGES, rt.PIPELINE_TIMEOUT_SECONDS
+    try:
+        rt.PIPELINE_STAGES = ([rt.sys.executable, str(script)],)
+        rt.PIPELINE_TIMEOUT_SECONDS = 2
+
+        start = time.time()
+        result = rt.run_pipeline()
+        elapsed = time.time() - start
+
+        assert result is None
+        assert elapsed < 10  # generous ceiling well above the 2s timeout
+    finally:
+        rt.PIPELINE_STAGES = original_stages
+        rt.PIPELINE_TIMEOUT_SECONDS = original_timeout
