@@ -12,6 +12,7 @@ being to PROVE the pod is never terminated on a failed or unverified run.
 from unittest import mock
 
 import pytest
+import requests
 
 from scripts import run_and_terminate as rt
 
@@ -288,3 +289,118 @@ def test_run_pipeline_real_hang_is_actually_killed_within_timeout_window(tmp_pat
     finally:
         rt.PIPELINE_STAGES = original_stages
         rt.PIPELINE_TIMEOUT_SECONDS = original_timeout
+
+
+# --------------------------------------------------------------------------
+# A failed termination call must never crash the script. Confirmed by direct
+# observation, twice, on real RunPod pods: pipeline succeeds -> terminate_pod
+# raises -> unhandled exception crashes the process -> RunPod's orchestration
+# reads the crash-exit as "needs retrying" -> the entire pipeline re-runs
+# from scratch. Worse than Bug 1's hang: a hang bills at a steady rate, this
+# compounds into full paid re-runs.
+# --------------------------------------------------------------------------
+
+def _happy_path_env(monkeypatch, tmp_path):
+    results = tmp_path / "results"
+    _write(results / "baseline_raw.jsonl", '{"model": "phi-4-mini"}\n')
+    _write(results / "baseline_summary.csv", "model,corpus,n\n")
+    monkeypatch.setenv("RAG_SCRATCH_DIR", str(tmp_path))
+    monkeypatch.setenv("RUNPOD_API_KEY", "test-key")
+    monkeypatch.setenv("RUNPOD_POD_ID", "pod-abc123")
+    monkeypatch.setattr(rt, "run_pipeline", lambda: 0)
+
+
+def test_terminate_failure_does_not_crash_main_and_idles_instead(
+    monkeypatch, tmp_path, mock_delete, capsys
+):
+    _happy_path_env(monkeypatch, tmp_path)
+    mock_delete.return_value.raise_for_status.side_effect = requests.HTTPError("403 Forbidden")
+    idle_calls = []
+    monkeypatch.setattr(rt, "_idle_forever", lambda: idle_calls.append(True))
+
+    rt.main()  # must NOT raise and must NOT sys.exit
+
+    assert idle_calls == [True]
+    err = capsys.readouterr().err
+    # the message needs to be unmistakable in a log stream -- this is the
+    # only thing standing between "billing continues but is visible and
+    # bounded" and another expensive re-run loop
+    assert "PIPELINE SUCCEEDED" in err
+    assert "Termination call FAILED" in err
+    assert "may still be billing" in err
+
+
+def test_terminate_failure_of_any_exception_type_is_caught(
+    monkeypatch, tmp_path, mock_delete
+):
+    # Not just HTTPError -- a connection error, timeout, or anything else
+    # raised by requests.delete/raise_for_status must also be caught.
+    _happy_path_env(monkeypatch, tmp_path)
+    mock_delete.side_effect = requests.ConnectionError("credential issue")
+    idle_calls = []
+    monkeypatch.setattr(rt, "_idle_forever", lambda: idle_calls.append(True))
+
+    rt.main()
+
+    assert idle_calls == [True]
+
+
+def test_terminate_success_path_unchanged_no_idle_loop_triggered(
+    monkeypatch, tmp_path, mock_delete, capsys
+):
+    _happy_path_env(monkeypatch, tmp_path)
+    idle_calls = []
+    monkeypatch.setattr(rt, "_idle_forever", lambda: idle_calls.append(True))
+
+    rt.main()  # no SystemExit, no exception
+
+    mock_delete.assert_called_once()
+    assert idle_calls == []  # success must never idle
+    assert "pod terminated successfully." in capsys.readouterr().out
+
+
+def test_idle_forever_actually_calls_time_sleep_in_a_loop(monkeypatch):
+    """
+    Confirm _idle_forever really loops on time.sleep (not e.g. a no-op or a
+    single sleep) without actually sleeping for real hours in the test --
+    time.sleep is mocked to raise after a few calls, which both proves the
+    loop and stops it.
+    """
+    sleep_calls = []
+
+    def fake_sleep(seconds):
+        sleep_calls.append(seconds)
+        if len(sleep_calls) >= 3:
+            raise KeyboardInterrupt("stop the test's idle loop")
+
+    monkeypatch.setattr(rt.time, "sleep", fake_sleep)
+
+    with pytest.raises(KeyboardInterrupt):
+        rt._idle_forever()
+
+    assert sleep_calls == [3600, 3600, 3600]
+
+
+def test_timeout_and_termination_failure_paths_do_not_overlap(
+    monkeypatch, tmp_path, mock_delete
+):
+    """
+    Bug 1's timeout wraps the pipeline subprocess itself (run_pipeline,
+    before verify_success). This wraps a later, separate step in main()
+    (terminate_pod, after verify_success). Explicitly checked, not assumed:
+    a pipeline timeout must never reach terminate_pod or the idle branch at
+    all -- verify_success() is never even reached on a timeout.
+    """
+    monkeypatch.setenv("RAG_SCRATCH_DIR", str(tmp_path))
+    monkeypatch.setenv("RUNPOD_API_KEY", "test-key")
+    monkeypatch.setenv("RUNPOD_POD_ID", "pod-abc123")
+    monkeypatch.setattr(rt, "run_pipeline", lambda: None)  # simulates a timeout
+    idle_calls = []
+    monkeypatch.setattr(rt, "_idle_forever", lambda: idle_calls.append(True))
+
+    with pytest.raises(SystemExit) as exc:
+        rt.main()
+
+    assert exc.value.code == 1
+    mock_delete.assert_not_called()  # terminate_pod's call site never reached
+    assert idle_calls == []  # the idle-on-termination-failure branch is distinct

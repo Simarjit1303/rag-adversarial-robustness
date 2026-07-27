@@ -23,6 +23,7 @@ import os
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import requests
@@ -176,7 +177,47 @@ def main() -> None:
         sys.exit(1)
 
     print("[run_and_terminate] sweep confirmed successful. Terminating pod.")
-    terminate_pod(os.environ["RUNPOD_POD_ID"], os.environ["RUNPOD_API_KEY"])
+    try:
+        terminate_pod(os.environ["RUNPOD_POD_ID"], os.environ["RUNPOD_API_KEY"])
+        print("[run_and_terminate] pod terminated successfully.")
+    except Exception as e:
+        # Confirmed by direct observation, twice, on real RunPod pods: an
+        # unhandled exception here crashes the process, and something in
+        # RunPod's pod orchestration reads that crash-exit as "needs
+        # retrying" -- the ENTIRE pipeline (model load, embedding, full
+        # sweep) then re-runs from scratch. Not confirmed whether RunPod
+        # restarts on any exit or only non-zero ones, so this assumes the
+        # worse case (any exit) rather than betting on the better one.
+        # A hang (Bug 1) bills at a steady rate; this compounds -- full paid
+        # re-runs, repeatedly, for as long as the failure persists. So on
+        # failure here, do NOT exit at all: idle instead. The pipeline
+        # already succeeded and results are already safe on the Network
+        # Volume, so nothing is lost by staying alive -- only additional
+        # idle billing until a human notices and stops the pod by hand.
+        print(
+            f"[run_and_terminate] PIPELINE SUCCEEDED, results are safe on "
+            f"the Network Volume. Termination call FAILED: {e!r}. "
+            f"This pod may still be billing -- check manually and stop it "
+            f"if so. Idling instead of exiting, since an exit here has "
+            f"already been observed to trigger a full pipeline re-run "
+            f"rather than a clean stop.",
+            file=sys.stderr,
+        )
+        _idle_forever()
+
+
+def _idle_forever() -> None:
+    """
+    Deliberately has no timeout of its own, unlike Bug 1's pipeline hang
+    (which resolves on its own once that fix lands). This branch only
+    triggers AFTER a confirmed successful run, so the actual work and
+    results are never at risk -- only additional idle billing time until a
+    human notices the log message above and stops the pod manually. A
+    bounded idle timeout here too is a deliberate future decision, not
+    something to add unasked.
+    """
+    while True:
+        time.sleep(3600)
 
 
 if __name__ == "__main__":
