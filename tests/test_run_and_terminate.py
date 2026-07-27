@@ -69,21 +69,33 @@ def mock_delete(monkeypatch):
     return fake
 
 
-def test_no_terminate_when_pipeline_fails(monkeypatch, tmp_path, mock_delete):
+@pytest.fixture
+def mock_idle(monkeypatch):
+    """
+    Stand in for _idle_forever, the base of every failure path's shared
+    choke point (_fail_and_idle). Records that it was reached instead of
+    actually looping forever, so a failure-path test can assert "the script
+    idled" without hanging.
+    """
+    calls = []
+    monkeypatch.setattr(rt, "_idle_forever", lambda: calls.append(True))
+    return calls
+
+
+def test_no_terminate_when_pipeline_fails(monkeypatch, tmp_path, mock_delete, mock_idle):
     monkeypatch.setenv("RAG_SCRATCH_DIR", str(tmp_path))
     monkeypatch.setenv("RUNPOD_API_KEY", "should-never-be-used")
     monkeypatch.setenv("RUNPOD_POD_ID", "should-never-be-used")
     monkeypatch.setattr(rt, "run_pipeline", lambda: 3)  # non-zero exit
 
-    with pytest.raises(SystemExit) as exc:
-        rt.main()
+    rt.main()  # must NOT sys.exit -- routes through _fail_and_idle instead
 
-    assert exc.value.code == 3
+    assert mock_idle == [True]
     mock_delete.assert_not_called()
 
 
 def test_no_terminate_when_exit_zero_but_results_missing(
-    monkeypatch, tmp_path, mock_delete
+    monkeypatch, tmp_path, mock_delete, mock_idle
 ):
     # Sweep "succeeds" (exit 0) but writes nothing -- the silent-failure case.
     monkeypatch.setenv("RAG_SCRATCH_DIR", str(tmp_path))
@@ -91,15 +103,14 @@ def test_no_terminate_when_exit_zero_but_results_missing(
     monkeypatch.setenv("RUNPOD_POD_ID", "should-never-be-used")
     monkeypatch.setattr(rt, "run_pipeline", lambda: 0)
 
-    with pytest.raises(SystemExit) as exc:
-        rt.main()
+    rt.main()
 
-    assert exc.value.code == 1
+    assert mock_idle == [True]
     mock_delete.assert_not_called()
 
 
 def test_no_terminate_when_a_result_file_is_empty(
-    monkeypatch, tmp_path, mock_delete
+    monkeypatch, tmp_path, mock_delete, mock_idle
 ):
     # Exit 0 and both files present, but one is zero bytes -- still unverified.
     results = tmp_path / "results"
@@ -110,14 +121,13 @@ def test_no_terminate_when_a_result_file_is_empty(
     monkeypatch.setenv("RUNPOD_POD_ID", "should-never-be-used")
     monkeypatch.setattr(rt, "run_pipeline", lambda: 0)
 
-    with pytest.raises(SystemExit) as exc:
-        rt.main()
+    rt.main()
 
-    assert exc.value.code == 1
+    assert mock_idle == [True]
     mock_delete.assert_not_called()
 
 
-def test_refuses_to_run_without_scratch_dir(monkeypatch, mock_delete):
+def test_refuses_to_run_without_scratch_dir(monkeypatch, mock_delete, mock_idle):
     monkeypatch.delenv("RAG_SCRATCH_DIR", raising=False)
     # Clear the RunPod credentials too, so this test is hermetic: if it only
     # unset RAG_SCRATCH_DIR, a developer machine that happens to export these
@@ -131,10 +141,9 @@ def test_refuses_to_run_without_scratch_dir(monkeypatch, mock_delete):
         rt, "run_pipeline", lambda: pytest.fail("pipeline should not start")
     )
 
-    with pytest.raises(SystemExit) as exc:
-        rt.main()
+    rt.main()
 
-    assert exc.value.code == 1
+    assert mock_idle == [True]
     mock_delete.assert_not_called()
 
 
@@ -242,21 +251,19 @@ def test_run_pipeline_unaffected_by_timeout_on_normal_fast_completion(monkeypatc
     assert rt.run_pipeline() == 0
 
 
-def test_main_exits_1_and_does_not_terminate_on_timeout(
-    monkeypatch, tmp_path, mock_delete
+def test_main_idles_and_does_not_terminate_on_timeout(
+    monkeypatch, tmp_path, mock_delete, mock_idle
 ):
     monkeypatch.setenv("RAG_SCRATCH_DIR", str(tmp_path))
     monkeypatch.setenv("RUNPOD_API_KEY", "should-never-be-used")
     monkeypatch.setenv("RUNPOD_POD_ID", "should-never-be-used")
     # None is what run_pipeline returns on timeout -- distinct from a real
-    # exit code, since sys.exit(None) would exit 0 and silently report a
-    # hang as success. This proves main() catches that case specifically.
+    # exit code. main() must route it through _fail_and_idle, not sys.exit.
     monkeypatch.setattr(rt, "run_pipeline", lambda: None)
 
-    with pytest.raises(SystemExit) as exc:
-        rt.main()
+    rt.main()
 
-    assert exc.value.code == 1
+    assert mock_idle == [True]
     mock_delete.assert_not_called()
 
 
@@ -311,16 +318,14 @@ def _happy_path_env(monkeypatch, tmp_path):
 
 
 def test_terminate_failure_does_not_crash_main_and_idles_instead(
-    monkeypatch, tmp_path, mock_delete, capsys
+    monkeypatch, tmp_path, mock_delete, mock_idle, capsys
 ):
     _happy_path_env(monkeypatch, tmp_path)
     mock_delete.return_value.raise_for_status.side_effect = requests.HTTPError("403 Forbidden")
-    idle_calls = []
-    monkeypatch.setattr(rt, "_idle_forever", lambda: idle_calls.append(True))
 
     rt.main()  # must NOT raise and must NOT sys.exit
 
-    assert idle_calls == [True]
+    assert mock_idle == [True]
     err = capsys.readouterr().err
     # the message needs to be unmistakable in a log stream -- this is the
     # only thing standing between "billing continues but is visible and
@@ -331,32 +336,39 @@ def test_terminate_failure_does_not_crash_main_and_idles_instead(
 
 
 def test_terminate_failure_of_any_exception_type_is_caught(
-    monkeypatch, tmp_path, mock_delete
+    monkeypatch, tmp_path, mock_delete, mock_idle
 ):
     # Not just HTTPError -- a connection error, timeout, or anything else
     # raised by requests.delete/raise_for_status must also be caught.
     _happy_path_env(monkeypatch, tmp_path)
     mock_delete.side_effect = requests.ConnectionError("credential issue")
-    idle_calls = []
-    monkeypatch.setattr(rt, "_idle_forever", lambda: idle_calls.append(True))
 
     rt.main()
 
-    assert idle_calls == [True]
+    assert mock_idle == [True]
 
 
 def test_terminate_success_path_unchanged_no_idle_loop_triggered(
-    monkeypatch, tmp_path, mock_delete, capsys
+    monkeypatch, tmp_path, mock_delete, mock_idle, capsys
 ):
     _happy_path_env(monkeypatch, tmp_path)
-    idle_calls = []
-    monkeypatch.setattr(rt, "_idle_forever", lambda: idle_calls.append(True))
 
     rt.main()  # no SystemExit, no exception
 
     mock_delete.assert_called_once()
-    assert idle_calls == []  # success must never idle
+    assert mock_idle == []  # success must never idle
     assert "pod terminated successfully." in capsys.readouterr().out
+
+
+def test_fail_and_idle_logs_message_and_delegates_to_idle_forever(
+    monkeypatch, mock_idle, capsys
+):
+    rt._fail_and_idle("something specific went wrong")
+
+    assert mock_idle == [True]
+    err = capsys.readouterr().err
+    assert "FAILURE: something specific went wrong" in err
+    assert "idling instead of exiting" in err
 
 
 def test_idle_forever_actually_calls_time_sleep_in_a_loop(monkeypatch):
@@ -381,26 +393,24 @@ def test_idle_forever_actually_calls_time_sleep_in_a_loop(monkeypatch):
     assert sleep_calls == [3600, 3600, 3600]
 
 
-def test_timeout_and_termination_failure_paths_do_not_overlap(
-    monkeypatch, tmp_path, mock_delete
+def test_timeout_never_reaches_terminate_pod_call_site(
+    monkeypatch, tmp_path, mock_delete, mock_idle
 ):
     """
     Bug 1's timeout wraps the pipeline subprocess itself (run_pipeline,
-    before verify_success). This wraps a later, separate step in main()
-    (terminate_pod, after verify_success). Explicitly checked, not assumed:
-    a pipeline timeout must never reach terminate_pod or the idle branch at
-    all -- verify_success() is never even reached on a timeout.
+    before verify_success). Termination is a later, separate step in main()
+    (terminate_pod, after verify_success). Both routes now share the same
+    _fail_and_idle -> _idle_forever choke point (that's the point of this
+    refactor) -- what must stay distinct is that a pipeline timeout never
+    reaches terminate_pod's call site at all, since verify_success() is
+    never even reached on a timeout. Explicitly checked here, not assumed.
     """
     monkeypatch.setenv("RAG_SCRATCH_DIR", str(tmp_path))
     monkeypatch.setenv("RUNPOD_API_KEY", "test-key")
     monkeypatch.setenv("RUNPOD_POD_ID", "pod-abc123")
     monkeypatch.setattr(rt, "run_pipeline", lambda: None)  # simulates a timeout
-    idle_calls = []
-    monkeypatch.setattr(rt, "_idle_forever", lambda: idle_calls.append(True))
 
-    with pytest.raises(SystemExit) as exc:
-        rt.main()
+    rt.main()
 
-    assert exc.value.code == 1
     mock_delete.assert_not_called()  # terminate_pod's call site never reached
-    assert idle_calls == []  # the idle-on-termination-failure branch is distinct
+    assert mock_idle == [True]  # still routed through the shared choke point

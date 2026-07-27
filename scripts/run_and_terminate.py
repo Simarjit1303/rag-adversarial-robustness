@@ -140,84 +140,86 @@ def terminate_pod(pod_id: str, api_key: str) -> None:
     response.raise_for_status()  # raises on anything other than 2xx
 
 
+def _fail_and_idle(message: str) -> None:
+    """
+    The only place any failure path in this script should end up. Never
+    sys.exit() or let an exception propagate from a failure branch directly
+    -- call this instead.
+
+    Exists because idling was previously applied at one failure site only
+    (termination-call failure, Bug 3), and every other failure site still
+    exited normally after logging intent ("NOT terminating. Pod stays alive
+    for inspection") -- which was directly observed to be false: RunPod
+    restarts on the exit itself regardless of what got printed first,
+    triggering a full paid pipeline re-run, repeatedly, not just once. This
+    is now the universal rule for every failure, enforced structurally
+    (one choke point) rather than remembered per-site.
+    """
+    print(
+        f"[run_and_terminate] FAILURE: {message} -- idling instead of "
+        f"exiting. Any exit here has been directly observed to trigger a "
+        f"full pipeline re-run rather than a clean stop. Stop this pod "
+        f"manually once you've finished inspecting.",
+        file=sys.stderr,
+    )
+    _idle_forever()  # reuse Bug 3's existing, already-tested idle loop
+
+
+def _idle_forever() -> None:
+    """
+    Deliberately has no timeout of its own, unlike Bug 1's pipeline hang
+    (which resolves on its own once that fix lands). Every path that reaches
+    this only does so AFTER either a confirmed successful run or a failure
+    whose evidence (partial results, logs) is worth preserving, so the
+    actual work is never at risk -- only additional idle billing time until
+    a human notices the log message above and stops the pod manually. A
+    bounded idle timeout here too is a deliberate future decision, not
+    something to add unasked.
+    """
+    while True:
+        time.sleep(3600)
+
+
 def main() -> None:
     scratch_dir = os.environ.get("RAG_SCRATCH_DIR")
     if not scratch_dir:
-        print(
-            "[run_and_terminate] RAG_SCRATCH_DIR not set -- refusing to run.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+        _fail_and_idle("RAG_SCRATCH_DIR not set -- refusing to run")
+        return
 
     returncode = run_pipeline()
     if returncode is None:
-        # Timeout, not a real exit code -- sys.exit(None) would exit 0, which
-        # would look like success. Exit 1 instead, same as any other failure.
-        print(
-            "[run_and_terminate] sweep TIMED OUT -- NOT terminating. Pod "
-            "stays alive for inspection.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+        # None (not a real exit code) is what run_pipeline() returns on a
+        # pipeline timeout (Bug 1).
+        _fail_and_idle("pipeline TIMED OUT")
+        return
     if returncode != 0:
-        print(
-            f"[run_and_terminate] sweep exited {returncode} -- NOT "
-            f"terminating. Pod stays alive for inspection.",
-            file=sys.stderr,
-        )
-        sys.exit(returncode)
+        _fail_and_idle(f"pipeline stage exited {returncode}")
+        return
 
     if not verify_success(scratch_dir):
-        print(
-            "[run_and_terminate] sweep exited 0 but expected output files are "
-            "missing or empty -- NOT terminating. Investigate before assuming "
-            "this run succeeded.",
-            file=sys.stderr,
+        _fail_and_idle(
+            "pipeline exited 0 but expected output files are missing or "
+            "empty -- investigate before assuming this run succeeded"
         )
-        sys.exit(1)
+        return
 
     print("[run_and_terminate] sweep confirmed successful. Terminating pod.")
     try:
         terminate_pod(os.environ["RUNPOD_POD_ID"], os.environ["RUNPOD_API_KEY"])
         print("[run_and_terminate] pod terminated successfully.")
     except Exception as e:
-        # Confirmed by direct observation, twice, on real RunPod pods: an
-        # unhandled exception here crashes the process, and something in
-        # RunPod's pod orchestration reads that crash-exit as "needs
-        # retrying" -- the ENTIRE pipeline (model load, embedding, full
-        # sweep) then re-runs from scratch. Not confirmed whether RunPod
-        # restarts on any exit or only non-zero ones, so this assumes the
-        # worse case (any exit) rather than betting on the better one.
-        # A hang (Bug 1) bills at a steady rate; this compounds -- full paid
-        # re-runs, repeatedly, for as long as the failure persists. So on
-        # failure here, do NOT exit at all: idle instead. The pipeline
-        # already succeeded and results are already safe on the Network
-        # Volume, so nothing is lost by staying alive -- only additional
-        # idle billing until a human notices and stops the pod by hand.
-        print(
-            f"[run_and_terminate] PIPELINE SUCCEEDED, results are safe on "
-            f"the Network Volume. Termination call FAILED: {e!r}. "
-            f"This pod may still be billing -- check manually and stop it "
-            f"if so. Idling instead of exiting, since an exit here has "
-            f"already been observed to trigger a full pipeline re-run "
-            f"rather than a clean stop.",
-            file=sys.stderr,
+        # Genuine success path up to this point -- pipeline succeeded and
+        # results are already safe on the Network Volume -- so this is the
+        # one failure site where nothing is lost by idling instead of
+        # exiting; still routed through the same shared choke point as
+        # every other failure, not a separate inline idle loop, so there is
+        # one implementation instead of two that could drift apart later.
+        _fail_and_idle(
+            f"PIPELINE SUCCEEDED, results are safe on the Network Volume. "
+            f"Termination call FAILED: {e!r}. This pod may still be "
+            f"billing -- check manually"
         )
-        _idle_forever()
-
-
-def _idle_forever() -> None:
-    """
-    Deliberately has no timeout of its own, unlike Bug 1's pipeline hang
-    (which resolves on its own once that fix lands). This branch only
-    triggers AFTER a confirmed successful run, so the actual work and
-    results are never at risk -- only additional idle billing time until a
-    human notices the log message above and stops the pod manually. A
-    bounded idle timeout here too is a deliberate future decision, not
-    something to add unasked.
-    """
-    while True:
-        time.sleep(3600)
+        return
 
 
 if __name__ == "__main__":
