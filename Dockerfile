@@ -12,10 +12,16 @@ WORKDIR /app
 # faiss-cpu ships confirmed Linux cp313 wheels, so the swig + libopenblas-dev
 # source-build fallback should never trigger on this base image; they are kept
 # as insurance against a wheel-resolution surprise in the paid Azure build.
+# ffmpeg: torchcodec (a transitive dependency of vllm, unused by this
+# text-only pipeline) dlopen()s FFmpeg's shared libraries at import time and
+# fails hard if they're absent (OSError: Could not load this library,
+# observed on the 2026-07-27 RunPod smoke test). Colab's base image ships
+# FFmpeg, masking the gap until the image was actually run, not just built.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     swig \
     libopenblas-dev \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first to leverage Docker's caching layer
