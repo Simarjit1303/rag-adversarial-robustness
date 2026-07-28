@@ -28,6 +28,8 @@ from pathlib import Path
 
 import requests
 
+from evaluation.result_paths import expected_result_files
+
 # 6h default is generous for a real sweep; override to something short (e.g.
 # 1800 = 30 min) for smoke tests via the pod's env vars. Exists because a
 # genuine hang (phi-4-mini loaded, then 0% CPU/GPU for 12+ minutes with zero
@@ -53,26 +55,29 @@ PIPELINE_STAGES = (
     [sys.executable, "-m", "evaluation.run_baseline"],
 )
 
-# The exact files run_baseline.py writes (confirmed in evaluation/run_baseline.py:
-# RESULTS_DIR / "baseline_raw.jsonl" and RESULTS_DIR / "baseline_summary.csv").
-# Checked by name, not a *.jsonl / *.csv glob, so a stray leftover file can
-# never be mistaken for a real result.
-EXPECTED_RESULT_FILES = ("baseline_raw.jsonl", "baseline_summary.csv")
+# Which exact files run_baseline.py writes now depends on RAG_MODELS /
+# RAG_CORPORA / INFERENCE_ENGINE -- a single fixed pair of filenames
+# silently overwrote the prior run's results every time a different
+# model/corpus/engine combination finished (see evaluation/result_paths.py,
+# the single source of truth for this naming shared with run_baseline.py).
+# expected_result_files() resolves the exact set for THIS process's env
+# vars, checked by name (not a *.jsonl / *.csv glob), so a stray leftover
+# file can never be mistaken for a real result.
 
 
 def verify_success(scratch_dir: str) -> bool:
     """
     Confirm results actually landed, not just that the sweep process exited 0.
 
-    Both expected output files (the raw per-question JSONL and the summary
-    CSV, written via PR #9's atomic-write pattern) must exist and be
-    non-empty. An exit code alone doesn't prove correct output.
+    Every expected output file for this run's (model, corpus, engine)
+    selection -- the raw per-question JSONL and the summary CSV, written
+    via PR #9's atomic-write pattern -- must exist and be non-empty. An
+    exit code alone doesn't prove correct output.
     """
     results_dir = Path(scratch_dir) / "results"
     if not results_dir.exists():
         return False
-    for name in EXPECTED_RESULT_FILES:
-        f = results_dir / name
+    for f in expected_result_files(results_dir):
         if not f.exists() or f.stat().st_size == 0:
             return False
     return True

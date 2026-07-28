@@ -26,10 +26,27 @@ def _write(path, content="x"):
     path.write_text(content, encoding="utf-8")
 
 
-def test_verify_success_true_when_both_files_present_and_nonempty(tmp_path):
+# Result filenames are namespaced by (model, corpus, engine) -- see
+# evaluation/result_paths.py -- because a single fixed pair used to be
+# silently overwritten by the next run that used a different one of those
+# three. Tests pin RAG_MODELS/RAG_CORPORA/INFERENCE_ENGINE to exactly one
+# cell so the expected file set stays small and explicit rather than the
+# full model x corpus matrix.
+RAW_NAME = "baseline_raw_phi-4-mini_nq_open_hf.jsonl"
+SUMMARY_NAME = "baseline_summary_phi-4-mini_nq_open_hf.csv"
+
+
+def _set_single_cell_env(monkeypatch):
+    monkeypatch.setenv("RAG_MODELS", "phi-4-mini")
+    monkeypatch.setenv("RAG_CORPORA", "nq_open")
+    monkeypatch.setenv("INFERENCE_ENGINE", "hf")
+
+
+def test_verify_success_true_when_both_files_present_and_nonempty(monkeypatch, tmp_path):
+    _set_single_cell_env(monkeypatch)
     results = tmp_path / "results"
-    _write(results / "baseline_raw.jsonl", '{"model": "phi-4-mini"}\n')
-    _write(results / "baseline_summary.csv", "model,corpus,n\n")
+    _write(results / RAW_NAME, '{"model": "phi-4-mini"}\n')
+    _write(results / SUMMARY_NAME, "model,corpus,n\n")
     assert rt.verify_success(str(tmp_path)) is True
 
 
@@ -38,17 +55,36 @@ def test_verify_success_false_when_results_dir_missing(tmp_path):
     assert rt.verify_success(str(tmp_path)) is False
 
 
-def test_verify_success_false_when_a_file_is_missing(tmp_path):
+def test_verify_success_false_when_a_file_is_missing(monkeypatch, tmp_path):
+    _set_single_cell_env(monkeypatch)
     results = tmp_path / "results"
-    _write(results / "baseline_raw.jsonl", '{"model": "phi-4-mini"}\n')
+    _write(results / RAW_NAME, '{"model": "phi-4-mini"}\n')
     # summary CSV absent
     assert rt.verify_success(str(tmp_path)) is False
 
 
-def test_verify_success_false_when_a_file_is_empty(tmp_path):
+def test_verify_success_false_when_a_file_is_empty(monkeypatch, tmp_path):
+    _set_single_cell_env(monkeypatch)
     results = tmp_path / "results"
-    _write(results / "baseline_raw.jsonl", '{"model": "phi-4-mini"}\n')
-    _write(results / "baseline_summary.csv", "")  # present but empty
+    _write(results / RAW_NAME, '{"model": "phi-4-mini"}\n')
+    _write(results / SUMMARY_NAME, "")  # present but empty
+    assert rt.verify_success(str(tmp_path)) is False
+
+
+def test_verify_success_false_when_only_one_of_two_requested_cells_is_present(
+    monkeypatch, tmp_path
+):
+    # RAG_MODELS/RAG_CORPORA can request MULTIPLE cells at once -- every one
+    # of them must have written files, not just the last to finish. This is
+    # the exact shape of the original bug: a partial matrix must not report
+    # success just because SOME file exists.
+    monkeypatch.setenv("RAG_MODELS", "phi-4-mini")
+    monkeypatch.setenv("RAG_CORPORA", "nq_open,ms_marco")
+    monkeypatch.setenv("INFERENCE_ENGINE", "hf")
+    results = tmp_path / "results"
+    _write(results / "baseline_raw_phi-4-mini_nq_open_hf.jsonl", '{"model": "phi-4-mini"}\n')
+    _write(results / "baseline_summary_phi-4-mini_nq_open_hf.csv", "model,corpus,n\n")
+    # ms_marco's cell never wrote anything
     assert rt.verify_success(str(tmp_path)) is False
 
 
@@ -113,9 +149,10 @@ def test_no_terminate_when_a_result_file_is_empty(
     monkeypatch, tmp_path, mock_delete, mock_idle
 ):
     # Exit 0 and both files present, but one is zero bytes -- still unverified.
+    _set_single_cell_env(monkeypatch)
     results = tmp_path / "results"
-    _write(results / "baseline_raw.jsonl", '{"model": "phi-4-mini"}\n')
-    _write(results / "baseline_summary.csv", "")
+    _write(results / RAW_NAME, '{"model": "phi-4-mini"}\n')
+    _write(results / SUMMARY_NAME, "")
     monkeypatch.setenv("RAG_SCRATCH_DIR", str(tmp_path))
     monkeypatch.setenv("RUNPOD_TERMINATE_KEY", "should-never-be-used")
     monkeypatch.setenv("RUNPOD_POD_ID", "should-never-be-used")
@@ -148,9 +185,10 @@ def test_refuses_to_run_without_scratch_dir(monkeypatch, mock_delete, mock_idle)
 
 
 def test_terminates_only_on_verified_success(monkeypatch, tmp_path, mock_delete):
+    _set_single_cell_env(monkeypatch)
     results = tmp_path / "results"
-    _write(results / "baseline_raw.jsonl", '{"model": "phi-4-mini"}\n')
-    _write(results / "baseline_summary.csv", "model,corpus,n\n")
+    _write(results / RAW_NAME, '{"model": "phi-4-mini"}\n')
+    _write(results / SUMMARY_NAME, "model,corpus,n\n")
     monkeypatch.setenv("RAG_SCRATCH_DIR", str(tmp_path))
     monkeypatch.setenv("RUNPOD_TERMINATE_KEY", "test-key")
     monkeypatch.setenv("RUNPOD_POD_ID", "pod-abc123")
@@ -308,9 +346,10 @@ def test_run_pipeline_real_hang_is_actually_killed_within_timeout_window(tmp_pat
 # --------------------------------------------------------------------------
 
 def _happy_path_env(monkeypatch, tmp_path):
+    _set_single_cell_env(monkeypatch)
     results = tmp_path / "results"
-    _write(results / "baseline_raw.jsonl", '{"model": "phi-4-mini"}\n')
-    _write(results / "baseline_summary.csv", "model,corpus,n\n")
+    _write(results / RAW_NAME, '{"model": "phi-4-mini"}\n')
+    _write(results / SUMMARY_NAME, "model,corpus,n\n")
     monkeypatch.setenv("RAG_SCRATCH_DIR", str(tmp_path))
     monkeypatch.setenv("RUNPOD_TERMINATE_KEY", "test-key")
     monkeypatch.setenv("RUNPOD_POD_ID", "pod-abc123")

@@ -1,18 +1,30 @@
 """
 Phase 1 baseline sweep: all four models x all three corpora, clean queries only.
 
-Produces:
-  results/baseline_raw.jsonl   -- one line per (model, corpus, question), the
-                                    full generated answer + metrics, kept for
+Produces, ONE PAIR PER (model, corpus, engine) CELL -- see
+evaluation/result_paths.py for the exact naming, and its module docstring
+for why: a single fixed filename silently overwrote the prior run's data
+every time a different model/corpus/engine combination finished:
+  results/baseline_raw_{model}_{corpus}_{engine}.jsonl    -- one line per
+                                    question in that cell, the full
+                                    generated answer + metrics, kept for
                                     the McNemar significance tests in Phase 4
-  results/baseline_summary.csv -- aggregated metrics per model x corpus.
-                                    f1_clean (F1 on the cleaned string) is the
-                                    primary utility metric (headline number in
-                                    every summary table); EM, also on the
-                                    cleaned string, is secondary; f1_raw is
-                                    kept for comparability with pre-cleanup
-                                    runs; contains_answer is diagnostic only
-                                    and never feeds a headline table.
+  results/baseline_summary_{model}_{corpus}_{engine}.csv  -- that cell's
+                                    aggregated metrics. f1_clean (F1 on the
+                                    cleaned string) is the primary utility
+                                    metric (headline number in every summary
+                                    table); EM, also on the cleaned string,
+                                    is secondary; f1_raw is kept for
+                                    comparability with pre-cleanup runs;
+                                    contains_answer is diagnostic only and
+                                    never feeds a headline table.
+
+Run scripts/aggregate_baseline_summaries.py once ALL cells you care about
+have finished writing, to combine their per-cell summary CSVs into one
+baseline_summary_all.csv -- not done live here, since a shared file every
+concurrent/sequential run appends to would need its own append-safe write
+pattern over the Network Volume, whose atomicity under concurrent access is
+unverified (see data/build_index.py's atomic-write notes).
 
 Run this AFTER data/loader.py and data/build_index.py have been run once
 (or let it build indices on the fly the first time — slower, but works).
@@ -32,6 +44,7 @@ from config import CORPORA, MODELS, RESULTS_DIR, SEED, TOP_K, RAG_VLLM_MAX_MODEL
 from data.build_index import build_index
 from data.normalize import extract_gold_answers, extract_question
 from evaluation.metrics import contains_answer, exact_match, f1_score
+from evaluation.result_paths import resolve_sweep_selection, result_file_paths
 from harness.model_loader import load_model
 from harness.pipeline import SYSTEM_PROMPT, build_rag_user_prompt, clean_generation, run_query
 
@@ -63,21 +76,18 @@ def _atomic_open(final_path, newline=None):
 
 
 def run_baseline_sweep(model_keys=None, corpus_names=None, split="dev"):
-    # RAG_MODELS lets a deployment pick models without a code change, e.g.
-    # RAG_MODELS="qwen3-8b,phi-4-mini" — useful when a gated model (Llama)
-    # is still awaiting HF access approval.
-    if model_keys is None and os.environ.get("RAG_MODELS"):
-        model_keys = [m.strip() for m in os.environ["RAG_MODELS"].split(",") if m.strip()]
-    model_keys = model_keys or list(MODELS)
-
-    # RAG_CORPORA mirrors RAG_MODELS above -- lets a deployment restrict the
-    # corpus loop (e.g. a smoke test with RAG_CORPORA=nq_open) without a code
-    # change. Previously documented/assumed but never actually wired up: a
-    # RunPod run launched with RAG_CORPORA=nq_open still built indices for
-    # every corpus in CORPORA.
-    if corpus_names is None and os.environ.get("RAG_CORPORA"):
-        corpus_names = [c.strip() for c in os.environ["RAG_CORPORA"].split(",") if c.strip()]
-    corpus_names = corpus_names or list(CORPORA)
+    # RAG_MODELS/RAG_CORPORA/INFERENCE_ENGINE let a deployment restrict or
+    # select a subset without a code change, e.g. RAG_MODELS="phi-4-mini"
+    # for a smoke test, or one pod per cell for a parallel sweep. An explicit
+    # function argument still wins over the env var, same precedence as
+    # before this refactor -- resolve_sweep_selection() only supplies the
+    # env-var-driven default, kept in evaluation/result_paths.py so this
+    # module and scripts/run_and_terminate.py can never read it differently.
+    default_model_keys, default_corpus_names, engine = resolve_sweep_selection()
+    if model_keys is None:
+        model_keys = default_model_keys
+    if corpus_names is None:
+        corpus_names = default_corpus_names
 
     unknown = [m for m in model_keys if m not in MODELS]
     if unknown:
@@ -92,7 +102,6 @@ def run_baseline_sweep(model_keys=None, corpus_names=None, split="dev"):
     # path below, byte-for-byte unchanged. "vllm" routes to a genuinely
     # different control flow: one batched generate() call per
     # (model, corpus) pair, which is where the throughput gain comes from.
-    engine = os.environ.get("INFERENCE_ENGINE", "hf")
     if engine not in ("hf", "vllm"):
         raise ValueError(
             f"INFERENCE_ENGINE must be 'hf' or 'vllm', got '{engine}'"
@@ -110,28 +119,36 @@ def run_baseline_sweep(model_keys=None, corpus_names=None, split="dev"):
               "For 4 models x 3 corpora this is impractical. Install the CUDA torch "
               "wheel (see requirements.txt) or run on a GPU machine.")
 
-    raw_path = RESULTS_DIR / "baseline_raw.jsonl"
     summary_rows = []
 
-    with _atomic_open(raw_path) as raw_f:
-        for model_key in model_keys:
-            print(f"\n=== Loading {model_key} ===")
-            try:
-                model, tokenizer = load_model(model_key)
-            except Exception as e:
-                # One model failing to load (gated repo, missing class, OOM)
-                # must not kill the whole paid sweep — skip and keep going.
-                print(f"[baseline] SKIPPING {model_key}: failed to load — "
-                      f"{type(e).__name__}: {e}")
-                continue
+    for model_key in model_keys:
+        print(f"\n=== Loading {model_key} ===")
+        try:
+            model, tokenizer = load_model(model_key)
+        except Exception as e:
+            # One model failing to load (gated repo, missing class, OOM)
+            # must not kill the whole paid sweep — skip and keep going.
+            print(f"[baseline] SKIPPING {model_key}: failed to load — "
+                  f"{type(e).__name__}: {e}")
+            continue
 
-            for corpus_name in corpus_names:
-                print(f"--- {model_key} x {corpus_name} ---")
-                index, records = build_index(corpus_name, split=split)
+        for corpus_name in corpus_names:
+            print(f"--- {model_key} x {corpus_name} ---")
+            index, records = build_index(corpus_name, split=split)
 
-                em_scores, f1_clean_scores, f1_raw_scores, ca_scores = [], [], [], []
-                start = time.time()
+            # One raw JSONL + one summary CSV per (model, corpus, engine)
+            # cell -- a single fixed filename for the whole sweep silently
+            # overwrote the prior cell's results every time a different
+            # model/corpus/engine combination finished (see
+            # evaluation/result_paths.py).
+            raw_path, summary_path = result_file_paths(
+                RESULTS_DIR, model_key, corpus_name, engine
+            )
 
+            em_scores, f1_clean_scores, f1_raw_scores, ca_scores = [], [], [], []
+            start = time.time()
+
+            with _atomic_open(raw_path) as raw_f:
                 for i, record in enumerate(records):
                     question = extract_question(corpus_name, record)
                     gold = extract_gold_answers(corpus_name, record)
@@ -175,43 +192,43 @@ def run_baseline_sweep(model_keys=None, corpus_names=None, split="dev"):
                         print(f"  {i + 1}/{len(records)} done "
                               f"({time.time() - start:.0f}s elapsed)")
 
-                mean_em = sum(em_scores) / len(em_scores) if em_scores else float("nan")
-                mean_f1_clean = (sum(f1_clean_scores) / len(f1_clean_scores)
-                                 if f1_clean_scores else float("nan"))
-                mean_f1_raw = (sum(f1_raw_scores) / len(f1_raw_scores)
-                               if f1_raw_scores else float("nan"))
-                mean_ca = sum(ca_scores) / len(ca_scores) if ca_scores else float("nan")
+            mean_em = sum(em_scores) / len(em_scores) if em_scores else float("nan")
+            mean_f1_clean = (sum(f1_clean_scores) / len(f1_clean_scores)
+                             if f1_clean_scores else float("nan"))
+            mean_f1_raw = (sum(f1_raw_scores) / len(f1_raw_scores)
+                           if f1_raw_scores else float("nan"))
+            mean_ca = sum(ca_scores) / len(ca_scores) if ca_scores else float("nan")
 
-                summary_rows.append({
-                    "model": model_key,
-                    "corpus": corpus_name,
-                    "n": len(em_scores),
-                    "f1_clean": round(mean_f1_clean, 4),
-                    "exact_match": round(mean_em, 4),
-                    "f1_raw": round(mean_f1_raw, 4),
-                    "contains_answer_diagnostic": round(mean_ca, 4),
-                })
+            summary_row = {
+                "model": model_key,
+                "corpus": corpus_name,
+                "n": len(em_scores),
+                "f1_clean": round(mean_f1_clean, 4),
+                "exact_match": round(mean_em, 4),
+                "f1_raw": round(mean_f1_raw, 4),
+                "contains_answer_diagnostic": round(mean_ca, 4),
+            }
+            summary_rows.append(summary_row)
 
-                print(f"  {model_key} x {corpus_name}: "
-                      f"F1(clean)={mean_f1_clean:.4f}  EM(clean)={mean_em:.4f}  "
-                      f"F1(raw)={mean_f1_raw:.4f}  "
-                      f"contains(diagnostic)={mean_ca:.4f}  n={len(em_scores)}")
+            with _atomic_open(summary_path, newline="") as f:
+                writer = csv.DictWriter(
+                    f, fieldnames=["model", "corpus", "n", "f1_clean", "exact_match",
+                                   "f1_raw", "contains_answer_diagnostic"]
+                )
+                writer.writeheader()
+                writer.writerow(summary_row)
 
-            del model  # free memory before loading the next model
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            print(f"  {model_key} x {corpus_name}: "
+                  f"F1(clean)={mean_f1_clean:.4f}  EM(clean)={mean_em:.4f}  "
+                  f"F1(raw)={mean_f1_raw:.4f}  "
+                  f"contains(diagnostic)={mean_ca:.4f}  n={len(em_scores)}")
+            print(f"  raw -> {raw_path}")
+            print(f"  summary -> {summary_path}")
 
-    summary_path = RESULTS_DIR / "baseline_summary.csv"
-    with _atomic_open(summary_path, newline="") as f:
-        writer = csv.DictWriter(
-            f, fieldnames=["model", "corpus", "n", "f1_clean", "exact_match",
-                           "f1_raw", "contains_answer_diagnostic"]
-        )
-        writer.writeheader()
-        writer.writerows(summary_rows)
+        del model  # free memory before loading the next model
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
-    print(f"\nRaw per-question results -> {raw_path}")
-    print(f"Summary table -> {summary_path}")
     return summary_rows
 
 
@@ -268,49 +285,55 @@ def _run_vllm_sweep(model_keys, corpus_names, split):
         print("[baseline] WARNING: CUDA not available — vLLM requires a GPU; "
               "the load below is expected to fail on this machine.")
 
-    raw_path = RESULTS_DIR / "baseline_raw.jsonl"
     summary_rows = []
 
-    with _atomic_open(raw_path) as raw_f:
-        for model_key in model_keys:
-            print(f"\n=== Loading {model_key} (vLLM) ===")
-            # Deliberately NOT wrapped in try/except, unlike the HF loop: a
-            # failed vLLM load leaves GPU/NCCL state dirty, so loading the
-            # next model in this same process would fail confusingly anyway.
-            # Let it crash and let the container restart policy handle it —
-            # see the design note in harness/vllm_engine.py.
-            llm = load_vllm_model(model_key, max_model_len=max_model_len)
+    for model_key in model_keys:
+        print(f"\n=== Loading {model_key} (vLLM) ===")
+        # Deliberately NOT wrapped in try/except, unlike the HF loop: a
+        # failed vLLM load leaves GPU/NCCL state dirty, so loading the
+        # next model in this same process would fail confusingly anyway.
+        # Let it crash and let the container restart policy handle it —
+        # see the design note in harness/vllm_engine.py.
+        llm = load_vllm_model(model_key, max_model_len=max_model_len)
 
-            for corpus_name in corpus_names:
-                print(f"--- {model_key} x {corpus_name} (vLLM, batched) ---")
-                index, records = build_index(corpus_name, split=split)
+        for corpus_name in corpus_names:
+            print(f"--- {model_key} x {corpus_name} (vLLM, batched) ---")
+            index, records = build_index(corpus_name, split=split)
 
-                # Pass 1: retrieval + prompt construction for every valid
-                # question, identical filtering to the HF loop.
-                questions, golds, user_prompts, retrieved_ids = [], [], [], []
-                for record in records:
-                    question = extract_question(corpus_name, record)
-                    gold = extract_gold_answers(corpus_name, record)
-                    if not question or not gold:
-                        continue
-                    user_prompt, retrieved = build_rag_user_prompt(
-                        index, records, question, top_k=TOP_K
-                    )
-                    questions.append(question)
-                    golds.append(gold)
-                    user_prompts.append(user_prompt)
-                    retrieved_ids.append([idx for idx, _ in enumerate(retrieved)])
+            # One raw JSONL + one summary CSV per (model, corpus, engine)
+            # cell -- same fix, same reason as the HF loop above (see
+            # evaluation/result_paths.py).
+            raw_path, summary_path = result_file_paths(
+                RESULTS_DIR, model_key, corpus_name, "vllm"
+            )
 
-                # Pass 2: one batched generate call for the whole corpus.
-                start = time.time()
-                print(f"  sending {len(user_prompts)} prompts in one batch")
-                outputs = generate_batch(llm, model_key, SYSTEM_PROMPT, user_prompts)
-                print(f"  batch generated in {time.time() - start:.0f}s")
+            # Pass 1: retrieval + prompt construction for every valid
+            # question, identical filtering to the HF loop.
+            questions, golds, user_prompts, retrieved_ids = [], [], [], []
+            for record in records:
+                question = extract_question(corpus_name, record)
+                gold = extract_gold_answers(corpus_name, record)
+                if not question or not gold:
+                    continue
+                user_prompt, retrieved = build_rag_user_prompt(
+                    index, records, question, top_k=TOP_K
+                )
+                questions.append(question)
+                golds.append(gold)
+                user_prompts.append(user_prompt)
+                retrieved_ids.append([idx for idx, _ in enumerate(retrieved)])
 
-                # Pass 3: score + write rows — same fields, same metric
-                # hierarchy as the HF loop (f1_clean primary, EM secondary,
-                # f1_raw comparability, contains_answer diagnostic).
-                em_scores, f1_clean_scores, f1_raw_scores, ca_scores = [], [], [], []
+            # Pass 2: one batched generate call for the whole corpus.
+            start = time.time()
+            print(f"  sending {len(user_prompts)} prompts in one batch")
+            outputs = generate_batch(llm, model_key, SYSTEM_PROMPT, user_prompts)
+            print(f"  batch generated in {time.time() - start:.0f}s")
+
+            # Pass 3: score + write rows — same fields, same metric
+            # hierarchy as the HF loop (f1_clean primary, EM secondary,
+            # f1_raw comparability, contains_answer diagnostic).
+            em_scores, f1_clean_scores, f1_raw_scores, ca_scores = [], [], [], []
+            with _atomic_open(raw_path) as raw_f:
                 for question, gold, doc_ids, generated in zip(
                     questions, golds, retrieved_ids, outputs
                 ):
@@ -341,48 +364,48 @@ def _run_vllm_sweep(model_keys, corpus_names, split):
                         "retrieved_doc_ids": doc_ids,
                     }, ensure_ascii=False) + "\n")
 
-                mean_em = sum(em_scores) / len(em_scores) if em_scores else float("nan")
-                mean_f1_clean = (sum(f1_clean_scores) / len(f1_clean_scores)
-                                 if f1_clean_scores else float("nan"))
-                mean_f1_raw = (sum(f1_raw_scores) / len(f1_raw_scores)
-                               if f1_raw_scores else float("nan"))
-                mean_ca = sum(ca_scores) / len(ca_scores) if ca_scores else float("nan")
+            mean_em = sum(em_scores) / len(em_scores) if em_scores else float("nan")
+            mean_f1_clean = (sum(f1_clean_scores) / len(f1_clean_scores)
+                             if f1_clean_scores else float("nan"))
+            mean_f1_raw = (sum(f1_raw_scores) / len(f1_raw_scores)
+                           if f1_raw_scores else float("nan"))
+            mean_ca = sum(ca_scores) / len(ca_scores) if ca_scores else float("nan")
 
-                summary_rows.append({
-                    "model": model_key,
-                    "corpus": corpus_name,
-                    "n": len(em_scores),
-                    "f1_clean": round(mean_f1_clean, 4),
-                    "exact_match": round(mean_em, 4),
-                    "f1_raw": round(mean_f1_raw, 4),
-                    "contains_answer_diagnostic": round(mean_ca, 4),
-                })
+            summary_row = {
+                "model": model_key,
+                "corpus": corpus_name,
+                "n": len(em_scores),
+                "f1_clean": round(mean_f1_clean, 4),
+                "exact_match": round(mean_em, 4),
+                "f1_raw": round(mean_f1_raw, 4),
+                "contains_answer_diagnostic": round(mean_ca, 4),
+            }
+            summary_rows.append(summary_row)
 
-                print(f"  {model_key} x {corpus_name}: "
-                      f"F1(clean)={mean_f1_clean:.4f}  EM(clean)={mean_em:.4f}  "
-                      f"F1(raw)={mean_f1_raw:.4f}  "
-                      f"contains(diagnostic)={mean_ca:.4f}  n={len(em_scores)}")
+            with _atomic_open(summary_path, newline="") as f:
+                writer = csv.DictWriter(
+                    f, fieldnames=["model", "corpus", "n", "f1_clean", "exact_match",
+                                   "f1_raw", "contains_answer_diagnostic"]
+                )
+                writer.writeheader()
+                writer.writerow(summary_row)
 
-            # Best-effort teardown between models. Known vLLM weak point:
-            # multi-model-per-process reuse is not fully reliable even after
-            # successful runs — Stage 3's Job design should isolate one
-            # model per container instead of relying on this.
-            del llm
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            print(f"  {model_key} x {corpus_name}: "
+                  f"F1(clean)={mean_f1_clean:.4f}  EM(clean)={mean_em:.4f}  "
+                  f"F1(raw)={mean_f1_raw:.4f}  "
+                  f"contains(diagnostic)={mean_ca:.4f}  n={len(em_scores)}")
+            print(f"  raw -> {raw_path}")
+            print(f"  summary -> {summary_path}")
 
-    summary_path = RESULTS_DIR / "baseline_summary.csv"
-    with _atomic_open(summary_path, newline="") as f:
-        writer = csv.DictWriter(
-            f, fieldnames=["model", "corpus", "n", "f1_clean", "exact_match",
-                           "f1_raw", "contains_answer_diagnostic"]
-        )
-        writer.writeheader()
-        writer.writerows(summary_rows)
+        # Best-effort teardown between models. Known vLLM weak point:
+        # multi-model-per-process reuse is not fully reliable even after
+        # successful runs — Stage 3's Job design should isolate one
+        # model per container instead of relying on this.
+        del llm
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
-    print(f"\nRaw per-question results -> {raw_path}")
-    print(f"Summary table -> {summary_path}")
     return summary_rows
 
 

@@ -80,15 +80,23 @@ python -m evaluation.run_baseline
 ```
 
 This loops all four models across all three corpora on clean queries, and
-writes:
+writes ONE PAIR OF FILES PER (model, corpus, engine) CELL — a single fixed
+filename used to silently overwrite the prior cell's results every time a
+different model/corpus/engine combination finished, so results/ instead
+holds:
 
-- `results/baseline_raw.jsonl` — one line per (model, corpus, question):
-  the generated answer, EM, F1, and retrieved doc IDs. Keep this. You'll
-  need the raw per-question outputs later for the McNemar significance
-  tests, and re-running everything in September to regenerate them would
-  be expensive.
-- `results/baseline_summary.csv` — aggregated EM/F1 per model × corpus,
-  the numbers that go straight into your first results table.
+- `results/baseline_raw_{model}_{corpus}_{engine}.jsonl` — one line per
+  question in that cell: the generated answer, EM, F1, and retrieved doc
+  IDs. Keep these. You'll need the raw per-question outputs later for the
+  McNemar significance tests, and re-running everything in September to
+  regenerate them would be expensive.
+- `results/baseline_summary_{model}_{corpus}_{engine}.csv` — that cell's
+  aggregated EM/F1.
+
+Once every cell you care about has finished, run
+`python -m scripts.aggregate_baseline_summaries` to combine all the
+per-cell summary CSVs into one `results/baseline_summary_all.csv` — the
+numbers that go straight into your first results table.
 
 Loading four ~4-9B models sequentially on modest hardware will take a
 while. If you're VRAM-constrained, run one model at a time by passing
