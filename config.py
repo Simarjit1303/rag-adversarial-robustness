@@ -177,4 +177,4 @@ TOP_K = 5
 # None means "not computed yet": evaluation/run_baseline.py refuses to
 # start a vLLM sweep until this is set (or the VLLM_MAX_MODEL_LEN env var
 # is exported, which takes precedence for machine-specific overrides).
-VLLM_MAX_MODEL_LEN = None
+VLLM_MAX_MODEL_LEN = 13056
