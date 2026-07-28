@@ -14,6 +14,7 @@ patch diverges from what's specified in phase1_fixes_task.md — diff against th
 before assuming the new numbers are an improvement.
 """
 
+import ast
 import re
 import string
 from collections import Counter
@@ -94,7 +95,31 @@ PREAMBLE_PATTERNS = [
     r'^the context (provided |states|indicates|says)[^,\.]*(states|indicates|says|that)[,:]?\s*',
 ]
 
+def _try_extract_leaked_answer(text):
+    dict_match = re.search(r"\{.*'answer':\s*\[.*?\].*\}", text)
+    if dict_match:
+        try:
+            parsed = ast.literal_eval(dict_match.group(0))
+            answer = parsed.get("answer")
+            if isinstance(answer, list) and answer:
+                return str(answer[0])
+        except (ValueError, SyntaxError):
+            pass
+    stripped = text.strip()
+    if re.match(r"^\[\s*['\"]", stripped):
+        try:
+            parsed = ast.literal_eval(stripped)
+            if isinstance(parsed, list) and parsed and isinstance(parsed[0], str):
+                return parsed[0]
+        except (ValueError, SyntaxError):
+            pass
+    return None
+
+
 def clean_generation(text):
+    extracted = _try_extract_leaked_answer(text)
+    if extracted is not None:
+        text = extracted
     text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
     text = re.sub(r'\*(.*?)\*', r'\1', text)
     text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)

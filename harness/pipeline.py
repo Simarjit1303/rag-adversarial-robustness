@@ -9,6 +9,7 @@ against exactly the same clean baseline, rather than a slightly different
 pipeline.
 """
 
+import ast
 import re
 
 import torch
@@ -37,6 +38,53 @@ PREAMBLE_PATTERNS = [
 ]
 
 
+def _try_extract_leaked_answer(text: str):
+    """
+    Detects a leaked dict/list-repr structure (the model echoing something
+    that looks like a retrieved-document or few-shot example format instead
+    of answering directly) and extracts the answer already sitting inside
+    it. Returns None if the text doesn't match this shape, so callers fall
+    through to normal cleaning untouched.
+
+    Found comparing real baseline_raw_hf.jsonl vs baseline_raw_vllm.jsonl
+    (phi-4-mini x nq_open, n=1000): ~2.1% of vLLM outputs, ~1.0% of HF
+    outputs hit this on both engines -- not engine-specific. The model isn't
+    wrong on content; clean_generation() just didn't know how to extract an
+    answer from this shape, so F1/EM collapsed even though the right answer
+    was present.
+
+    ast.literal_eval, not eval: the leaked text uses Python literal syntax
+    (single-quoted strings), and literal_eval only parses safe literals,
+    never executes arbitrary code -- the input is model-generated text, not
+    trusted input.
+    """
+    dict_match = re.search(r"\{.*'answer':\s*\[.*?\].*\}", text)
+    if dict_match:
+        try:
+            parsed = ast.literal_eval(dict_match.group(0))
+            answer = parsed.get("answer")
+            if isinstance(answer, list) and answer:
+                return str(answer[0])
+        except (ValueError, SyntaxError):
+            pass
+
+    # Bare list-repr variant, no dict wrapper (e.g. "['.890']"). Restricted
+    # to lists whose first element is a STRING -- a leaked answer is always
+    # a quoted string -- so a bare citation marker like "[1]" (an int, no
+    # quotes in the source text) does NOT match and falls through unchanged
+    # rather than being misread as an answer.
+    stripped = text.strip()
+    if re.match(r"^\[\s*['\"]", stripped):
+        try:
+            parsed = ast.literal_eval(stripped)
+            if isinstance(parsed, list) and parsed and isinstance(parsed[0], str):
+                return parsed[0]
+        except (ValueError, SyntaxError):
+            pass
+
+    return None
+
+
 def clean_generation(text):
     """
     Deterministic post-generation cleanup, applied identically to all models
@@ -50,6 +98,14 @@ def clean_generation(text):
     roughly doubles Qwen's EM and has zero effect on Ministral's EM
     (Ministral's failure mode is mid-sentence embedding, not preambles).
     """
+    # 0. extract an answer leaked inside a dict/list-repr structure, if
+    # present -- used as the starting point for the rest of this function's
+    # normal processing (trailing punctuation stripping, etc.), not a
+    # bypass of it.
+    extracted = _try_extract_leaked_answer(text)
+    if extracted is not None:
+        text = extracted
+
     # 1. strip markdown emphasis
     text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
     text = re.sub(r'\*(.*?)\*', r'\1', text)
