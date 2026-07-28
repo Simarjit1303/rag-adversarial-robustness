@@ -88,6 +88,30 @@ def test_verify_success_false_when_only_one_of_two_requested_cells_is_present(
     assert rt.verify_success(str(tmp_path)) is False
 
 
+def test_verify_success_false_when_one_of_three_requested_cells_fails(monkeypatch, tmp_path):
+    # A real multi-cell sweep: 1 model x 3 corpora = 3 cells. Two finish
+    # cleanly (both files present and non-empty); the third crashed after
+    # writing its raw JSONL but before its summary CSV -- the atomic-write
+    # pattern means a crash never leaves a truncated file, but it can still
+    # leave one of the two expected files simply absent. Every one of the
+    # 3 requested cells must have succeeded, not just a majority of them.
+    monkeypatch.setenv("RAG_MODELS", "phi-4-mini")
+    monkeypatch.setenv("RAG_CORPORA", "nq_open,hotpot_qa,ms_marco")
+    monkeypatch.setenv("INFERENCE_ENGINE", "hf")
+    results = tmp_path / "results"
+
+    _write(results / "baseline_raw_phi-4-mini_nq_open_hf.jsonl", '{"model": "phi-4-mini"}\n')
+    _write(results / "baseline_summary_phi-4-mini_nq_open_hf.csv", "model,corpus,n\n")
+
+    _write(results / "baseline_raw_phi-4-mini_hotpot_qa_hf.jsonl", '{"model": "phi-4-mini"}\n')
+    _write(results / "baseline_summary_phi-4-mini_hotpot_qa_hf.csv", "model,corpus,n\n")
+
+    # ms_marco's cell: raw JSONL made it, summary CSV never got written
+    _write(results / "baseline_raw_phi-4-mini_ms_marco_hf.jsonl", '{"model": "phi-4-mini"}\n')
+
+    assert rt.verify_success(str(tmp_path)) is False
+
+
 # --------------------------------------------------------------------------
 # Task 3.2 -- the pod is terminated ONLY on a verified-successful run.
 # Patching requests.delete makes an accidental real API call impossible.
