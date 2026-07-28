@@ -84,7 +84,7 @@ def mock_idle(monkeypatch):
 
 def test_no_terminate_when_pipeline_fails(monkeypatch, tmp_path, mock_delete, mock_idle):
     monkeypatch.setenv("RAG_SCRATCH_DIR", str(tmp_path))
-    monkeypatch.setenv("RUNPOD_API_KEY", "should-never-be-used")
+    monkeypatch.setenv("RUNPOD_TERMINATE_KEY", "should-never-be-used")
     monkeypatch.setenv("RUNPOD_POD_ID", "should-never-be-used")
     monkeypatch.setattr(rt, "run_pipeline", lambda: 3)  # non-zero exit
 
@@ -99,7 +99,7 @@ def test_no_terminate_when_exit_zero_but_results_missing(
 ):
     # Sweep "succeeds" (exit 0) but writes nothing -- the silent-failure case.
     monkeypatch.setenv("RAG_SCRATCH_DIR", str(tmp_path))
-    monkeypatch.setenv("RUNPOD_API_KEY", "should-never-be-used")
+    monkeypatch.setenv("RUNPOD_TERMINATE_KEY", "should-never-be-used")
     monkeypatch.setenv("RUNPOD_POD_ID", "should-never-be-used")
     monkeypatch.setattr(rt, "run_pipeline", lambda: 0)
 
@@ -117,7 +117,7 @@ def test_no_terminate_when_a_result_file_is_empty(
     _write(results / "baseline_raw.jsonl", '{"model": "phi-4-mini"}\n')
     _write(results / "baseline_summary.csv", "")
     monkeypatch.setenv("RAG_SCRATCH_DIR", str(tmp_path))
-    monkeypatch.setenv("RUNPOD_API_KEY", "should-never-be-used")
+    monkeypatch.setenv("RUNPOD_TERMINATE_KEY", "should-never-be-used")
     monkeypatch.setenv("RUNPOD_POD_ID", "should-never-be-used")
     monkeypatch.setattr(rt, "run_pipeline", lambda: 0)
 
@@ -134,7 +134,7 @@ def test_refuses_to_run_without_scratch_dir(monkeypatch, mock_delete, mock_idle)
     # would let the test pass for the wrong reason. With them absent, reaching
     # the termination path at all would raise KeyError rather than quietly
     # succeed -- so the assertions below prove the guard, not the environment.
-    monkeypatch.delenv("RUNPOD_API_KEY", raising=False)
+    monkeypatch.delenv("RUNPOD_TERMINATE_KEY", raising=False)
     monkeypatch.delenv("RUNPOD_POD_ID", raising=False)
     # run_pipeline must never even start if scratch dir is unset
     monkeypatch.setattr(
@@ -152,7 +152,7 @@ def test_terminates_only_on_verified_success(monkeypatch, tmp_path, mock_delete)
     _write(results / "baseline_raw.jsonl", '{"model": "phi-4-mini"}\n')
     _write(results / "baseline_summary.csv", "model,corpus,n\n")
     monkeypatch.setenv("RAG_SCRATCH_DIR", str(tmp_path))
-    monkeypatch.setenv("RUNPOD_API_KEY", "test-key")
+    monkeypatch.setenv("RUNPOD_TERMINATE_KEY", "test-key")
     monkeypatch.setenv("RUNPOD_POD_ID", "pod-abc123")
     monkeypatch.setattr(rt, "run_pipeline", lambda: 0)
 
@@ -255,7 +255,7 @@ def test_main_idles_and_does_not_terminate_on_timeout(
     monkeypatch, tmp_path, mock_delete, mock_idle
 ):
     monkeypatch.setenv("RAG_SCRATCH_DIR", str(tmp_path))
-    monkeypatch.setenv("RUNPOD_API_KEY", "should-never-be-used")
+    monkeypatch.setenv("RUNPOD_TERMINATE_KEY", "should-never-be-used")
     monkeypatch.setenv("RUNPOD_POD_ID", "should-never-be-used")
     # None is what run_pipeline returns on timeout -- distinct from a real
     # exit code. main() must route it through _fail_and_idle, not sys.exit.
@@ -312,7 +312,7 @@ def _happy_path_env(monkeypatch, tmp_path):
     _write(results / "baseline_raw.jsonl", '{"model": "phi-4-mini"}\n')
     _write(results / "baseline_summary.csv", "model,corpus,n\n")
     monkeypatch.setenv("RAG_SCRATCH_DIR", str(tmp_path))
-    monkeypatch.setenv("RUNPOD_API_KEY", "test-key")
+    monkeypatch.setenv("RUNPOD_TERMINATE_KEY", "test-key")
     monkeypatch.setenv("RUNPOD_POD_ID", "pod-abc123")
     monkeypatch.setattr(rt, "run_pipeline", lambda: 0)
 
@@ -406,7 +406,7 @@ def test_timeout_never_reaches_terminate_pod_call_site(
     never even reached on a timeout. Explicitly checked here, not assumed.
     """
     monkeypatch.setenv("RAG_SCRATCH_DIR", str(tmp_path))
-    monkeypatch.setenv("RUNPOD_API_KEY", "test-key")
+    monkeypatch.setenv("RUNPOD_TERMINATE_KEY", "test-key")
     monkeypatch.setenv("RUNPOD_POD_ID", "pod-abc123")
     monkeypatch.setattr(rt, "run_pipeline", lambda: None)  # simulates a timeout
 
@@ -430,7 +430,7 @@ def test_backstop_catches_an_unrelated_exception_type_not_among_the_5_known_site
     monkeypatch, tmp_path, mock_delete, mock_idle
 ):
     monkeypatch.setenv("RAG_SCRATCH_DIR", str(tmp_path))
-    monkeypatch.setenv("RUNPOD_API_KEY", "test-key")
+    monkeypatch.setenv("RUNPOD_TERMINATE_KEY", "test-key")
     monkeypatch.setenv("RUNPOD_POD_ID", "pod-abc123")
 
     def raise_unexpected():
