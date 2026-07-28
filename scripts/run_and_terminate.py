@@ -204,8 +204,19 @@ def main() -> None:
         return
 
     print("[run_and_terminate] sweep confirmed successful. Terminating pod.")
+    pod_id = os.environ["RUNPOD_POD_ID"]
+    api_key = os.environ["RUNPOD_API_KEY"]
+    # TEMPORARY DIAGNOSTIC -- remove once the RUNPOD_API_KEY 403/credential
+    # mismatch (works locally, fails from inside the pod) is root-caused.
+    # Never prints the full key, only enough to confirm the pod actually
+    # received the value the local machine expects (right length, right
+    # first few characters) without leaking anything secret into the logs.
+    print(
+        f"[run_and_terminate] API key check: length={len(api_key)}, "
+        f"prefix={api_key[:6]!r}"
+    )
     try:
-        terminate_pod(os.environ["RUNPOD_POD_ID"], os.environ["RUNPOD_API_KEY"])
+        terminate_pod(pod_id, api_key)
         print("[run_and_terminate] pod terminated successfully.")
     except Exception as e:
         # Genuine success path up to this point -- pipeline succeeded and
