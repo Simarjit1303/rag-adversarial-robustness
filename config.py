@@ -175,6 +175,13 @@ TOP_K = 5
 # testing was a T4-VRAM compromise, not a measured value; do not copy it.
 #
 # None means "not computed yet": evaluation/run_baseline.py refuses to
-# start a vLLM sweep until this is set (or the VLLM_MAX_MODEL_LEN env var
-# is exported, which takes precedence for machine-specific overrides).
-VLLM_MAX_MODEL_LEN = 13056
+# start a vLLM sweep until this is set (or the RAG_VLLM_MAX_MODEL_LEN env
+# var is exported, which takes precedence for machine-specific overrides).
+# RAG_ prefix (not VLLM_) because vLLM's own env var validator treats any
+# VLLM_* name as reserved for its internal use -- a bare VLLM_MAX_MODEL_LEN
+# silently did nothing, surfacing only as an "Unknown vLLM environment
+# variable detected" warning.
+#
+# 13056: measured via scripts/compute_max_model_len.py (max observed prompt
+# 11441 tokens, ministral-3-8b x hotpot_qa).
+RAG_VLLM_MAX_MODEL_LEN = 13056

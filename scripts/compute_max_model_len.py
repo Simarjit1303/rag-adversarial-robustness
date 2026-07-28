@@ -15,8 +15,9 @@ that has run data/loader.py + data/build_index.py):
 
     python -m scripts.compute_max_model_len
 
-then copy the recommended value into config.VLLM_MAX_MODEL_LEN (or export
-VLLM_MAX_MODEL_LEN). Honors RAG_MODELS the same way run_baseline does.
+then copy the recommended value into config.RAG_VLLM_MAX_MODEL_LEN (or
+export RAG_VLLM_MAX_MODEL_LEN). Honors RAG_MODELS the same way run_baseline
+does.
 The gated Llama tokenizer needs HF_TOKEN + accepted license; if any
 tokenizer fails to load, the recommendation is flagged INCOMPLETE.
 """
@@ -115,8 +116,8 @@ def main():
         print(f"WARNING: recommendation is INCOMPLETE — tokenizer(s) for "
               f"{incomplete} could not be loaded; their prompts may tokenize "
               f"longer. Re-run with all four tokenizers before trusting it.")
-    print("Set config.VLLM_MAX_MODEL_LEN to this value "
-          "(or export VLLM_MAX_MODEL_LEN).")
+    print("Set config.RAG_VLLM_MAX_MODEL_LEN to this value "
+          "(or export RAG_VLLM_MAX_MODEL_LEN).")
     return 0
 
 

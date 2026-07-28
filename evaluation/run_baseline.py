@@ -28,7 +28,7 @@ from contextlib import contextmanager
 
 import torch
 
-from config import CORPORA, MODELS, RESULTS_DIR, SEED, TOP_K, VLLM_MAX_MODEL_LEN
+from config import CORPORA, MODELS, RESULTS_DIR, SEED, TOP_K, RAG_VLLM_MAX_MODEL_LEN
 from data.build_index import build_index
 from data.normalize import extract_gold_answers, extract_question
 from evaluation.metrics import contains_answer, exact_match, f1_score
@@ -220,20 +220,24 @@ def _resolve_vllm_max_model_len():
     max_model_len is COMPUTED from real built prompts, never guessed — the
     4096 used during Colab testing was a T4-VRAM compromise, not a measured
     value. Run scripts/compute_max_model_len.py in an environment where the
-    corpora/indices are available, then either set config.VLLM_MAX_MODEL_LEN
-    or export VLLM_MAX_MODEL_LEN (the env var wins, for machine-specific
-    overrides without a code change).
+    corpora/indices are available, then either set
+    config.RAG_VLLM_MAX_MODEL_LEN or export RAG_VLLM_MAX_MODEL_LEN (the env
+    var wins, for machine-specific overrides without a code change).
+
+    RAG_ prefix (not VLLM_) because vLLM's own env var validator treats any
+    VLLM_* name as reserved for its internal use — a bare VLLM_MAX_MODEL_LEN
+    silently did nothing.
     """
-    env_val = os.environ.get("VLLM_MAX_MODEL_LEN")
+    env_val = os.environ.get("RAG_VLLM_MAX_MODEL_LEN")
     if env_val:
         return int(env_val)
-    if VLLM_MAX_MODEL_LEN:
-        return VLLM_MAX_MODEL_LEN
+    if RAG_VLLM_MAX_MODEL_LEN:
+        return RAG_VLLM_MAX_MODEL_LEN
     raise RuntimeError(
-        "VLLM_MAX_MODEL_LEN is not set. This value must be computed from "
-        "real prompts, not guessed: run scripts/compute_max_model_len.py "
-        "where the corpora/indices exist, then set config.VLLM_MAX_MODEL_LEN "
-        "or export VLLM_MAX_MODEL_LEN."
+        "RAG_VLLM_MAX_MODEL_LEN is not set. This value must be computed "
+        "from real prompts, not guessed: run scripts/compute_max_model_len.py "
+        "where the corpora/indices exist, then set "
+        "config.RAG_VLLM_MAX_MODEL_LEN or export RAG_VLLM_MAX_MODEL_LEN."
     )
 
 

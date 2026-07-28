@@ -19,6 +19,8 @@ for the Stage 3 Container Apps Job design — do not add in-process retries
 here later.
 """
 
+import os
+
 from vllm import LLM, SamplingParams
 
 from config import MODELS
@@ -30,12 +32,22 @@ def load_vllm_model(model_key: str, max_model_len: int, gpu_memory_utilization: 
         raise ValueError(f"Unknown model '{model_key}'. Options: {list(MODELS)}")
 
     cfg = MODELS[model_key]
+    # Attention backend selection is a constructor kwarg, not an env var --
+    # VLLM_ATTENTION_BACKEND as an env var does nothing on this vLLM version
+    # (confirmed via docs.vllm.ai/en/latest/design/attention_backends/).
+    # RAG_ prefix (not VLLM_) because any VLLM_* env var is treated by vLLM's
+    # own validator as reserved for its internal use -- the same reason
+    # VLLM_MAX_MODEL_LEN never worked either. TRITON_ATTN is the default
+    # because it's the backend already proven working across all four
+    # models during Stage 1's Colab T4 testing, not a fresh guess.
+    attention_backend = os.environ.get("RAG_VLLM_ATTENTION_BACKEND", "TRITON_ATTN")
     return LLM(
         model=cfg["hf_id"],
         revision=cfg["revision"],
         trust_remote_code=True,
         max_model_len=max_model_len,
         gpu_memory_utilization=gpu_memory_utilization,
+        attention_backend=attention_backend,
         # No quantization= and no dtype= on purpose — vLLM auto-detects both
         # from each checkpoint's config.json:
         #   * ministral-3-8b ships native fp8; vLLM's Marlin kernel path is
