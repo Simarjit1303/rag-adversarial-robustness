@@ -103,6 +103,19 @@ def load_model(model_key: str, device_map: str = "auto", dtype: torch.dtype = to
 
     model.eval()
     torch.manual_seed(SEED)
+    if torch.cuda.is_available():
+        # device_map='auto' loading via accelerate can return before every
+        # underlying CUDA op it kicked off has actually settled on the
+        # device. Without this, sentence-transformers loading the embedder
+        # right after (in the same process) intermittently races the tail
+        # end of this load and hits cudaErrorDevicesUnavailable -- observed
+        # directly on a genuinely fresh RunPod pod (no restart history), so
+        # this is a real timing race, not leftover state from a killed
+        # process. synchronize() forces this model's pending CUDA work to
+        # finish before control passes to anything that loads a second
+        # model on the same device, closing the race instead of working
+        # around its symptom. No-op when CUDA isn't available.
+        torch.cuda.synchronize()
     return model, tokenizer
 
 

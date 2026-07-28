@@ -8,7 +8,9 @@ on corpus size and whether you have a GPU available.
 
 import os
 import pickle
+import sys
 import tempfile
+import time
 
 import faiss
 import numpy as np
@@ -116,7 +118,31 @@ def _get_embedder():
             )
         else:
             print(f"[index] Embedding on GPU: {torch.cuda.get_device_name(0)}")
-        _embedder = SentenceTransformer(EMBEDDING_MODEL, device=device)
+        # Defensive retry: harness/model_loader.py's torch.cuda.synchronize()
+        # after phi-4-mini's load closes most of the race window against this
+        # embedder claiming the same GPU, but the race was observed as
+        # intermittent (not deterministic), so this is cheap insurance in
+        # case the window isn't fully closed. Same bounded-retry-with-backoff
+        # pattern already used for pip's network retries earlier in this
+        # project -- a transient failure gets a few attempts, not treated as
+        # immediately fatal, but a persistent one still raises loudly rather
+        # than being silently swallowed.
+        last_exc = None
+        for attempt in range(3):
+            try:
+                _embedder = SentenceTransformer(EMBEDDING_MODEL, device=device)
+                break
+            except Exception as e:
+                last_exc = e
+                print(
+                    f"[index] embedder init attempt {attempt + 1} failed: {e!r}"
+                    + (" -- retrying" if attempt < 2 else " -- giving up"),
+                    file=sys.stderr,
+                )
+                if attempt < 2:
+                    time.sleep(2)
+        else:
+            raise last_exc
     return _embedder
 
 
