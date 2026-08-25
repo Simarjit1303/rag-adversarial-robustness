@@ -7,6 +7,14 @@
         "@nanonets/graft",
         "mcp"
       ]
+    },
+    "graphify": {
+      "type": "http",
+      "url": "https://api.graphify.com/mcp"
+    },
+    "codebase-memory-mcp": {
+      "command": "C:/Users/dell/AppData/Local/Programs/codebase-memory-mcp/codebase-memory-mcp.exe",
+      "args": []
     }
   }
 }
