@@ -98,22 +98,18 @@ while. If you're VRAM-constrained, run one model at a time by passing
 
 This changed from how the project worked before, so read it once:
 
-- **Pushing to `main`** builds the image, pushes it to GHCR, and updates the
-  image reference on the Container Apps **Job** `rag-sweep-job`. That is all.
-  A Job — unlike the old Container App — does not execute when its image
-  changes, so a push can no longer start (or restart-loop) a paid GPU sweep.
-- **Running the sweep** is a separate, explicit, human action:
-
-  ```bash
-  az containerapp job start \
-    --name rag-sweep-job \
-    --resource-group Master-Thesis
-  ```
-
-  Nothing in CI calls `job start`, deliberately. If you didn't run that
-  command, nothing is billing.
-- Until Part B of Stage 3 provisions `rag-sweep-job`, the workflow's
-  image-update step fails — expected, not a bug.
+- **Pushing to `main`** builds the image and pushes it to GHCR. That is all —
+  no deploy step, no cloud resource is touched. A push can never start (or
+  restart-loop) a paid GPU sweep, because nothing in CI is wired to start one.
+- **Running the sweep** is a separate, explicit, human action on RunPod: open
+  the pod console and set the "Start command" override to
+  `python -m scripts.run_and_terminate`, pulling the image just pushed to
+  GHCR by tag. Nothing in CI calls this, deliberately. If you didn't start
+  the pod yourself, nothing is billing.
+- Azure Container Apps is no longer used for sweeps (platform pivot to
+  RunPod). The original Container-Apps-Job version of this workflow, and the
+  guardrail it was solving — a push must never auto-start paid compute — is
+  preserved in git history (PR #8) if that context is ever needed again.
 
 ## Repo structure
 
