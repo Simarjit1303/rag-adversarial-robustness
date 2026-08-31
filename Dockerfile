@@ -51,6 +51,17 @@ COPY . .
 # `az containerapp logs show --follow` show progress in real time.
 ENV PYTHONUNBUFFERED=1
 
+# flashinfer's sampler backend needs a CUDA compiler to JIT-compile its kernel
+# on first use; this image doesn't have one (nvcc is not installed -- only
+# runtime CUDA libs ship via the pip wheels). Unlike RAG_VLLM_ATTENTION_BACKEND
+# (harness/vllm_engine.py), this is vLLM's own recognized env var, not a
+# custom RAG_-prefixed one, so it has to be set here rather than defaulted in
+# Python -- vLLM reads it via its own env-var module. Confirmed working on the
+# 2026-07-28 RunPod vLLM sweep that produced Phase 1's real numbers; was set
+# ad hoc in that pod session and never baked into the image until now, which
+# is why it went missing from the repo despite the run having used it.
+ENV VLLM_USE_FLASHINFER_SAMPLER=0
+
 # Cache datasets, build FAISS indices, then run the sweep — or, with
 # RAG_MODE=debug, print raw sample answers instead (see evaluation/debug_sample.py).
 # The trailing `sleep infinity` stops Container Apps from restarting the
