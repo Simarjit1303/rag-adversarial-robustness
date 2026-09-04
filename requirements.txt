@@ -34,8 +34,19 @@ transformers>=5.13
 accelerate>=1.0
 sentence-transformers>=3.3
 datasets>=3.0
-langchain>=0.3
-langchain-community>=0.3
+
+# langchain / langchain-community REMOVED 2026-09-04: caused the
+# 2026-09-04 GHCR image build to fail ("No space left on device") --
+# their unbounded ">=0.3" floor resolved to a modern langchain release
+# whose langchain-core now bundles langgraph/langsmith/langchain-classic
+# as core dependencies, a multi-GB addition to the install. Confirmed via
+# the actual pip resolution log (not guessed) that this chunk is
+# attributable to langchain specifically, not vllm's own deps. Also
+# confirmed via `grep -rn "from langchain\|import langchain"` across the
+# whole repo: ZERO usage anywhere. This project's actual retrieval
+# pipeline (data/build_index.py) is hand-rolled faiss + sentence-transformers,
+# no LangChain involvement at all -- these two lines were dead weight, not
+# a version-pinning problem to solve.
 huggingface_hub>=0.28
 numpy>=2.1
 

@@ -18,6 +18,34 @@ jobs:
       - name: Checkout to the branch
         uses: actions/checkout@v4
 
+      # 2026-09-04: the build failed with "No space left on device" during
+      # pip install (torch+vllm+transformers+datasets+sentence-transformers
+      # is several GB even after removing the unused langchain dependency
+      # tree -- see requirements.txt's removal note). Larger GitHub-hosted
+      # runners aren't an option here: confirmed via `gh api
+      # repos/.../actions/hosted-runners` (404) that they require an
+      # organization on GitHub Team/Enterprise Cloud, not available for a
+      # personal-account repo. Hand-written rather than a third-party
+      # action (e.g. jlumbroso/free-disk-space): this repo already prefers
+      # owning the exact mechanism over a dependency with its own trust/
+      # maintenance surface -- see scripts/run_and_terminate.py's direct
+      # `requests.delete` call instead of the `runpod` SDK, for the same
+      # reason. These are ubuntu-latest's standard large preinstalled
+      # toolchains, all unrelated to this Python/Docker build.
+      - name: Free disk space (remove unrelated preinstalled toolchains)
+        run: |
+          echo "Before cleanup:"
+          df -h /
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          docker image prune -af || true
+          echo "After cleanup:"
+          df -h /
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
