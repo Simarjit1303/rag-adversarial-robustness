@@ -118,6 +118,15 @@ QWEN3_ENABLE_THINKING = False  # False = non-thinking mode, closer latency profi
 # identical treatment when that work begins — not before.
 # ---------------------------------------------------------------------------
 CORPORA = {
+    # EXCLUDED from all real Phase 2/3 sweeps (decided 2026-09-04): nq_open
+    # has no independent supporting passage at all, so its "passage" text is
+    # the gold answer by construction -- unfixable gold-answer leakage into
+    # the RAG context. See nq_open_leakage_finding.md (fixed for
+    # hotpot_qa/ms_marco on branch fix-rag-context-answer-leak, but nq_open
+    # cannot be fixed the same way). Real matrix going forward: 4 models x
+    # 2 corpora (hotpot_qa, ms_marco) x 3 attacks. nq_open's Phase 1 result
+    # is kept only as a documented limitation. Entry left registered/pinned,
+    # not deleted, so the Phase 1 baseline stays reproducible.
     "nq_open": {
         "hf_id": "google-research-datasets/nq_open",
         "revision": "5dd9790a83002ad084ddeb7c420dc716852c6f28",  # main @ 2026-07-19

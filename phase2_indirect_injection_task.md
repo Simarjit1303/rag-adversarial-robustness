@@ -27,18 +27,18 @@ Liu, Jia, Geng, Jia, and Gong, *Formalizing and Benchmarking Prompt Injection At
 - [ ] Build ASR scoring: did the output contain or follow the injected instruction's target string? Rule-based per template, not a fuzzy match.
 - [ ] Pin the injection template set the same way `CORPORA` entries are pinned — template edits must not silently invalidate cached results.
 - [ ] Decide and document: single injected sentence vs. a longer injected block. The original paper's strategies (escape-character, context-ignoring) already show the validated range — stay within it rather than inventing new injection styles.
-- [ ] Decide and document: full five-strategy sweep vs. a curated subset. All five × four models × three corpora is 60 cells before sample size is even decided — this needs an intentional call, not a default.
+- [ ] Decide and document: full five-strategy sweep vs. a curated subset. All five × four models × two corpora (hotpot_qa, ms_marco — `nq_open` is excluded from all real Phase 2/3 sweeps, see `nq_open_leakage_finding.md`) is 40 cells before sample size is even decided — this needs an intentional call, not a default.
 
 ## Statistics — decided this session, apply from the first sweep
 
 - **McNemar's test**, paired per (model, corpus), same structure as Phase 1's stats plan.
 - **Paired bootstrap 95% CI** on the utility drop (Phase 1 F1 vs. this attack's F1-under-attack), paired by question ID.
-- **Holm-Bonferroni correction across the full McNemar p-value family for this attack.** This was decided this session, specifically because the 4×3×3 design generates many pairwise comparisons, and running them uncorrected inflates the false-positive rate on "significant" findings. Collect every McNemar p-value produced for this attack (all pairwise model comparisons per corpus, all pairwise corpus comparisons per model) before reporting any of them as significant, apply Holm-Bonferroni across that family, and report the corrected significance alongside the raw p-value in the insight file. Verified via repo audit this session: no McNemar results exist yet for this attack anywhere in the codebase, so this applies cleanly from the start — nothing to retroactively fix.
+- **Holm-Bonferroni correction across the full McNemar p-value family for this attack.** This was decided this session, specifically because the 4×2×3 design (four models, two corpora — hotpot_qa/ms_marco; `nq_open` excluded, see `nq_open_leakage_finding.md` — three attacks) generates many pairwise comparisons, and running them uncorrected inflates the false-positive rate on "significant" findings. Collect every McNemar p-value produced for this attack (all pairwise model comparisons per corpus, all pairwise corpus comparisons per model) before reporting any of them as significant, apply Holm-Bonferroni across that family, and report the corrected significance alongside the raw p-value in the insight file. Verified via repo audit this session: no McNemar results exist yet for this attack anywhere in the codebase, so this applies cleanly from the start — nothing to retroactively fix.
 
 ## Done means
 
-- ASR table across the model/corpus grid (or documented reduced subset) for the injection strategies implemented.
-- Utility-under-attack comparison against the Phase 1 baseline, with McNemar's + Holm-Bonferroni-corrected significance + paired bootstrap CI.
+- ASR table across the model/corpus grid — **hotpot_qa and ms_marco only; `nq_open` is excluded from all real Phase 2/3 sweeps** (its "passage" text is the gold answer by construction, see `nq_open_leakage_finding.md`; its Phase 1 result is a documented limitation, not a valid baseline) — (or documented reduced subset) for the injection strategies implemented.
+- Utility-under-attack comparison against the Phase 1 baseline (hotpot_qa/ms_marco only), with McNemar's + Holm-Bonferroni-corrected significance + paired bootstrap CI.
 - `PHASE2_INJECTION_INSIGHTS.md` written: which models were most/least vulnerable to which injection strategies, a real explanation of why given the mechanism (not just the number restated), anything surprising named as surprising.
 - Attack conditions stable enough that Phase 3 can put a defense in front of this without redesigning how the attack works.
 
