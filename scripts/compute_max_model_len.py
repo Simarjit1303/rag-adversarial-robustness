@@ -20,6 +20,18 @@ export RAG_VLLM_MAX_MODEL_LEN). Honors RAG_MODELS the same way run_baseline
 does.
 The gated Llama tokenizer needs HF_TOKEN + accepted license; if any
 tokenizer fails to load, the recommendation is flagged INCOMPLETE.
+
+--mode attack: measures Phase 2 indirect-injection prompts instead of the
+Phase 1 baseline -- injected instruction text makes the rank-1 retrieved
+document longer, so the pinned RAG_VLLM_MAX_MODEL_LEN (measured against
+baseline prompts only) is not guaranteed to still cover the worst case.
+Renders every (corpus, injection_template) combination in
+evaluation.result_paths.ATTACK_ELIGIBLE_CORPORA x
+attacks.injection_templates.TEMPLATES (nq_open excluded, same as the
+attack sweep itself -- see nq_open_leakage_finding.md) and reports the max
+across all of them, not just the "combined" template -- worth confirming
+empirically rather than assuming the longest-looking template wins once
+real corpus documents of varying length are in the mix.
 """
 
 import argparse
@@ -30,7 +42,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from config import CORPORA, MODELS  # noqa: E402
+from config import CORPORA, MODELS, TOP_K  # noqa: E402
 from data.build_index import build_index  # noqa: E402
 from data.normalize import extract_gold_answers, extract_question  # noqa: E402
 from harness.model_loader import build_chat_prompt, load_tokenizer  # noqa: E402
@@ -39,9 +51,15 @@ from harness.pipeline import SYSTEM_PROMPT, build_rag_user_prompt  # noqa: E402
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--mode", choices=["baseline", "attack"], default="baseline",
+                        help="'baseline' measures Phase 1 prompts (default); "
+                             "'attack' measures Phase 2 indirect-injection "
+                             "prompts across every (corpus, injection_template)")
     parser.add_argument("--split", default="dev")
     parser.add_argument("--sample", type=int, default=0,
-                        help="cap questions per corpus (0 = all)")
+                        help="cap questions per corpus (or per corpus x "
+                             "injection_template combo, in --mode attack) "
+                             "(0 = all)")
     parser.add_argument("--gen-budget", type=int, default=256,
                         help="generation budget to add on top of the prompt "
                              "(matches the sweep's max_new_tokens)")
@@ -54,27 +72,58 @@ def main():
     if os.environ.get("RAG_MODELS"):
         model_keys = [m.strip() for m in os.environ["RAG_MODELS"].split(",") if m.strip()]
 
-    # Render user prompts once per corpus (retrieval per question, exactly
-    # as the sweep does), then tokenize per model.
     corpus_prompts = {}
-    for corpus_name in CORPORA:
-        index, records = build_index(corpus_name, split=args.split)
-        prompts = []
-        for record in records:
-            question = extract_question(corpus_name, record)
-            gold = extract_gold_answers(corpus_name, record)
-            if not question or not gold:
-                continue  # same filter as run_baseline — measure what runs
-            user_prompt, _ = build_rag_user_prompt(index, records, question)
-            prompts.append(user_prompt)
-            if args.sample and len(prompts) >= args.sample:
-                break
-        corpus_prompts[corpus_name] = prompts
-        print(f"[max_len] {corpus_name}: {len(prompts)} prompts rendered")
+    if args.mode == "baseline":
+        # Render user prompts once per corpus (retrieval per question,
+        # exactly as the sweep does), then tokenize per model.
+        for corpus_name in CORPORA:
+            index, records = build_index(corpus_name, split=args.split)
+            prompts = []
+            for record in records:
+                question = extract_question(corpus_name, record)
+                gold = extract_gold_answers(corpus_name, record)
+                if not question or not gold:
+                    continue  # same filter as run_baseline — measure what runs
+                user_prompt, _ = build_rag_user_prompt(index, records, question)
+                prompts.append(user_prompt)
+                if args.sample and len(prompts) >= args.sample:
+                    break
+            corpus_prompts[corpus_name] = prompts
+            print(f"[max_len] {corpus_name}: {len(prompts)} prompts rendered")
+    else:
+        # attack mode -- imported here, not at module top, so --mode
+        # baseline (the common case, run first on every new corpus/model
+        # pin) never needs attacks.* importable.
+        from attacks.indirect_injection import build_attack_user_prompt
+        from attacks.injection_templates import TEMPLATES
+        from evaluation.result_paths import ATTACK_ELIGIBLE_CORPORA
+
+        for corpus_name in ATTACK_ELIGIBLE_CORPORA:
+            index, records = build_index(corpus_name, split=args.split)
+            for injection_template in TEMPLATES:
+                prompts = []
+                for record in records:
+                    question = extract_question(corpus_name, record)
+                    gold = extract_gold_answers(corpus_name, record)
+                    if not question or not gold:
+                        continue
+                    user_prompt, _, _, _ = build_attack_user_prompt(
+                        index, records, question, corpus_name, injection_template,
+                        top_k=TOP_K,
+                    )
+                    prompts.append(user_prompt)
+                    if args.sample and len(prompts) >= args.sample:
+                        break
+                key = f"{corpus_name}/{injection_template}"
+                corpus_prompts[key] = prompts
+                print(f"[max_len] {key}: {len(prompts)} prompts rendered")
 
     overall_max = 0
     incomplete = []
-    print(f"\n{'model':<16} {'corpus':<12} {'n':>5} {'mean':>7} {'p95':>7} {'max':>7}")
+    # 28-wide corpus column: baseline keys are short ("nq_open"), attack
+    # mode's "{corpus}/{injection_template}" keys run up to
+    # "hotpot_qa/fake_completion" (26 chars) -- widened so both align.
+    print(f"\n{'model':<16} {'corpus':<28} {'n':>5} {'mean':>7} {'p95':>7} {'max':>7}")
     for model_key in model_keys:
         try:
             tokenizer = load_tokenizer(model_key)
@@ -99,7 +148,7 @@ def main():
                 continue
             mean = sum(lengths) / len(lengths)
             p95 = lengths[min(len(lengths) - 1, int(0.95 * len(lengths)))]
-            print(f"{model_key:<16} {corpus_name:<12} {len(lengths):>5} "
+            print(f"{model_key:<16} {corpus_name:<28} {len(lengths):>5} "
                   f"{mean:>7.0f} {p95:>7} {lengths[-1]:>7}")
             overall_max = max(overall_max, lengths[-1])
 

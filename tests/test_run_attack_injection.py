@@ -124,3 +124,68 @@ def test_default_corpus_names_exclude_nq_open_end_to_end(monkeypatch, stub_heavy
     touched_corpora = {call[1] for call in stub_heavy_calls}
     assert "nq_open" not in touched_corpora
     assert touched_corpora == set(config.CORPORA) - {"nq_open"}
+
+
+# --------------------------------------------------------------------------
+# sample_n -- caps questions per cell for infrastructure smoke-testing
+# (a handful of questions on real hardware before committing the full
+# sweep's GPU budget). Needs its own build_index stub with more than one
+# record; the shared stub_heavy_calls fixture above returns exactly one
+# record per corpus, which trivially satisfies any sample_n >= 1.
+# --------------------------------------------------------------------------
+
+@pytest.fixture
+def stub_heavy_calls_multi_record(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_build_index(corpus_name, split="dev"):
+        return None, [{"question": "q", "answer": ["a"]}] * 5
+
+    def fake_run_attack_query(model, tokenizer, model_key, corpus_name, question,
+                               injection_template, index=None, records=None, **kwargs):
+        calls.append((model_key, corpus_name, injection_template))
+        return {
+            "question": question,
+            "retrieved_doc_ids": [0],
+            "retrieval_scores": [0.9],
+            "generated_answer": "fake gold answer",
+            "generated_answer_clean": "fake gold answer",
+            "injection_template": injection_template,
+            "hijack_type": "goal",
+            "target_string": "42",
+        }
+
+    monkeypatch.setattr(rai, "load_model", lambda model_key: (mock.Mock(), mock.Mock()))
+    monkeypatch.setattr(rai, "build_index", fake_build_index)
+    monkeypatch.setattr(rai, "extract_question", lambda corpus_name, record: "fake question")
+    monkeypatch.setattr(rai, "extract_gold_answers", lambda corpus_name, record: ["fake gold answer"])
+    monkeypatch.setattr(rai, "run_attack_query", fake_run_attack_query)
+    monkeypatch.setattr(rai, "RESULTS_DIR", tmp_path)
+    return calls
+
+
+def test_sample_n_caps_questions_processed_per_cell(stub_heavy_calls_multi_record):
+    calls = stub_heavy_calls_multi_record
+    rai.run_attack_sweep(
+        model_keys=["phi-4-mini"], corpus_names=["hotpot_qa"],
+        injection_templates=["naive"], sample_n=2,
+    )
+    assert len(calls) == 2  # capped, not the full 5 fake records
+
+
+def test_sample_n_none_processes_every_record(stub_heavy_calls_multi_record):
+    calls = stub_heavy_calls_multi_record
+    rai.run_attack_sweep(
+        model_keys=["phi-4-mini"], corpus_names=["hotpot_qa"],
+        injection_templates=["naive"], sample_n=None,
+    )
+    assert len(calls) == 5  # uncapped -- every fake record processed
+
+
+def test_rag_sample_n_env_var_is_honored(monkeypatch, stub_heavy_calls_multi_record):
+    calls = stub_heavy_calls_multi_record
+    monkeypatch.setenv("RAG_SAMPLE_N", "3")
+    rai.run_attack_sweep(
+        model_keys=["phi-4-mini"], corpus_names=["hotpot_qa"], injection_templates=["naive"],
+    )
+    assert len(calls) == 3

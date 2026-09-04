@@ -71,7 +71,24 @@ def _atomic_open(final_path, newline=None):
         raise
 
 
-def run_attack_sweep(model_keys=None, corpus_names=None, injection_templates=None, split="dev"):
+def run_attack_sweep(model_keys=None, corpus_names=None, injection_templates=None,
+                      split="dev", sample_n=None):
+    """
+    sample_n: cap the number of QUESTIONS ACTUALLY PROCESSED per (model,
+    corpus, injection_template) cell (falls back to the RAG_SAMPLE_N env
+    var, None/unset = the full dev/eval slice). Exists for smoke-testing
+    real infrastructure (a new RunPod pod, a fresh container image) on a
+    handful of questions before committing the full sweep's GPU budget --
+    same lesson as Phase 1's own RunPod experience: verify on real
+    hardware first, don't trust code review alone. Counted post
+    question/gold filtering, so it is an approximate cap (matches
+    scripts/compute_max_model_len.py's --sample semantics), not an exact
+    slice of the raw corpus.
+    """
+    if sample_n is None:
+        env_val = os.environ.get("RAG_SAMPLE_N")
+        sample_n = int(env_val) if env_val else None
+
     default_model_keys, default_corpus_names, default_templates, engine = (
         resolve_attack_sweep_selection()
     )
@@ -103,7 +120,7 @@ def run_attack_sweep(model_keys=None, corpus_names=None, injection_templates=Non
     if engine not in ("hf", "vllm"):
         raise ValueError(f"INFERENCE_ENGINE must be 'hf' or 'vllm', got '{engine}'")
     if engine == "vllm":
-        return _run_vllm_attack_sweep(model_keys, corpus_names, injection_templates, split)
+        return _run_vllm_attack_sweep(model_keys, corpus_names, injection_templates, split, sample_n)
 
     if torch.cuda.is_available():
         print(f"[attack] Running on GPU: {torch.cuda.get_device_name(0)} "
@@ -137,11 +154,14 @@ def run_attack_sweep(model_keys=None, corpus_names=None, injection_templates=Non
                 start = time.time()
 
                 with _atomic_open(raw_path) as raw_f:
+                    n_processed = 0
                     for i, record in enumerate(records):
                         question = extract_question(corpus_name, record)
                         gold = extract_gold_answers(corpus_name, record)
                         if not question or not gold:
                             continue
+                        if sample_n and n_processed >= sample_n:
+                            break
 
                         result = run_attack_query(
                             model, tokenizer, model_key, corpus_name, question,
@@ -177,6 +197,7 @@ def run_attack_sweep(model_keys=None, corpus_names=None, injection_templates=Non
                             "attack_success": asr,
                             "retrieved_doc_ids": result["retrieved_doc_ids"],
                         }, ensure_ascii=False) + "\n")
+                        n_processed += 1
 
                         if (i + 1) % 50 == 0:
                             print(f"  {i + 1}/{len(records)} done "
@@ -203,7 +224,7 @@ def run_attack_sweep(model_keys=None, corpus_names=None, injection_templates=Non
     return summary_rows
 
 
-def _run_vllm_attack_sweep(model_keys, corpus_names, injection_templates, split):
+def _run_vllm_attack_sweep(model_keys, corpus_names, injection_templates, split, sample_n=None):
     """
     vLLM control flow: retrieval + injection + prompt construction runs
     per-question, but all prompts for a (corpus, injection_template) go to
@@ -244,6 +265,8 @@ def _run_vllm_attack_sweep(model_keys, corpus_names, injection_templates, split)
                     gold = extract_gold_answers(corpus_name, record)
                     if not question or not gold:
                         continue
+                    if sample_n and len(questions) >= sample_n:
+                        break
                     user_prompt, retrieved, target_string, hijack_type = build_attack_user_prompt(
                         index, records, question, corpus_name, injection_template, top_k=TOP_K
                     )
