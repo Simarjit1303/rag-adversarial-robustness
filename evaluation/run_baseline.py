@@ -316,7 +316,7 @@ def _run_vllm_sweep(model_keys, corpus_names, split):
                 if not question or not gold:
                     continue
                 user_prompt, retrieved = build_rag_user_prompt(
-                    index, records, question, top_k=TOP_K
+                    index, records, question, corpus_name, top_k=TOP_K
                 )
                 questions.append(question)
                 golds.append(gold)

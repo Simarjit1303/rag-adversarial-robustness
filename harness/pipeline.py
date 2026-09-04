@@ -15,6 +15,7 @@ import re
 import torch
 
 from data.build_index import build_index, retrieve
+from data.normalize import extract_passage_text
 from harness.model_loader import build_chat_prompt
 
 # The short-span instruction exists because EM compares the ENTIRE generation
@@ -124,7 +125,7 @@ def clean_generation(text):
     return t
 
 
-def build_rag_user_prompt(index, records, question: str, top_k: int = 5):
+def build_rag_user_prompt(index, records, question: str, corpus_name: str, top_k: int = 5):
     """
     Retrieves top_k documents and renders the user message exactly as the
     HF path always has. Returns (user_prompt, retrieved).
@@ -133,10 +134,28 @@ def build_rag_user_prompt(index, records, question: str, top_k: int = 5):
     evaluation/run_baseline.py so the prompt surface cannot drift between
     engines — cross-engine comparability depends on both engines seeing
     byte-identical prompts.
+
+    Bug fixed here: none of the three corpora's raw records carry a 'text'
+    key, so the old `doc.get('text', doc)` always fell through to `doc`
+    itself -- every "retrieved document" shown to the model was the raw
+    Python dict repr of the dataset row (e.g. "{'question': ..., 'answer':
+    [...]}"), gold answer included. data/normalize.py's extract_passage_text
+    already exists and does the right per-corpus extraction (it's used for
+    FAISS embedding text in data/build_index.py) but was never reused here.
+    Confirmed against real cached nq_open/hotpot_qa/ms_marco records.
+
+    KNOWN REMAINING LEAK, NOT FIXED BY THIS: nq_open has no independent
+    supporting passage in the raw dataset at all -- extract_passage_text's
+    nq_open branch concatenates the gold answer into the "passage" text by
+    construction (there's nothing else to embed/display). This is a corpus
+    -construction choice, not something a context-rendering fix can resolve;
+    see nq_open_leakage_finding.md. hotpot_qa and ms_marco's branches are
+    genuinely clean (real passage/context text, no answer key mixed in).
     """
     retrieved = retrieve(index, records, question, k=top_k)
     context = "\n\n".join(
-        f"[{i + 1}] {doc.get('text', doc)}" for i, (doc, score) in enumerate(retrieved)
+        f"[{i + 1}] {extract_passage_text(corpus_name, doc)}"
+        for i, (doc, score) in enumerate(retrieved)
     )
     return f"Context:\n{context}\n\nQuestion: {question}", retrieved
 
@@ -151,7 +170,9 @@ def run_query(model, tokenizer, model_key: str, corpus_name: str, question: str,
     if index is None or records is None:
         index, records = build_index(corpus_name, split="dev")
 
-    user_prompt, retrieved = build_rag_user_prompt(index, records, question, top_k=top_k)
+    user_prompt, retrieved = build_rag_user_prompt(
+        index, records, question, corpus_name, top_k=top_k
+    )
     prompt = build_chat_prompt(model_key, tokenizer, SYSTEM_PROMPT, user_prompt)
 
     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
