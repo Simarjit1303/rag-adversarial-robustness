@@ -1,7 +1,17 @@
 """
-RunPod entrypoint wrapper. Runs the Phase 1 sweep, then self-terminates the
-pod ONLY on confirmed success -- never on failure, so a crashed run stays
-alive for log inspection instead of erasing its own evidence.
+RunPod entrypoint wrapper. Runs the selected sweep (RAG_RUN_TARGET=baseline,
+the default, or attack_injection for Phase 2's indirect prompt injection
+sweep), then self-terminates the pod ONLY on confirmed success -- never on
+failure, so a crashed run stays alive for log inspection instead of
+erasing its own evidence.
+
+Intended for the FULL, unattended sweep only -- not for a diagnostic step
+whose output a human needs to read and act on before deciding what runs
+next (e.g. scripts/compute_max_model_len.py) or a smoke test whose
+"success" can't be reduced to "files exist" (e.g. a small RAG_SAMPLE_N
+run where the real question is whether ASR looks sane, not just whether
+the JSONL got written -- verify_success() below only checks the latter).
+Run those through an interactive terminal/SSH session on the pod instead.
 
 This is NOT used by the Azure path and MUST NOT be wired into the Dockerfile
 CMD. The image's default CMD (run sweep, then `sleep infinity`) is the
@@ -28,7 +38,7 @@ from pathlib import Path
 
 import requests
 
-from evaluation.result_paths import expected_result_files
+from evaluation.result_paths import expected_attack_result_files, expected_result_files
 
 # 6h default is generous for a real sweep; override to something short (e.g.
 # 1800 = 30 min) for smoke tests via the pod's env vars. Exists because a
@@ -40,50 +50,90 @@ from evaluation.result_paths import expected_result_files
 # different angle (a hang instead of a restart loop).
 PIPELINE_TIMEOUT_SECONDS = int(os.environ.get("RAG_PIPELINE_TIMEOUT_SECONDS", 21600))
 
-# The full pipeline the Azure Dockerfile CMD runs, minus the trailing
-# `sleep infinity` (which is exactly the part that must NOT happen on RunPod).
-# Cache the corpora, build the FAISS indices, then run the sweep -- same three
-# stages, same order, so a fresh pod with empty scratch reaches a real result.
-# run_baseline can build indices lazily on its own, but running the stages
-# explicitly matches the deployed Azure sequence and pins the blame to a
-# specific stage when one fails. RAG_MODE=debug is deliberately NOT mirrored
-# here: a debug sample run has no results to verify and nothing to terminate
-# for.
-PIPELINE_STAGES = (
-    [sys.executable, "-m", "data.loader"],
-    [sys.executable, "-m", "data.build_index"],
-    [sys.executable, "-m", "evaluation.run_baseline"],
-)
-
-# Which exact files run_baseline.py writes now depends on RAG_MODELS /
-# RAG_CORPORA / INFERENCE_ENGINE -- a single fixed pair of filenames
-# silently overwrote the prior run's results every time a different
-# model/corpus/engine combination finished (see evaluation/result_paths.py,
-# the single source of truth for this naming shared with run_baseline.py).
-# expected_result_files() resolves the exact set for THIS process's env
-# vars, checked by name (not a *.jsonl / *.csv glob), so a stray leftover
-# file can never be mistaken for a real result.
+# RAG_RUN_TARGET selects which sweep the third pipeline stage runs, and
+# which expected-files function verify_success() checks against -- "baseline"
+# (default, zero config changes needed -- every existing pod template keeps
+# working unmodified) or "attack_injection" (Phase 2's indirect prompt
+# injection sweep, evaluation/run_attack_injection.py). Deliberately the
+# ONLY thing this env var touches: run_pipeline()'s timeout/kill handling,
+# terminate_pod(), and every _fail_and_idle() call site are identical for
+# both targets -- the self-termination machinery doesn't know or care which
+# sweep produced its result files, only that expected files exist and are
+# non-empty.
+_RUN_TARGETS = {
+    "baseline": ("evaluation.run_baseline", expected_result_files),
+    "attack_injection": ("evaluation.run_attack_injection", expected_attack_result_files),
+}
 
 
-def verify_success(scratch_dir: str) -> bool:
+def _resolve_run_target() -> str:
+    target = os.environ.get("RAG_RUN_TARGET", "baseline")
+    if target not in _RUN_TARGETS:
+        raise ValueError(
+            f"Unknown RAG_RUN_TARGET '{target}'. Options: {list(_RUN_TARGETS)}"
+        )
+    return target
+
+
+def _pipeline_stages(target: str):
+    """
+    The full pipeline the Azure Dockerfile CMD runs, minus the trailing
+    `sleep infinity` (which is exactly the part that must NOT happen on
+    RunPod). Cache the corpora, build the FAISS indices, then run the
+    selected sweep -- same three stages, same order, so a fresh pod with
+    empty scratch reaches a real result regardless of target. Either sweep
+    module can build indices lazily on its own, but running the stages
+    explicitly matches the deployed Azure sequence and pins the blame to a
+    specific stage when one fails. RAG_MODE=debug is deliberately NOT
+    mirrored here: a debug sample run has no results to verify and nothing
+    to terminate for.
+    """
+    module_name, _ = _RUN_TARGETS[target]
+    return (
+        [sys.executable, "-m", "data.loader"],
+        [sys.executable, "-m", "data.build_index"],
+        [sys.executable, "-m", module_name],
+    )
+
+
+# Which exact files either sweep module writes depends on RAG_MODELS /
+# RAG_CORPORA / (RAG_INJECTION_TEMPLATES, attack_injection only) /
+# INFERENCE_ENGINE -- a single fixed pair of filenames silently overwrote
+# the prior run's results every time a different model/corpus/engine
+# combination finished (see evaluation/result_paths.py, the single source
+# of truth for this naming shared with both sweep modules).
+# expected_result_files()/expected_attack_result_files() resolve the exact
+# set for THIS process's env vars, checked by name (not a *.jsonl / *.csv
+# glob), so a stray leftover file can never be mistaken for a real result.
+
+
+def verify_success(scratch_dir: str, target: str) -> bool:
     """
     Confirm results actually landed, not just that the sweep process exited 0.
 
-    Every expected output file for this run's (model, corpus, engine)
-    selection -- the raw per-question JSONL and the summary CSV, written
-    via PR #9's atomic-write pattern -- must exist and be non-empty. An
-    exit code alone doesn't prove correct output.
+    Every expected output file for this run's (model, corpus, [template,]
+    engine) selection -- the raw per-question JSONL and the summary CSV,
+    written via PR #9's atomic-write pattern -- must exist and be
+    non-empty. An exit code alone doesn't prove correct output. NOTE: this
+    is a file-existence check, not a content-quality check -- it would
+    report success on, say, an indirect-injection smoke test where the
+    injection silently isn't landing (0% ASR everywhere) but files still
+    got written. That's a known, accepted limitation for the unattended
+    full-sweep case this script targets; a run whose correctness needs
+    human judgment (a smoke test) should not go through this script at all
+    -- see verify_runpod_setup_prompt.md's section 3.
     """
+    _, expected_files_fn = _RUN_TARGETS[target]
     results_dir = Path(scratch_dir) / "results"
     if not results_dir.exists():
         return False
-    for f in expected_result_files(results_dir):
+    for f in expected_files_fn(results_dir):
         if not f.exists() or f.stat().st_size == 0:
             return False
     return True
 
 
-def run_pipeline():
+def run_pipeline(target: str):
     """
     Run every pipeline stage in order, each bounded by PIPELINE_TIMEOUT_SECONDS.
     Return 0 only if all stages exit 0; the first non-zero exit code and stop
@@ -96,7 +146,7 @@ def run_pipeline():
     only kills the direct child, not grandchildren a hung stage may have
     spawned.
     """
-    for cmd in PIPELINE_STAGES:
+    for cmd in _pipeline_stages(target):
         proc = subprocess.Popen(cmd, start_new_session=True)
         try:
             returncode = proc.wait(timeout=PIPELINE_TIMEOUT_SECONDS)
@@ -191,7 +241,13 @@ def main() -> None:
         _fail_and_idle("RAG_SCRATCH_DIR not set -- refusing to run")
         return
 
-    returncode = run_pipeline()
+    try:
+        target = _resolve_run_target()
+    except ValueError as e:
+        _fail_and_idle(str(e))
+        return
+
+    returncode = run_pipeline(target)
     if returncode is None:
         # None (not a real exit code) is what run_pipeline() returns on a
         # pipeline timeout (Bug 1).
@@ -201,7 +257,7 @@ def main() -> None:
         _fail_and_idle(f"pipeline stage exited {returncode}")
         return
 
-    if not verify_success(scratch_dir):
+    if not verify_success(scratch_dir, target):
         _fail_and_idle(
             "pipeline exited 0 but expected output files are missing or "
             "empty -- investigate before assuming this run succeeded"
@@ -237,9 +293,10 @@ def main() -> None:
 
 def _main_with_backstop() -> None:
     """
-    The final backstop, not a replacement for main()'s 5 specific failure
-    sites (missing scratch dir, non-zero stage exit, pipeline timeout,
-    verify_success()-False, termination-call failure) -- those still matter
+    The final backstop, not a replacement for main()'s 6 specific failure
+    sites (missing scratch dir, unknown RAG_RUN_TARGET, non-zero stage
+    exit, pipeline timeout, verify_success()-False, termination-call
+    failure) -- those still matter
     because they give a clear, specific error message at each known point
     rather than a generic one. Bug 4's audit covered every failure path
     CURRENTLY WRITTEN into this file, but it can't cover an exception type

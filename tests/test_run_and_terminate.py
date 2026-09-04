@@ -47,12 +47,12 @@ def test_verify_success_true_when_both_files_present_and_nonempty(monkeypatch, t
     results = tmp_path / "results"
     _write(results / RAW_NAME, '{"model": "phi-4-mini"}\n')
     _write(results / SUMMARY_NAME, "model,corpus,n\n")
-    assert rt.verify_success(str(tmp_path)) is True
+    assert rt.verify_success(str(tmp_path), "baseline") is True
 
 
 def test_verify_success_false_when_results_dir_missing(tmp_path):
     # scratch dir exists but no results/ subdir at all
-    assert rt.verify_success(str(tmp_path)) is False
+    assert rt.verify_success(str(tmp_path), "baseline") is False
 
 
 def test_verify_success_false_when_a_file_is_missing(monkeypatch, tmp_path):
@@ -60,7 +60,7 @@ def test_verify_success_false_when_a_file_is_missing(monkeypatch, tmp_path):
     results = tmp_path / "results"
     _write(results / RAW_NAME, '{"model": "phi-4-mini"}\n')
     # summary CSV absent
-    assert rt.verify_success(str(tmp_path)) is False
+    assert rt.verify_success(str(tmp_path), "baseline") is False
 
 
 def test_verify_success_false_when_a_file_is_empty(monkeypatch, tmp_path):
@@ -68,7 +68,7 @@ def test_verify_success_false_when_a_file_is_empty(monkeypatch, tmp_path):
     results = tmp_path / "results"
     _write(results / RAW_NAME, '{"model": "phi-4-mini"}\n')
     _write(results / SUMMARY_NAME, "")  # present but empty
-    assert rt.verify_success(str(tmp_path)) is False
+    assert rt.verify_success(str(tmp_path), "baseline") is False
 
 
 def test_verify_success_false_when_only_one_of_two_requested_cells_is_present(
@@ -85,7 +85,7 @@ def test_verify_success_false_when_only_one_of_two_requested_cells_is_present(
     _write(results / "baseline_raw_phi-4-mini_nq_open_hf.jsonl", '{"model": "phi-4-mini"}\n')
     _write(results / "baseline_summary_phi-4-mini_nq_open_hf.csv", "model,corpus,n\n")
     # ms_marco's cell never wrote anything
-    assert rt.verify_success(str(tmp_path)) is False
+    assert rt.verify_success(str(tmp_path), "baseline") is False
 
 
 def test_verify_success_false_when_one_of_three_requested_cells_fails(monkeypatch, tmp_path):
@@ -109,7 +109,7 @@ def test_verify_success_false_when_one_of_three_requested_cells_fails(monkeypatc
     # ms_marco's cell: raw JSONL made it, summary CSV never got written
     _write(results / "baseline_raw_phi-4-mini_ms_marco_hf.jsonl", '{"model": "phi-4-mini"}\n')
 
-    assert rt.verify_success(str(tmp_path)) is False
+    assert rt.verify_success(str(tmp_path), "baseline") is False
 
 
 # --------------------------------------------------------------------------
@@ -146,7 +146,7 @@ def test_no_terminate_when_pipeline_fails(monkeypatch, tmp_path, mock_delete, mo
     monkeypatch.setenv("RAG_SCRATCH_DIR", str(tmp_path))
     monkeypatch.setenv("RUNPOD_TERMINATE_KEY", "should-never-be-used")
     monkeypatch.setenv("RUNPOD_POD_ID", "should-never-be-used")
-    monkeypatch.setattr(rt, "run_pipeline", lambda: 3)  # non-zero exit
+    monkeypatch.setattr(rt, "run_pipeline", lambda target: 3)  # non-zero exit
 
     rt.main()  # must NOT sys.exit -- routes through _fail_and_idle instead
 
@@ -161,7 +161,7 @@ def test_no_terminate_when_exit_zero_but_results_missing(
     monkeypatch.setenv("RAG_SCRATCH_DIR", str(tmp_path))
     monkeypatch.setenv("RUNPOD_TERMINATE_KEY", "should-never-be-used")
     monkeypatch.setenv("RUNPOD_POD_ID", "should-never-be-used")
-    monkeypatch.setattr(rt, "run_pipeline", lambda: 0)
+    monkeypatch.setattr(rt, "run_pipeline", lambda target: 0)
 
     rt.main()
 
@@ -180,7 +180,7 @@ def test_no_terminate_when_a_result_file_is_empty(
     monkeypatch.setenv("RAG_SCRATCH_DIR", str(tmp_path))
     monkeypatch.setenv("RUNPOD_TERMINATE_KEY", "should-never-be-used")
     monkeypatch.setenv("RUNPOD_POD_ID", "should-never-be-used")
-    monkeypatch.setattr(rt, "run_pipeline", lambda: 0)
+    monkeypatch.setattr(rt, "run_pipeline", lambda target: 0)
 
     rt.main()
 
@@ -216,7 +216,7 @@ def test_terminates_only_on_verified_success(monkeypatch, tmp_path, mock_delete)
     monkeypatch.setenv("RAG_SCRATCH_DIR", str(tmp_path))
     monkeypatch.setenv("RUNPOD_TERMINATE_KEY", "test-key")
     monkeypatch.setenv("RUNPOD_POD_ID", "pod-abc123")
-    monkeypatch.setattr(rt, "run_pipeline", lambda: 0)
+    monkeypatch.setattr(rt, "run_pipeline", lambda target: 0)
 
     rt.main()  # no SystemExit on the happy path
 
@@ -268,7 +268,7 @@ def test_run_pipeline_stops_at_first_failing_stage(monkeypatch):
         return _FakeProc(returncode=rc)
 
     monkeypatch.setattr(rt.subprocess, "Popen", fake_popen)
-    assert rt.run_pipeline() == 2
+    assert rt.run_pipeline("baseline") == 2
     # loader ran, build_index ran and failed, run_baseline never invoked
     assert len(calls) == 2
     assert not any("evaluation.run_baseline" in c for c in calls)
@@ -301,7 +301,7 @@ def test_run_pipeline_returns_none_and_kills_process_group_on_timeout(monkeypatc
     )
     monkeypatch.setattr(rt, "PIPELINE_TIMEOUT_SECONDS", 1)
 
-    assert rt.run_pipeline() is None
+    assert rt.run_pipeline("baseline") is None
     # killed the process GROUP (via getpgid), not the raw pid, with SIGKILL
     assert killpg_calls == [(999, getattr(rt.signal, "SIGKILL", rt.signal.SIGTERM))]
 
@@ -310,7 +310,7 @@ def test_run_pipeline_unaffected_by_timeout_on_normal_fast_completion(monkeypatc
     monkeypatch.setattr(
         rt.subprocess, "Popen", lambda cmd, *a, **k: _FakeProc(returncode=0)
     )
-    assert rt.run_pipeline() == 0
+    assert rt.run_pipeline("baseline") == 0
 
 
 def test_main_idles_and_does_not_terminate_on_timeout(
@@ -321,7 +321,7 @@ def test_main_idles_and_does_not_terminate_on_timeout(
     monkeypatch.setenv("RUNPOD_POD_ID", "should-never-be-used")
     # None is what run_pipeline returns on timeout -- distinct from a real
     # exit code. main() must route it through _fail_and_idle, not sys.exit.
-    monkeypatch.setattr(rt, "run_pipeline", lambda: None)
+    monkeypatch.setattr(rt, "run_pipeline", lambda target: None)
 
     rt.main()
 
@@ -344,19 +344,20 @@ def test_run_pipeline_real_hang_is_actually_killed_within_timeout_window(tmp_pat
 
     script = tmp_path / "hang.py"
     script.write_text("import time\ntime.sleep(999)\n", encoding="utf-8")
-    original_stages, original_timeout = rt.PIPELINE_STAGES, rt.PIPELINE_TIMEOUT_SECONDS
+    original_timeout = rt.PIPELINE_TIMEOUT_SECONDS
+    original_pipeline_stages = rt._pipeline_stages
     try:
-        rt.PIPELINE_STAGES = ([rt.sys.executable, str(script)],)
+        rt._pipeline_stages = lambda target: ([rt.sys.executable, str(script)],)
         rt.PIPELINE_TIMEOUT_SECONDS = 2
 
         start = time.time()
-        result = rt.run_pipeline()
+        result = rt.run_pipeline("baseline")
         elapsed = time.time() - start
 
         assert result is None
         assert elapsed < 10  # generous ceiling well above the 2s timeout
     finally:
-        rt.PIPELINE_STAGES = original_stages
+        rt._pipeline_stages = original_pipeline_stages
         rt.PIPELINE_TIMEOUT_SECONDS = original_timeout
 
 
@@ -377,7 +378,7 @@ def _happy_path_env(monkeypatch, tmp_path):
     monkeypatch.setenv("RAG_SCRATCH_DIR", str(tmp_path))
     monkeypatch.setenv("RUNPOD_TERMINATE_KEY", "test-key")
     monkeypatch.setenv("RUNPOD_POD_ID", "pod-abc123")
-    monkeypatch.setattr(rt, "run_pipeline", lambda: 0)
+    monkeypatch.setattr(rt, "run_pipeline", lambda target: 0)
 
 
 def test_terminate_failure_does_not_crash_main_and_idles_instead(
@@ -471,7 +472,7 @@ def test_timeout_never_reaches_terminate_pod_call_site(
     monkeypatch.setenv("RAG_SCRATCH_DIR", str(tmp_path))
     monkeypatch.setenv("RUNPOD_TERMINATE_KEY", "test-key")
     monkeypatch.setenv("RUNPOD_POD_ID", "pod-abc123")
-    monkeypatch.setattr(rt, "run_pipeline", lambda: None)  # simulates a timeout
+    monkeypatch.setattr(rt, "run_pipeline", lambda target: None)  # simulates a timeout
 
     rt.main()
 
@@ -480,24 +481,24 @@ def test_timeout_never_reaches_terminate_pod_call_site(
 
 
 # --------------------------------------------------------------------------
-# Final backstop: catch anything the 5 known failure sites (tested above)
+# Final backstop: catch anything the 6 known failure sites (tested above)
 # don't. Bug 4's audit covers every failure path currently written into
 # main() -- this catches an exception type nobody's hit yet: a KeyError
 # from an unchecked env var, an OSError from a full Network Volume,
 # something raised deep inside a dependency that's never been triggered
-# before. Specifically testing the UNKNOWN case, not re-testing the 5
+# before. Specifically testing the UNKNOWN case, not re-testing the 6
 # already-covered ones.
 # --------------------------------------------------------------------------
 
-def test_backstop_catches_an_unrelated_exception_type_not_among_the_5_known_sites(
+def test_backstop_catches_an_unrelated_exception_type_not_among_the_6_known_sites(
     monkeypatch, tmp_path, mock_delete, mock_idle
 ):
     monkeypatch.setenv("RAG_SCRATCH_DIR", str(tmp_path))
     monkeypatch.setenv("RUNPOD_TERMINATE_KEY", "test-key")
     monkeypatch.setenv("RUNPOD_POD_ID", "pod-abc123")
 
-    def raise_unexpected():
-        raise RuntimeError("cudaErrorDevicesUnavailable: unrelated to any of the 5 known sites")
+    def raise_unexpected(target):
+        raise RuntimeError("cudaErrorDevicesUnavailable: unrelated to any of the 6 known sites")
 
     monkeypatch.setattr(rt, "run_pipeline", raise_unexpected)
 
@@ -512,7 +513,7 @@ def test_backstop_logs_message_includes_the_exception_repr(
 ):
     monkeypatch.setenv("RAG_SCRATCH_DIR", str(tmp_path))
 
-    def raise_unexpected():
+    def raise_unexpected(target):
         raise KeyError("SOME_UNCHECKED_ENV_VAR")
 
     monkeypatch.setattr(rt, "run_pipeline", raise_unexpected)
@@ -540,10 +541,10 @@ def test_backstop_lets_keyboard_interrupt_and_system_exit_propagate(monkeypatch,
     assert mock_idle == []
 
 
-def test_backstop_does_not_interfere_with_the_5_known_failure_sites(
+def test_backstop_does_not_interfere_with_the_6_known_failure_sites(
     monkeypatch, tmp_path, mock_delete, mock_idle
 ):
-    # The 5 known sites still route through main()'s own _fail_and_idle
+    # The 6 known sites still route through main()'s own _fail_and_idle
     # calls -- confirm the outer backstop doesn't double-trigger or change
     # that behavior when wrapping a normal (non-exception) failure path.
     monkeypatch.delenv("RAG_SCRATCH_DIR", raising=False)
@@ -564,3 +565,107 @@ def test_backstop_does_not_interfere_with_genuine_success_path(
     mock_delete.assert_called_once()
     assert mock_idle == []
     assert "pod terminated successfully." in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------
+# RAG_RUN_TARGET -- selects baseline (default) vs attack_injection, both for
+# _pipeline_stages()'s third stage and verify_success()'s expected-files
+# function. Deliberately does NOT touch run_pipeline()'s timeout/kill
+# handling, terminate_pod(), or any _fail_and_idle() call site -- those are
+# identical regardless of target, covered by the tests above already.
+# --------------------------------------------------------------------------
+
+def test_resolve_run_target_defaults_to_baseline(monkeypatch):
+    monkeypatch.delenv("RAG_RUN_TARGET", raising=False)
+    assert rt._resolve_run_target() == "baseline"
+
+
+def test_resolve_run_target_honors_env_var(monkeypatch):
+    monkeypatch.setenv("RAG_RUN_TARGET", "attack_injection")
+    assert rt._resolve_run_target() == "attack_injection"
+
+
+def test_resolve_run_target_unknown_value_raises(monkeypatch):
+    monkeypatch.setenv("RAG_RUN_TARGET", "not_a_real_target")
+    with pytest.raises(ValueError, match="Unknown RAG_RUN_TARGET"):
+        rt._resolve_run_target()
+
+
+def test_pipeline_stages_baseline_runs_run_baseline_module():
+    stages = rt._pipeline_stages("baseline")
+    assert stages[-1] == [rt.sys.executable, "-m", "evaluation.run_baseline"]
+
+
+def test_pipeline_stages_attack_injection_runs_run_attack_injection_module():
+    stages = rt._pipeline_stages("attack_injection")
+    assert stages[-1] == [rt.sys.executable, "-m", "evaluation.run_attack_injection"]
+    # first two stages (corpus caching, index building) are identical
+    # regardless of target -- only the sweep stage differs
+    assert stages[0] == [rt.sys.executable, "-m", "data.loader"]
+    assert stages[1] == [rt.sys.executable, "-m", "data.build_index"]
+
+
+def test_verify_success_attack_injection_target_checks_attack_files(monkeypatch, tmp_path):
+    monkeypatch.setenv("RAG_MODELS", "phi-4-mini")
+    monkeypatch.setenv("RAG_CORPORA", "hotpot_qa")
+    monkeypatch.setenv("RAG_INJECTION_TEMPLATES", "naive")
+    monkeypatch.setenv("INFERENCE_ENGINE", "hf")
+    results = tmp_path / "results"
+
+    # baseline-shaped files present, but NOT attack-shaped -- must not be
+    # mistaken for the right result set just because files exist
+    _write(results / "baseline_raw_phi-4-mini_hotpot_qa_hf.jsonl")
+    _write(results / "baseline_summary_phi-4-mini_hotpot_qa_hf.csv")
+    assert rt.verify_success(str(tmp_path), "attack_injection") is False
+
+    # now write the actual expected attack_injection files
+    _write(results / "attack_raw_phi-4-mini_hotpot_qa_naive_hf.jsonl")
+    _write(results / "attack_summary_phi-4-mini_hotpot_qa_naive_hf.csv")
+    assert rt.verify_success(str(tmp_path), "attack_injection") is True
+
+
+def test_main_fails_and_idles_on_unknown_run_target_before_pipeline_starts(
+    monkeypatch, tmp_path, mock_delete, mock_idle, capsys
+):
+    monkeypatch.setenv("RAG_SCRATCH_DIR", str(tmp_path))
+    monkeypatch.setenv("RAG_RUN_TARGET", "not_a_real_target")
+    monkeypatch.setattr(
+        rt, "run_pipeline", lambda target: pytest.fail("pipeline should not start")
+    )
+
+    rt.main()
+
+    assert mock_idle == [True]
+    mock_delete.assert_not_called()
+    assert "Unknown RAG_RUN_TARGET" in capsys.readouterr().err
+
+
+def test_main_end_to_end_with_attack_injection_target(
+    monkeypatch, tmp_path, mock_delete, mock_idle
+):
+    # Same shape as _happy_path_env, but for attack_injection -- proves
+    # main() actually threads the resolved target through run_pipeline()
+    # and verify_success() end to end, not just that each function works
+    # in isolation.
+    monkeypatch.setenv("RAG_MODELS", "phi-4-mini")
+    monkeypatch.setenv("RAG_CORPORA", "hotpot_qa")
+    monkeypatch.setenv("RAG_INJECTION_TEMPLATES", "naive")
+    monkeypatch.setenv("INFERENCE_ENGINE", "hf")
+    monkeypatch.setenv("RAG_RUN_TARGET", "attack_injection")
+    results = tmp_path / "results"
+    _write(results / "attack_raw_phi-4-mini_hotpot_qa_naive_hf.jsonl")
+    _write(results / "attack_summary_phi-4-mini_hotpot_qa_naive_hf.csv")
+    monkeypatch.setenv("RAG_SCRATCH_DIR", str(tmp_path))
+    monkeypatch.setenv("RUNPOD_TERMINATE_KEY", "test-key")
+    monkeypatch.setenv("RUNPOD_POD_ID", "pod-abc123")
+
+    pipeline_targets_seen = []
+    monkeypatch.setattr(
+        rt, "run_pipeline", lambda target: pipeline_targets_seen.append(target) or 0
+    )
+
+    rt.main()
+
+    assert pipeline_targets_seen == ["attack_injection"]
+    mock_delete.assert_called_once()
+    assert mock_idle == []
