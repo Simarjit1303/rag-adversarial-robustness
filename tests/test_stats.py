@@ -5,7 +5,7 @@ docstring), so these tests check known hand-computable cases instead of
 comparing against a library.
 """
 
-from evaluation.stats import holm_bonferroni, mcnemar_exact, paired_bootstrap_ci
+from evaluation.stats import fisher_exact_asr_comparison, holm_bonferroni, mcnemar_exact, paired_bootstrap_ci
 
 
 # --------------------------------------------------------------------------
@@ -81,6 +81,35 @@ def test_bootstrap_ci_is_reproducible_given_same_seed():
     r1 = paired_bootstrap_ci(baseline, attack, n_boot=500, seed=7)
     r2 = paired_bootstrap_ci(baseline, attack, n_boot=500, seed=7)
     assert r1 == r2
+
+
+# --------------------------------------------------------------------------
+# fisher_exact_asr_comparison
+# --------------------------------------------------------------------------
+
+def test_fisher_exact_identical_proportions_gives_high_p_value():
+    result = fisher_exact_asr_comparison(success_a=50, n_a=100, success_b=50, n_b=100)
+    assert result["p_value"] > 0.9
+
+
+def test_fisher_exact_extreme_difference_gives_tiny_p_value():
+    # 10/10 vs 0/10 -- the single most extreme table possible at this n
+    result = fisher_exact_asr_comparison(success_a=10, n_a=10, success_b=0, n_b=10)
+    assert result["p_value"] < 0.001
+
+
+def test_fisher_exact_tiny_symmetric_table_hand_verified():
+    # n_a=n_b=1: group A succeeds, group B fails. By symmetry the only two
+    # possible tables at these margins are equally likely (each p=0.5),
+    # both "at least as extreme" as each other -- p_value must be exactly 1.0.
+    result = fisher_exact_asr_comparison(success_a=1, n_a=1, success_b=0, n_b=1)
+    assert result["p_value"] == 1.0
+
+
+def test_fisher_exact_returns_the_input_counts():
+    result = fisher_exact_asr_comparison(success_a=3, n_a=20, success_b=7, n_b=20)
+    assert result["success_a"] == 3 and result["n_a"] == 20
+    assert result["success_b"] == 7 and result["n_b"] == 20
 
 
 # --------------------------------------------------------------------------

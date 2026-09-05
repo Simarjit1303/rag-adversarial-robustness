@@ -1,14 +1,24 @@
 """
 Significance testing shared across attack phases: exact McNemar's test,
-paired bootstrap confidence intervals, and Holm-Bonferroni correction.
-General-purpose (not injection-specific) so Phase 1/4's planned McNemar
-work (see evaluation/run_baseline.py's module docstring) can reuse it
-rather than re-implement it.
+exact Fisher's test, paired bootstrap confidence intervals, and
+Holm-Bonferroni correction. General-purpose (not injection-specific) so
+Phase 1/4's planned McNemar work (see evaluation/run_baseline.py's module
+docstring) can reuse it rather than re-implement it.
 
-No scipy/statsmodels dependency: neither is in requirements.txt, and both
-functions below are a handful of lines on top of stdlib `math` (exact
-McNemar) and numpy (paired bootstrap -- numpy is already a hard dependency
-via requirements.txt, so this doesn't add a new one).
+No scipy/statsmodels dependency: neither is in requirements.txt, and every
+function below is a handful of lines on top of stdlib `math` (exact
+McNemar, exact Fisher) and numpy (paired bootstrap -- numpy is already a
+hard dependency via requirements.txt, so this doesn't add a new one).
+
+McNemar vs Fisher, when to use which: McNemar requires PAIRED
+observations -- the same items under two conditions (e.g. the same
+question, model A's answer vs model B's answer, same corpus). Fisher's
+exact test is for two INDEPENDENT samples with no natural pairing (e.g.
+comparing a model's ASR on hotpot_qa vs ms_marco -- different questions
+entirely, no item-to-item correspondence). Using McNemar where the data
+is actually unpaired is a real, common misapplication -- see
+PHASE2_INJECTION_INSIGHTS.md's methodology notes for why this project's
+corpus-vs-corpus comparisons use Fisher's exact instead of McNemar.
 """
 
 import math
@@ -50,6 +60,53 @@ def mcnemar_exact(correct_a, correct_b):
         p_value = min(2 * cdf_le_k, 1.0)
 
     return {"b": b, "c": c, "n_discordant": n, "p_value": p_value}
+
+
+def fisher_exact_asr_comparison(success_a: int, n_a: int, success_b: int, n_b: int):
+    """
+    Two-sided exact Fisher's test comparing two INDEPENDENT proportions
+    (e.g. a model's ASR on corpus A's n_a questions vs the same model's
+    ASR on corpus B's n_b questions -- two different question sets, no
+    per-item pairing). Do not use this where observations ARE paired
+    (same items, two conditions) -- use mcnemar_exact for that instead.
+
+    2x2 table:
+                  success    failure
+      group A     success_a  n_a-success_a
+      group B     success_b  n_b-success_b
+
+    Exact hypergeometric calculation (stdlib math.comb only, no scipy):
+    holding all four margins fixed, P(success_a=k) follows a
+    hypergeometric distribution; the two-sided p-value sums the
+    probability of every table at least as extreme as the observed one.
+    """
+    row_a, row_b = n_a, n_b
+    col_success = success_a + success_b
+    n = row_a + row_b
+
+    def hypergeom_pmf(k):
+        if k < 0 or k > row_a or (col_success - k) < 0 or (col_success - k) > row_b:
+            return 0.0
+        return (
+            math.comb(row_a, k) * math.comb(row_b, col_success - k)
+            / math.comb(n, col_success)
+        )
+
+    lo = max(0, col_success - row_b)
+    hi = min(row_a, col_success)
+    p_observed = hypergeom_pmf(success_a)
+    # sum probabilities of every table at least as extreme (<=, with a
+    # small tolerance for floating-point equality) as the observed one
+    p_value = sum(
+        p for k in range(lo, hi + 1)
+        if (p := hypergeom_pmf(k)) <= p_observed * (1 + 1e-9)
+    )
+
+    return {
+        "success_a": success_a, "n_a": n_a,
+        "success_b": success_b, "n_b": n_b,
+        "p_value": min(p_value, 1.0),
+    }
 
 
 def paired_bootstrap_ci(scores_a, scores_b, n_boot: int = 10000, ci: float = 0.95, seed: int = 0):
