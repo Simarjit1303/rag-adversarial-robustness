@@ -84,7 +84,7 @@ def main():
                 gold = extract_gold_answers(corpus_name, record)
                 if not question or not gold:
                     continue  # same filter as run_baseline — measure what runs
-                user_prompt, _ = build_rag_user_prompt(index, records, question)
+                user_prompt, _ = build_rag_user_prompt(index, records, question, corpus_name)
                 prompts.append(user_prompt)
                 if args.sample and len(prompts) >= args.sample:
                     break
