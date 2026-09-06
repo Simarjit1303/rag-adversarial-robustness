@@ -1,0 +1,2 @@
+model,corpus,n,f1_clean,exact_match,f1_raw,contains_answer_diagnostic
+phi-4-mini,hotpot_qa,1000,0.458,0.371,0.458,0.471

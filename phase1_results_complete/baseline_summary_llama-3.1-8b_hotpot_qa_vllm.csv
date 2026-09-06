@@ -1,0 +1,2 @@
+model,corpus,n,f1_clean,exact_match,f1_raw,contains_answer_diagnostic
+llama-3.1-8b,hotpot_qa,1000,0.6035,0.531,0.6035,0.562
