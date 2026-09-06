@@ -91,27 +91,35 @@ a plain sentence instead of a dict repr:
 NEW: [1] where's the chick-fil-a kickoff game being played Mercedes-Benz Stadium
 ```
 
-## Supporting evidence: the nq_open-vs-ms_marco F1 gap
+## Supporting evidence: the nq_open-vs-hotpot_qa/ms_marco F1 gap
 
-Real Phase 1 results already on disk (`phase1_results_complete/`, all 12
-model×corpus cells, `INFERENCE_ENGINE=vllm`):
+Real Phase 1 results on disk (`phase1_results_complete/`, all 12
+model×corpus cells, `INFERENCE_ENGINE=vllm`). **`hotpot_qa`/`ms_marco`
+columns updated 2026-09-06** after the `pipeline.py` fix below was actually
+applied and the baseline rerun (`nq_open` is untouched — still the original,
+unfixable-by-construction leaked numbers, as it always will be):
 
 | Corpus | Mean F1(clean) across 4 models | Spread across models |
 |---|---|---|
 | `nq_open` | 0.962 | 0.005 (0.9599–0.9649) |
-| `hotpot_qa` | 0.865 | 0.022 (0.854–0.876) |
-| `ms_marco` | 0.530 | 0.288 (0.370–0.659) |
+| `hotpot_qa` | 0.583 | 0.178 (0.458–0.636) |
+| `ms_marco` | 0.246 | 0.046 (0.221–0.267) |
 
 `nq_open` is both near-ceiling and nearly invariant across four models of
 meaningfully different capability — the pattern you'd expect from answer-
-copying, not from a task where retrieval and reasoning quality matter.
-`ms_marco` shows the opposite pattern: lower mean, and a 0.29 spread that
-tracks the models' known relative strength. I checked whether the
-`pipeline.py` fix would close this gap — it doesn't, because `nq_open`'s
-leak isn't caused by the bug the fix addresses; it's caused by the corpus
-having no real passage to substitute. The gap is not primarily a formatting
-artifact; it's telling you `nq_open`, as currently constructed in this
-project, is not measuring retrieval-augmented QA.
+copying, not from a task where retrieval and reasoning quality matter. That
+core conclusion is untouched by the fix (nq_open's leak isn't caused by the
+bug the fix addresses; it's caused by the corpus having no real passage to
+substitute). What the fix *did* change: pre-fix, this table's `ms_marco` row
+showed a large spread (0.29, since retracted — see below) that this
+document originally read as "tracking the models' known relative strength."
+With the leak removed, `ms_marco`'s spread across models actually shrank to
+0.046 while `hotpot_qa`'s grew to 0.178 — the opposite of that original
+sub-claim, which is retracted here. The core point stands regardless:
+`nq_open` sits far closer to its ceiling (0.96, spread 0.005) than either
+real corpus does, before or after the fix, and it's telling you `nq_open`,
+as currently constructed in this project, is not measuring
+retrieval-augmented QA.
 
 ## What this means for existing results, and what I need from you
 

@@ -12,41 +12,74 @@
 > results, utility-under-attack, the other three models' process-hijack
 > results) is unaffected by this flag.
 
-Full sweep: 4 models × 2 corpora (`hotpot_qa`, `ms_marco` — `nq_open` excluded,
-see `nq_open_leakage_finding.md`) × 5 injection templates (`naive`,
+Full sweep: 4 models × 2 corpora (`hotpot_qa`, `ms_marco` — `nq_open`
+excluded, not just from this attack sweep but from any difficulty/robustness
+comparison against the other two corpora entirely — see
+`nq_open_leakage_finding.md`) × 5 injection templates (`naive`,
 `escape_char`, `ignore`, `fake_completion`, `combined`), n=1000 questions per
 cell, 40 cells total. Raw data: `phase2_injection_results/`. Baseline
 comparison: `phase1_results_complete/`. Analysis script:
 `scripts/analyze_phase2_injection_stats.py` (re-runnable, prints the full
 per-cell table and every significance test below).
 
-## Headline finding: two dissociated failure modes, not one
+> **BASELINE CORRECTED (2026-09-06):** `phase1_results_complete/`'s
+> `hotpot_qa`/`ms_marco` cells were regenerated after fixing a gold-answer/
+> dict-repr leak in RAG context construction (`harness/pipeline.py`'s
+> `build_rag_user_prompt`, see `nq_open_leakage_finding.md`). The old
+> (leaked) baseline was inflated by 0.12–0.40 F1 points across all 8 cells —
+> a large, consistent effect, not the near-zero difference an earlier
+> 2-cell spot check suggested. This document's F1-collapse numbers below
+> were recomputed against the corrected baseline and this materially
+> changed the headline finding: what looked like a large, universal,
+> compliance-independent F1 collapse turned out to be mostly an artifact of
+> comparing a (correctly, always-clean) attack-condition F1 against an
+> inflated baseline. **ASR numbers, every McNemar/Fisher significance
+> result, and the ministral-3-8b provisional flag are all unaffected** —
+> ASR is computed entirely from attack-condition data and never touches the
+> baseline.
 
-This attack does damage two genuinely different ways, and they don't move
-together:
+## Headline finding: utility damage tracks compliance, not a separate context-pollution effect
 
-1. **Utility collapse from context pollution.** F1 drops by 0.12–0.47
-   absolute points in **every single cell**, with bootstrap 95% CIs that
-   never cross zero — this is not noise, it's universal. Critically, this
-   happens **regardless of whether the injected instruction was ever
-   complied with**. The three goal-hijack templates (`naive`, `escape_char`,
-   `combined`) show attack-success rates of 0.1–1.1% almost everywhere —
-   the model essentially never answers "42" — yet F1 still craters by
-   0.19–0.42 on those same cells. Simply appending unrelated injected text
-   to the top-ranked retrieved document measurably damages the model's
-   ability to answer the *original* question correctly, independent of
-   whether the attacker's payload landed. In this RAG setting, injection's
-   primary practical harm looks like **context pollution**, not classic
-   goal hijacking.
+Before the baseline fix, this section reported "two dissociated failure
+modes" — universal F1 collapse independent of compliance, plus a separate
+ASR signal. **That first claim does not survive the corrected baseline and
+is retracted here.** Recomputing utility-under-attack against the corrected
+baseline (see banner above) shows:
 
-2. **Attack success (ASR)**, when it happens at all, is concentrated almost
-   entirely in the two process-hijack templates (`ignore`, `fake_completion`)
-   and is sharply model-dependent — see below.
+1. **On the three goal-hijack templates (`naive`, `escape_char`, `combined`)
+   — where ASR sits at 0.1–1.1% almost everywhere — the F1 "drop" is now
+   tiny and inconsistent in sign.** Every one of the 24 goal-hijack cells
+   falls in [-0.044, +0.026]; several are not distinguishable from zero
+   (95% CI crosses zero), and several are *significantly negative* — i.e.
+   attack-condition F1 measured slightly *higher* than the clean baseline
+   (e.g. ministral-3-8b/`hotpot_qa`: -0.040 to -0.044 across all three
+   goal-hijack templates, CIs entirely below zero). There is no remaining
+   evidence of a large, universal, compliance-independent "context
+   pollution" effect — the previously reported 0.19–0.42 drops on these
+   cells were driven almost entirely by the inflated pre-fix baseline, not
+   by the injected text itself damaging the model's answer.
+2. **F1 damage is concentrated in exactly the cells that also show
+   elevated ASR** — the two process-hijack templates (`ignore`,
+   `fake_completion`), and within those, the same models that show real
+   compliance: ministral-3-8b (drops up to 0.236, `fake_completion`/
+   `hotpot_qa`, its highest-ASR cell), qwen3-8b (`fake_completion` only, up
+   to 0.032), and phi-4-mini (`fake_completion` only, up to 0.026).
+   llama-3.1-8b, near-zero ASR everywhere, shows no significant F1 drop
+   anywhere in the 40-cell grid.
+3. **One genuine, small exception remains:** phi-4-mini/`hotpot_qa`/
+   `fake_completion` shows a real, statistically significant F1 drop
+   (0.024, 95% CI 0.010–0.037) alongside near-zero ASR (0.2%) — a small
+   residual utility cost without compliance. This is the one surviving
+   data point for a compliance-independent effect, and it is roughly an
+   order of magnitude smaller than what the pre-fix analysis reported for
+   this pattern.
 
-These are separate axes. A model can be goal-hijack-resistant while being
-utility-fragile (phi-4-mini), or robust on utility while being severely
-process-hijack-vulnerable (ministral-3-8b). Reporting only one axis would
-misrepresent the other.
+So: ASR (below) is unaffected by the baseline correction and remains the
+primary, model-dependent signal in this dataset, concentrated in
+`ignore`/`fake_completion`. Utility damage is not a separate, dissociated
+axis — it largely *is* the same signal, viewed through F1 instead of a
+binary hit/miss. The exception in point 3 is real but minor, not a second
+failure mode on the scale originally reported.
 
 ## ASR by model × corpus × template (%)
 
@@ -151,30 +184,33 @@ demarcated narrative prose. This is plausible given the confirmed
 statistical reality of the split, but it's a hypothesis about *why*, not a
 demonstrated mechanism.
 
-## Utility-under-attack: the more surprising number
+## Utility-under-attack, recomputed
 
-The F1 drops are large and universal enough that they deserve to be read as
-a finding in their own right, not a footnote to ASR:
+With the corrected baseline, this is no longer a separate surprising
+finding — it's the same story as ASR, restated in F1:
 
-- Smallest drop in the entire grid: 0.1218 (phi-4-mini, ms_marco, `ignore`).
-- Largest: 0.4686 (ministral-3-8b, hotpot_qa, `fake_completion`) — the same
-  cell where ministral's ASR is also highest (60.8%), so here the two failure
-  modes *do* coincide: this is the one condition where the model both
-  complies with the injected instruction most often and loses the most
-  utility on the original question.
-- phi-4-mini shows the largest utility drops on `hotpot_qa` specifically
-  across goal-hijack templates (0.36–0.42) — larger than any other model on
-  the same cells — despite having among the lowest ASR anywhere. **Named as
-  surprising:** phi-4-mini is simultaneously the most goal-hijack-resistant
-  model by ASR and one of the most utility-fragile by F1 drop on the exact
-  same conditions. Resistance to complying with the injected instruction and
-  resistance to being *distracted* by its mere presence are not the same
-  property, and this model dissociates them clearly.
-- ministral-3-8b, by contrast, shows the *smallest* utility drops on
-  `hotpot_qa`'s goal-hijack templates (0.17–0.19) of any model, while being
-  the single most process-hijack-vulnerable model in the study. Robust
-  utility and severe process-hijack susceptibility coexist in the same
-  model.
+- Largest drop in the entire 40-cell grid: 0.236 (ministral-3-8b,
+  `hotpot_qa`, `fake_completion`, 95% CI 0.211–0.262) — its highest-ASR
+  cell (60.8%). Second largest: 0.078 (ministral-3-8b, `hotpot_qa`,
+  `ignore`, ASR 35.3%). Every drop above 0.02 in the grid belongs to
+  ministral-3-8b, qwen3-8b, or phi-4-mini on `ignore`/`fake_completion` —
+  never on a goal-hijack template, and never for llama-3.1-8b.
+- Smallest (most negative — i.e. attack-condition F1 measured *above*
+  baseline): -0.044 (ministral-3-8b, `hotpot_qa`, `naive`). This and the
+  other negative goal-hijack cells are read as measurement noise around a
+  true effect near zero (95% CIs are tight, roughly ±0.01–0.02, and both
+  signs appear across templates/corpora for the same model with no
+  consistent direction), not evidence the attack *helps*.
+- The phi-4-mini/ministral-3-8b "dissociation" claimed in the previous
+  version of this document (phi-4-mini uniquely utility-fragile despite
+  ASR-resistance; ministral-3-8b uniquely utility-robust despite ASR-
+  vulnerability) does not hold under the corrected numbers and is retracted.
+  phi-4-mini's goal-hijack drops on `hotpot_qa` are now 0.010–0.022 (not
+  0.36–0.42), and ministral-3-8b's are -0.040 to -0.044 (not the smallest-
+  but-still-positive 0.17–0.19 previously reported — they are now the most
+  negative in the grid). The one surviving small dissociation is phi-4-
+  mini/`hotpot_qa`/`fake_completion` specifically (see headline finding
+  point 3 above): 0.024 F1 drop against 0.2% ASR.
 
 ## Methodology notes (for the dissertation's methodology chapter)
 
@@ -283,17 +319,22 @@ currently do not.
 
 ## What this means for Phase 3
 
-- Any defense evaluated against this attack needs to be judged on **both**
-  axes: does it recover utility (F1) even when it doesn't reduce ASR to
-  zero, and does it close the process-hijack gap specifically for
-  ministral-3-8b and (more narrowly) qwen3-8b, without needing to solve a
-  goal-hijack problem that barely exists in this data. **Ministral-3-8b's
-  gap specifically should not be used to justify a defense design decision
-  until the provisional flag above is resolved** — if it turns out to be a
-  formatting artifact rather than genuine susceptibility, a defense "fixing"
-  it would be solving a problem that doesn't exist while a real one
-  (qwen3-8b's smaller but currently-uncontested `fake_completion` gap) goes
-  underweighted.
+- With utility damage now shown to track ASR closely rather than being a
+  separate axis, a defense that closes the process-hijack gap (specifically
+  `ignore`/`fake_completion` for ministral-3-8b and, more narrowly,
+  qwen3-8b's and phi-4-mini's `fake_completion` gaps) should be expected to
+  recover most of the F1 loss as a side effect, not as a second problem
+  requiring independent solving — with the one caveat that phi-4-mini's
+  small `hotpot_qa`/`fake_completion` utility cost (0.024 F1 at 0.2% ASR)
+  persists even at near-zero compliance and may not respond to an
+  ASR-focused fix. No defense needs to target the goal-hijack templates at
+  the F1 level — their utility impact is now indistinguishable from noise.
+  **Ministral-3-8b's process-hijack gap specifically should still not be
+  used to justify a defense design decision until the provisional flag
+  above is resolved** — if it turns out to be a formatting artifact rather
+  than genuine susceptibility, a defense "fixing" it would be solving a
+  problem that doesn't exist while a real one (qwen3-8b's smaller but
+  currently-uncontested `fake_completion` gap) goes underweighted.
 - `ignore` and `fake_completion` are the templates worth prioritizing for
   defense evaluation — they're where all the real signal is. `naive`,
   `escape_char`, and `combined` produce a defensible negative result but
@@ -309,8 +350,13 @@ currently do not.
   architecture) — the qwen3-8b/thinking-mode and phi-4-mini/corpus-fragility
   hypotheses above are plausible readings of this specific data, not
   confirmed via ablation or interpretability work.
-- `nq_open` excluded entirely (unfixable gold-answer leakage, see
-  `nq_open_leakage_finding.md`) — these findings describe `hotpot_qa` and
+- `nq_open` excluded entirely, not just from this attack sweep but from any
+  difficulty/robustness comparison against `hotpot_qa`/`ms_marco`
+  (unfixable gold-answer leakage by construction, see
+  `nq_open_leakage_finding.md`) — its F1 (~0.96, near-ceiling and nearly
+  invariant across all four models) is a separate, documented-limitation
+  number describing answer-copying, not a data point comparable to any
+  finding in this document. These findings describe `hotpot_qa` and
   `ms_marco` only.
 - Two fixed canary payloads (one per hijack type) were used across all
   templates sharing that hijack type, by design, to isolate delivery
