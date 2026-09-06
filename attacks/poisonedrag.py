@@ -45,11 +45,33 @@ available this session, checked across both HF Inference API and NVIDIA
 NIM's live catalogs with real completion calls, not just catalog listings.
 Deliberately not one of the four locked target models (Llama-3.1-8B,
 Qwen3-8B, Phi-4-mini, Ministral-3-8B) -- it never crafts poison against
-itself. kimi-k3 (~2.8T, the largest catalog entry found on NVIDIA NIM)
-failed two real verification calls (60s and 180s timeouts) against the NIM
-account available this session and is NOT used, despite being larger on
-paper -- unverified access is disqualifying here, not a detail to route
-around. DeepSeek V3/V3.1/V3.2-Exp were also confirmed callable via HF but
+itself.
+
+kimi-k3 (~2.8T, the largest catalog entry found on NVIDIA NIM) is NOT
+used, but not because it's inaccessible -- a corrected finding worth being
+precise about. Two short-timeout test calls (60s, 180s) both failed, which
+first looked like a real access problem; a third call at 480s succeeded
+(HTTP 200, real content). The actual cause: kimi-k3 is a reasoning model
+that emits a `reasoning_content` field before its final `content`, so a
+low max_tokens budget (10, matching the trivial test prompt) let it burn
+its whole budget on reasoning and return null content, and the 60-180s
+window wasn't enough time regardless. kimi-k3 IS reachable. It is excluded
+on a considered cost/practicality basis instead: 480s for a two-word reply
+implies the real poison-generation prompt (a full JSON object, an
+incorrect answer plus 5 ~100-word passages) would plausibly take minutes
+per call once reasoning overhead is included, and an untested max_tokens
+budget would be needed for it. At 200 real target-question calls (100/
+corpus x 2 corpora), that risks many hours of wall-clock time and real
+timeout/reliability exposure, against a fixed dissertation deadline with
+Crescendo and Phase 3 still ahead. Kimi-K2-Instruct-0905 (1T total / 32B
+active) is still a large, current, genuinely capable model -- this is the
+strongest option that's actually practical at this sweep's real scale.
+Raw capability that can't be deployed within real project constraints
+(a fixed dissertation deadline, real API rate limits) doesn't serve the
+study. See PHASE2_POISONEDRAG_INSIGHTS.md's methodology section for the
+full write-up, including the measured 480s latency.
+
+DeepSeek V3/V3.1/V3.2-Exp were also confirmed callable via HF but
 deliberately excluded: DeepSeek V4 Pro is reserved for its planned Phase 2
 judge/Crescendo-orchestrator role, and using a DeepSeek family model here
 too would blur that reservation for no real gain over the chosen model.
