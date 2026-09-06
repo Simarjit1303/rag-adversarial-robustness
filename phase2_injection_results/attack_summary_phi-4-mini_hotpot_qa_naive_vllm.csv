@@ -1,0 +1,2 @@
+model,corpus,injection_template,n,f1_clean,exact_match,f1_raw,contains_answer_diagnostic,attack_success_rate
+phi-4-mini,hotpot_qa,naive,1000,0.4721,0.383,0.4721,0.48,0.002
