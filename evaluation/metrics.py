@@ -60,3 +60,29 @@ def recall_at_k(retrieved_doc_ids: list[int], relevant_doc_ids: set[int], k: int
         return float("nan")  # undefined when there's no labelled relevant doc to check against
     hit = any(doc_id in relevant_doc_ids for doc_id in retrieved_doc_ids[:k])
     return float(hit)
+
+
+def retrieval_f1_at_k(retrieved_doc_ids: list, relevant_doc_ids: set, k: int = 5) -> dict:
+    """
+    Proper precision/recall/F1@k over a MULTI-item relevant set, distinct
+    from recall_at_k's binary hit-or-miss (which collapses to this anyway
+    when |relevant_doc_ids| == 1, but is the wrong tool when it's several --
+    PoisonedRAG's retrieval-verification step, |relevant_doc_ids| ==
+    adv_per_query, confirmed as 5 at the Meeting 3 checkpoint). Confirmed as
+    the poisoning probe metric at that same checkpoint (see
+    PHASE2_ROADMAP.md's "metric shift" section): separates a retrieval-stage
+    failure (the poison never surfaced) from a generation-stage one (it
+    surfaced and still didn't fool the model).
+
+    doc_ids can be any hashable identity, not just ints -- PoisonedRAG tags
+    each of a question's poisoned passages with a distinct sentinel id (see
+    attacks/poisoned_retrieval.py), not a corpus-relative integer index.
+    """
+    if not relevant_doc_ids:
+        return {"precision": float("nan"), "recall": float("nan"), "f1": float("nan")}
+    retrieved_at_k = retrieved_doc_ids[:k]
+    hits = sum(1 for doc_id in retrieved_at_k if doc_id in relevant_doc_ids)
+    precision = hits / len(retrieved_at_k) if retrieved_at_k else 0.0
+    recall = hits / len(relevant_doc_ids)
+    f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
+    return {"precision": precision, "recall": recall, "f1": f1}

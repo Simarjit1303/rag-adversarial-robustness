@@ -166,3 +166,87 @@ def expected_attack_result_files(results_dir):
                     )
                 )
     return paths
+
+
+# ---------------------------------------------------------------------------
+# PoisonedRAG (Attack 2) naming -- extends the {model}_{corpus}_{engine}
+# pattern with a poison_config axis (mirrors injection_template's role for
+# Attack 1), per PHASE2_ROADMAP.md's "Filenames carry the full cell
+# identity" carry-forward rule. poison_config is an opaque label, not a
+# hardcoded count, so a future poison-count sweep (1, 3, 5 -- flagged as an
+# optional extension in the roadmap, not required for the confirmed
+# condition) slots into this same naming without a redesign.
+
+# adv5 = 5 poisoned texts per target question, confirmed at the Meeting 3
+# checkpoint, matching PoisonedRAG's own paper default. Kept as a plain
+# constant here (not imported from attacks.poisonedrag) so this module keeps
+# its "no heavy dependencies" property -- attacks.poisonedrag needs
+# `requests` for the poison-generation API call, this module must not.
+DEFAULT_POISON_CONFIG = "adv5"
+
+
+def resolve_poison_sweep_selection():
+    """
+    Same shape as resolve_attack_sweep_selection(), for
+    evaluation.run_poisonedrag.run_poisonedrag_sweep(). RAG_MODELS/
+    INFERENCE_ENGINE are shared with the other two sweeps (same reasoning as
+    resolve_sweep_selection's docstring). RAG_CORPORA defaults to
+    ATTACK_ELIGIBLE_CORPORA -- nq_open excluded by default here too, same
+    reasoning as the injection sweep (unfixable gold-answer leakage, see
+    nq_open_leakage_finding.md).
+    """
+    model_keys_env = os.environ.get("RAG_MODELS")
+    model_keys = (
+        [m.strip() for m in model_keys_env.split(",") if m.strip()]
+        if model_keys_env else list(MODELS)
+    )
+    corpus_names_env = os.environ.get("RAG_CORPORA")
+    corpus_names = (
+        [c.strip() for c in corpus_names_env.split(",") if c.strip()]
+        if corpus_names_env else list(ATTACK_ELIGIBLE_CORPORA)
+    )
+    poison_configs_env = os.environ.get("RAG_POISON_CONFIGS")
+    poison_configs = (
+        [p.strip() for p in poison_configs_env.split(",") if p.strip()]
+        if poison_configs_env else [DEFAULT_POISON_CONFIG]
+    )
+    engine = os.environ.get("INFERENCE_ENGINE", "hf")
+    return model_keys, corpus_names, poison_configs, engine
+
+
+def poison_result_file_paths(results_dir, model_key: str, corpus_name: str,
+                              poison_config: str, engine: str):
+    """
+    The (raw_jsonl, summary_csv) paths one (model, corpus, poison_config,
+    engine) cell writes. Same atomic-write pattern as the other two sweeps
+    (evaluation/run_baseline.py's _atomic_open) -- no exceptions.
+    """
+    results_dir = Path(results_dir)
+    raw_path = (
+        results_dir
+        / f"poison_raw_{model_key}_{corpus_name}_{poison_config}_{engine}.jsonl"
+    )
+    summary_path = (
+        results_dir
+        / f"poison_summary_{model_key}_{corpus_name}_{poison_config}_{engine}.csv"
+    )
+    return raw_path, summary_path
+
+
+def expected_poison_result_files(results_dir):
+    """
+    Every (raw, summary) path this process's env-var configuration will
+    produce for the PoisonedRAG sweep -- same role as
+    expected_attack_result_files().
+    """
+    model_keys, corpus_names, poison_configs, engine = resolve_poison_sweep_selection()
+    paths = []
+    for model_key in model_keys:
+        for corpus_name in corpus_names:
+            for poison_config in poison_configs:
+                paths.extend(
+                    poison_result_file_paths(
+                        results_dir, model_key, corpus_name, poison_config, engine
+                    )
+                )
+    return paths

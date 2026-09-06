@@ -130,3 +130,62 @@ def test_expected_attack_result_files_covers_every_cell(monkeypatch, tmp_path):
     names = {p.name for p in paths}
     assert "attack_raw_phi-4-mini_hotpot_qa_naive_hf.jsonl" in names
     assert "attack_summary_phi-4-mini_ms_marco_combined_hf.csv" in names
+
+
+# --------------------------------------------------------------------------
+# PoisonedRAG sweep (Phase 2, Attack 2) -- extends the naming with a
+# poison_config axis (mirrors injection_template's role above). Same
+# nq_open-excluded-by-default reasoning as the injection attack.
+# --------------------------------------------------------------------------
+
+def test_poison_result_file_paths_are_namespaced_by_all_four_axes(tmp_path):
+    raw_a, summary_a = rp.poison_result_file_paths(tmp_path, "phi-4-mini", "hotpot_qa", "adv5", "hf")
+    raw_b, summary_b = rp.poison_result_file_paths(tmp_path, "phi-4-mini", "hotpot_qa", "adv1", "hf")
+
+    assert raw_a != raw_b  # different poison_config -- must not collide
+    assert raw_a.name == "poison_raw_phi-4-mini_hotpot_qa_adv5_hf.jsonl"
+    assert summary_a.name == "poison_summary_phi-4-mini_hotpot_qa_adv5_hf.csv"
+
+
+def test_resolve_poison_sweep_selection_defaults_exclude_nq_open_and_use_default_config(monkeypatch):
+    monkeypatch.delenv("RAG_MODELS", raising=False)
+    monkeypatch.delenv("RAG_CORPORA", raising=False)
+    monkeypatch.delenv("RAG_POISON_CONFIGS", raising=False)
+    monkeypatch.delenv("INFERENCE_ENGINE", raising=False)
+
+    model_keys, corpus_names, poison_configs, engine = rp.resolve_poison_sweep_selection()
+
+    assert model_keys == list(config.MODELS)
+    assert corpus_names == rp.ATTACK_ELIGIBLE_CORPORA
+    assert "nq_open" not in corpus_names
+    assert poison_configs == [rp.DEFAULT_POISON_CONFIG] == ["adv5"]
+    assert engine == "hf"
+
+
+def test_resolve_poison_sweep_selection_honors_env_vars(monkeypatch):
+    monkeypatch.setenv("RAG_MODELS", "qwen3-8b")
+    monkeypatch.setenv("RAG_CORPORA", "ms_marco")
+    monkeypatch.setenv("RAG_POISON_CONFIGS", "adv1, adv5")
+    monkeypatch.setenv("INFERENCE_ENGINE", "vllm")
+
+    model_keys, corpus_names, poison_configs, engine = rp.resolve_poison_sweep_selection()
+
+    assert model_keys == ["qwen3-8b"]
+    assert corpus_names == ["ms_marco"]
+    assert poison_configs == ["adv1", "adv5"]
+    assert engine == "vllm"
+
+
+def test_expected_poison_result_files_covers_every_cell(monkeypatch, tmp_path):
+    monkeypatch.setenv("RAG_MODELS", "phi-4-mini")
+    monkeypatch.setenv("RAG_CORPORA", "hotpot_qa,ms_marco")
+    monkeypatch.setenv("RAG_POISON_CONFIGS", "adv5")
+    monkeypatch.setenv("INFERENCE_ENGINE", "hf")
+
+    paths = rp.expected_poison_result_files(tmp_path)
+
+    # 1 model x 2 corpora x 1 poison_config x 2 files (raw + summary) = 4
+    assert len(paths) == 4
+    names = {p.name for p in paths}
+    assert "poison_raw_phi-4-mini_hotpot_qa_adv5_hf.jsonl" in names
+    assert "poison_summary_phi-4-mini_ms_marco_adv5_hf.csv" in names
