@@ -80,6 +80,7 @@ too would blur that reservation for no real gain over the chosen model.
 import json
 import os
 import random
+import sys
 
 import requests
 
@@ -192,8 +193,39 @@ def generate_poison_texts(question: str, correct_answer: str, adv_per_query: int
         timeout=120,
     )
     resp.raise_for_status()
-    content = resp.json()["choices"][0]["message"]["content"]
-    return _parse_poison_response(content, adv_per_query)
+
+    # resp.raise_for_status() only catches a non-2xx HTTP status. A 2xx
+    # response whose body isn't valid JSON at all (truncated, an HTML/text
+    # error page some gateways return even on 200, or -- one level deeper --
+    # a 2xx envelope whose `content` field is conversational prose instead
+    # of the raw JSON object the prompt asked for) raises json.JSONDecodeError
+    # from stdlib json, not requests' HTTPError -- that distinction is
+    # exactly what tells you which of the two you're looking at. Print the
+    # raw status + body BEFORE re-raising so a failure is diagnosable from
+    # the log, not just "JSONDecodeError: Expecting value" with nothing to
+    # act on -- printed unconditionally on failure, not behind a debug flag,
+    # since any future failure here benefits from it, not just this one.
+    try:
+        envelope = resp.json()
+    except ValueError:
+        print(
+            f"[poison] HTTP envelope was not JSON -- status={resp.status_code}, "
+            f"content-type={resp.headers.get('content-type')!r}, "
+            f"body={resp.text[:2000]!r}",
+            file=sys.stderr,
+        )
+        raise
+
+    content = envelope["choices"][0]["message"]["content"]
+    try:
+        return _parse_poison_response(content, adv_per_query)
+    except (ValueError, KeyError):
+        print(
+            f"[poison] model content was not the expected JSON shape -- "
+            f"status={resp.status_code}, raw content={content!r}",
+            file=sys.stderr,
+        )
+        raise
 
 
 def build_poisoned_passage(question: str, generation_piece: str) -> str:
