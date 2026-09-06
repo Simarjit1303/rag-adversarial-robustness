@@ -72,11 +72,20 @@ def main():
     if os.environ.get("RAG_MODELS"):
         model_keys = [m.strip() for m in os.environ["RAG_MODELS"].split(",") if m.strip()]
 
+    # RAG_CORPORA mirrors RAG_MODELS above -- lets a scoped rerun (e.g.
+    # hotpot_qa/ms_marco only, nq_open permanently excluded from sweeps
+    # going forward per the CORPORA comment in config.py) measure just the
+    # corpora it cares about, instead of nq_open's row always padding the
+    # printed table and every caller filtering it out by eye.
+    corpus_names = list(CORPORA)
+    if os.environ.get("RAG_CORPORA"):
+        corpus_names = [c.strip() for c in os.environ["RAG_CORPORA"].split(",") if c.strip()]
+
     corpus_prompts = {}
     if args.mode == "baseline":
         # Render user prompts once per corpus (retrieval per question,
         # exactly as the sweep does), then tokenize per model.
-        for corpus_name in CORPORA:
+        for corpus_name in corpus_names:
             index, records = build_index(corpus_name, split=args.split)
             prompts = []
             for record in records:
