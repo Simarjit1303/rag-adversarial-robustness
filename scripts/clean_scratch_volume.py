@@ -55,7 +55,10 @@ NEVER_DELETE_PATTERNS = [
     "*.md", "*.log",
 ]
 
-DEFAULT_PREFIX = "results/"
+# Confirmed 2026-09-06 against the real cplemvuitj bucket: objects are
+# nested under a "rag-scratch/" folder (the volume's own name), not at the
+# bucket root -- "results/" alone silently found nothing.
+DEFAULT_PREFIX = "rag-scratch/results/"
 
 
 def _is_never_delete(key: str) -> bool:
