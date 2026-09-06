@@ -1,0 +1,77 @@
+name: GHCR image cleanup
+
+# Every deploy build pushes a new commit-SHA-tagged image (~10GB each,
+# confirmed from tonight's builds) to ghcr.io/simarjit1303/rag-adversarial-robustness/thesis,
+# with nothing ever cleaning up old ones. Safe to automate fully -- unlike
+# the RunPod network volume (see scripts/clean_scratch_volume.py, which
+# stays manual-only), an old image is always reproducible by rebuilding
+# from its tagged commit, so deleting one loses nothing.
+#
+# A separate workflow file rather than a step added to
+# thesis-AutoDeployTrigger-*.yml, so this doesn't collide with that file's
+# in-flight changes on other branches (the disk-space-fix step, the
+# Container Apps Job switch) that haven't reached main yet.
+
+on:
+  workflow_dispatch:
+    inputs:
+      keep:
+        description: "Number of most recent image versions to keep"
+        required: false
+        default: "5"
+  schedule:
+    # Weekly is plenty for a repo with a handful of deploys a day at most.
+    - cron: "0 3 * * 0"
+
+permissions:
+  packages: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete old image versions, keep the N most recent
+        env:
+          # NOTE: the default GITHUB_TOKEN cannot delete container package
+          # versions for a user-owned package -- this is a documented
+          # GitHub Packages API limitation, not a permissions bug in this
+          # workflow. Create a classic PAT with read:packages +
+          # delete:packages scopes and store it as the GHCR_CLEANUP_TOKEN
+          # repo secret before this workflow can actually delete anything;
+          # until then it will list correctly and fail on the first delete
+          # call with a 403, which is the correct/safe failure mode (no
+          # partial silent success).
+          GH_TOKEN: ${{ secrets.GHCR_CLEANUP_TOKEN }}
+          KEEP: ${{ github.event.inputs.keep || '5' }}
+        run: |
+          set -euo pipefail
+          # Hand-rolled via `gh api`, not a third-party action (e.g.
+          # actions/delete-package-versions) -- matches this repo's stated
+          # preference for owning the exact mechanism over a dependency
+          # with its own trust/maintenance surface (see
+          # scripts/run_and_terminate.py's direct `requests.delete` call
+          # instead of the `runpod` SDK, for the same reason).
+          OWNER="simarjit1303"
+          PACKAGE="rag-adversarial-robustness%2Fthesis"
+
+          echo "Listing all versions of rag-adversarial-robustness/thesis..."
+          versions=$(gh api --paginate \
+            "/users/${OWNER}/packages/container/${PACKAGE}/versions" \
+            --jq '[.[] | {id, created_at}]')
+
+          total=$(echo "$versions" | jq 'length')
+          echo "Found $total version(s), keeping the $KEEP most recent."
+
+          to_delete=$(echo "$versions" \
+            | jq -r --argjson keep "$KEEP" \
+              'sort_by(.created_at) | reverse | .[$keep:] | .[].id')
+
+          if [ -z "$to_delete" ]; then
+            echo "$total version(s) found, nothing beyond the $KEEP kept -- nothing to delete."
+            exit 0
+          fi
+
+          for id in $to_delete; do
+            echo "Deleting version $id"
+            gh api -X DELETE "/users/${OWNER}/packages/container/${PACKAGE}/versions/${id}"
+          done
