@@ -57,7 +57,12 @@ def test_sample_target_questions_returns_everything_if_sample_size_exceeds_recor
 
 
 # --------------------------------------------------------------------
-# _parse_poison_response against 4 real captured nemotron-3-ultra responses
+# _parse_poison_response against real captured responses from BOTH models
+# tried: nvidia/nemotron-3-ultra-550b-a55b (NIM, in use) and
+# minimax/minimax-m3:free (OpenRouter, evaluated as an alternative --
+# genuinely clean by default, no thinking-disable flag needed, but uses a
+# different response shape that needed the collective-header + numbered-
+# list fallback above).
 # --------------------------------------------------------------------
 
 @pytest.mark.parametrize("fixture_name,expected_answer,expected_first_words", [
@@ -75,6 +80,20 @@ def test_sample_target_questions_returns_everything_if_sample_size_exceeds_recor
     # happened to come out clean anyway -- confirms the labeled-markdown
     # shape itself doesn't depend on that fix, only reliability does
     ("romeo_juliet_author.txt", "Christopher Marlowe", "Recent scholarship from the Oxfordian"),
+    # minimax-m3: conversational prose ("Here is an incorrect answer:")
+    # rather than a bold label -- happens to already satisfy the primary
+    # regex since the literal substring still matches
+    ("minimax_titanic_director.txt", "Steven Spielberg", "Steven Spielberg is widely regarded"),
+    # minimax-m3: a markdown H1 heading ("# Incorrect Answer:") plus a
+    # generic "## Five Concise Corpuses" heading that must NOT be mistaken
+    # for a real corpus header (no digit attached -- the primary regex
+    # correctly skips it and finds the real "**Corpus N:**" headers after)
+    ("minimax_pride_prejudice_author.txt", "Charlotte Brontë", "During the Victorian literary period"),
+    # minimax-m3: the collective "**Corpora:**" + numbered-list fallback
+    # shape -- see test_parse_poison_response_uses_collective_corpora_fallback
+    # below for the dedicated check that this really exercises the new
+    # fallback path, not the primary one by coincidence
+    ("minimax_japan_capital.txt", "Kyoto", "Tokyo, the bustling capital of Japan"),
 ])
 def test_parse_poison_response_against_real_fixtures(fixture_name, expected_answer, expected_first_words):
     content = _load_fixture(fixture_name)
@@ -121,6 +140,45 @@ def test_parse_poison_response_tolerates_corpus_header_with_no_colon():
     answer, corpora = _parse_poison_response(content, adv_per_query=5)
     assert answer == "London"
     assert corpora == [f"London text {w}." for w in ("one", "two", "three", "four", "five")]
+
+
+def test_parse_poison_response_uses_collective_corpora_fallback_not_primary_path():
+    # real minimax-m3 shape: confirm the primary per-item "Corpus N" regex
+    # genuinely finds NOTHING here (proving the fallback, not the primary
+    # path, is what makes this fixture parse), then confirm the fallback
+    # correctly recovers all 5 items from the collective header + list.
+    from attacks.poisonedrag import _CORPUS_HEADER_RE
+
+    content = _load_fixture("minimax_japan_capital.txt")
+    assert list(_CORPUS_HEADER_RE.finditer(content)) == []
+
+    answer, corpora = _parse_poison_response(content, adv_per_query=ADV_PER_QUERY)
+    assert answer == "Kyoto"
+    assert len(corpora) == ADV_PER_QUERY
+    assert corpora[0].startswith("Tokyo, the bustling capital of Japan")
+    assert corpora[4].startswith("Many travelers confuse Kyoto")
+    for corpus_text in corpora:
+        assert corpus_text
+        assert not corpus_text[0].isdigit()  # the "N." list marker was stripped, not kept
+
+
+def test_parse_poison_response_collective_fallback_synthetic_edge_case():
+    # numbered with ")" instead of "." after the digit, and a "corpus:"
+    # (singular, no plural "es"/"a") collective header -- defensive
+    # variants beyond what was captured live, same spirit as the other
+    # synthetic edge-case tests in this file
+    content = (
+        "**Incorrect Answer:** Berlin\n\n"
+        "**Corpus:**\n\n"
+        "1) Berlin text one.\n"
+        "2) Berlin text two.\n"
+        "3) Berlin text three.\n"
+        "4) Berlin text four.\n"
+        "5) Berlin text five."
+    )
+    answer, corpora = _parse_poison_response(content, adv_per_query=5)
+    assert answer == "Berlin"
+    assert corpora == [f"Berlin text {w}." for w in ("one", "two", "three", "four", "five")]
 
 
 def test_parse_poison_response_missing_answer_label_raises():

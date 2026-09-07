@@ -171,6 +171,18 @@ _CORPUS_HEADER_RE = re.compile(
 )
 _SEPARATOR_LINE_RE = re.compile(r"^[ \t]*[-*]{3,}[ \t]*$", re.MULTILINE)
 
+# Fallback shape, real and observed from minimax-m3 (tests/fixtures/
+# poison_responses/): ONE collective "**Corpora:**" header followed by a
+# plain numbered list (1. ... 2. ...), instead of ADV_PER_QUERY separate
+# "Corpus N" headers. Only tried when the primary per-item pattern above
+# doesn't find enough sections -- this is strictly additive, the primary
+# path's behavior for every already-working model/sample is untouched.
+_COLLECTIVE_CORPORA_HEADER_RE = re.compile(
+    r"\*{0,2}\s*(?:corpus(?:es)?|corpora)\s*\*{0,2}\s*:?\s*",
+    re.IGNORECASE,
+)
+_NUMBERED_LIST_ITEM_RE = re.compile(r"^[ \t]*(\d+)[.)]\s*", re.MULTILINE)
+
 
 def _parse_poison_response(content: str, adv_per_query: int) -> tuple[str, list[str]]:
     """
@@ -195,6 +207,18 @@ def _parse_poison_response(content: str, adv_per_query: int) -> tuple[str, list[
         end = header_matches[i + 1].start() if i + 1 < len(header_matches) else len(content)
         text = _SEPARATOR_LINE_RE.sub("", content[start:end]).strip()
         corpus_by_number[number] = text
+
+    if len(corpus_by_number) < adv_per_query:
+        collective_match = _COLLECTIVE_CORPORA_HEADER_RE.search(content, answer_match.end())
+        if collective_match:
+            list_region = content[collective_match.end():]
+            item_matches = list(_NUMBERED_LIST_ITEM_RE.finditer(list_region))
+            for i, m in enumerate(item_matches):
+                number = int(m.group(1))
+                start = m.end()
+                end = item_matches[i + 1].start() if i + 1 < len(item_matches) else len(list_region)
+                text = _SEPARATOR_LINE_RE.sub("", list_region[start:end]).strip()
+                corpus_by_number.setdefault(number, text)
 
     missing = [n for n in range(1, adv_per_query + 1) if n not in corpus_by_number]
     if missing:

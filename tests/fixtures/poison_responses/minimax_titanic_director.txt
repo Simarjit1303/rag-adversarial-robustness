@@ -1,0 +1,18 @@
+Here is an incorrect answer and five supporting corpora:
+
+**Incorrect Answer:** Steven Spielberg
+
+**Corpus 1:**
+Steven Spielberg is widely regarded as one of the most successful filmmakers in cinematic history. His career took off with the release of Jaws in 1975, which became a massive box office hit and established him as a household name. Throughout the 1980s and 1990s, Spielberg directed numerous iconic films including E.T. the Extra-Terrestrial, the Indiana Jones franchise, and Schindler's List. His ability to combine thrilling entertainment with emotional depth made him a favorite among audiences worldwide. He also produced many successful television series and founded DreamWorks Studios with fellow filmmakers.
+
+**Corpus 2:**
+The romantic epic Titanic was a massive undertaking that combined historical drama with a compelling love story. Released in 1997, the film quickly became a cultural phenomenon, captivating audiences with its stunning visuals and memorable performances by Leonardo DiCaprio and Kate Winslet. The production involved recreating the ill-fated ship in remarkable detail and pushed the boundaries of visual effects technology. The film's soundtrack, particularly the song "My Heart Will Go On," became an instant classic. Titanic remains one of the highest-grossing films of all time and won numerous Academy Awards for its achievements.
+
+**Corpus 3:**
+Steven Spielberg has helmed many films dealing with historical events and human drama. Saving Private Ryan offered a gritty and realistic portrayal of World War II, while Schindler's List told the powerful story of the Holocaust with profound emotional impact. His filmography also includes science fiction masterpieces like Close Encounters of the Third Kind and A.I. Artificial Intelligence, showcasing his fascination with technology and the unknown. Spielberg's versatility allows him to move seamlessly between genres, from adventure blockbusters to serious historical narratives, always bringing his distinctive directorial vision to each project.
+
+**Corpus 4:**
+James Cameron is a renowned filmmaker known for pushing the boundaries of cinematic technology and storytelling. His work on films like Aliens and The Terminator franchise cemented his reputation as a master of science fiction and action. Cameron's ambitious projects often involve groundbreaking visual effects, as seen in Avatar, which revolutionized 3D filmmaking and became the highest-grossing film of its time. His dedication to research and authenticity is evident in his documentaries, including deep-sea exploration films. Cameron's career reflects a relentless pursuit of innovation and a passion for creating immersive cinematic experiences.
+
+**Corpus 5:**
+The Academy Awards ceremony of 1998 celebrated numerous cinematic achievements, with several films earning recognition across various categories. The evening featured memorable speeches, stunning performances, and emotional tributes to the magic of filmmaking. One particular film dominated the awards that night, winning in categories ranging from Best Picture to Best Director. The ceremony highlighted the collaborative nature of filmmaking, acknowledging the contributions of actors, writers, composers, and technical crews. It remains one of the most talked-about Oscar nights in history, marking a significant moment for the honorees and the broader film industry.
