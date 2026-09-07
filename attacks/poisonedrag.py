@@ -34,66 +34,60 @@ exists in the reference implementation purely for variance estimation,
 which this project's evaluation.stats.paired_bootstrap_ci already provides
 more cheaply over a single run. 100 was chosen as 10x the paper's own
 validated scale while staying well short of the full 1000-question dev
-set, since each target question costs one real (paid, rate-limited)
-generation API call -- unlike Attack 1's free, deterministic template
-rendering.
+set, since each target question costs one real generation API call --
+unlike Attack 1's free, deterministic template rendering.
 
-Poison generator: moonshotai/Kimi-K2-Instruct-0905 via the HuggingFace
-Inference API router (1T total / 32B active MoE, Sep 2025 checkpoint) --
-the strongest model confirmed actually callable with the credentials
-available this session, checked across both HF Inference API and NVIDIA
-NIM's live catalogs with real completion calls, not just catalog listings.
-Deliberately not one of the four locked target models (Llama-3.1-8B,
-Qwen3-8B, Phi-4-mini, Ministral-3-8B) -- it never crafts poison against
-itself.
+Poison generator: nvidia/nemotron-3-ultra-550b-a55b via NVIDIA NIM's hosted
+API (550B total / 55B active MoE). Deliberately not one of the four locked
+target models (Llama-3.1-8B, Qwen3-8B, Phi-4-mini, Ministral-3-8B) -- it
+never crafts poison against itself.
 
-kimi-k3 (~2.8T, the largest catalog entry found on NVIDIA NIM) is NOT
-used, but not because it's inaccessible -- a corrected finding worth being
-precise about. Two short-timeout test calls (60s, 180s) both failed, which
-first looked like a real access problem; a third call at 480s succeeded
-(HTTP 200, real content). The actual cause: kimi-k3 is a reasoning model
-that emits a `reasoning_content` field before its final `content`, so a
-low max_tokens budget (10, matching the trivial test prompt) let it burn
-its whole budget on reasoning and return null content, and the 60-180s
-window wasn't enough time regardless. kimi-k3 IS reachable. It is excluded
-on a considered cost/practicality basis instead: 480s for a two-word reply
-implies the real poison-generation prompt (a full JSON object, an
-incorrect answer plus 5 ~100-word passages) would plausibly take minutes
-per call once reasoning overhead is included, and an untested max_tokens
-budget would be needed for it. At 200 real target-question calls (100/
-corpus x 2 corpora), that risks many hours of wall-clock time and real
-timeout/reliability exposure, against a fixed dissertation deadline with
-Crescendo and Phase 3 still ahead. Kimi-K2-Instruct-0905 (1T total / 32B
-active) is still a large, current, genuinely capable model -- this is the
-strongest option that's actually practical at this sweep's real scale.
-Raw capability that can't be deployed within real project constraints
-(a fixed dissertation deadline, real API rate limits) doesn't serve the
-study. See PHASE2_POISONEDRAG_INSIGHTS.md's methodology section for the
-full write-up, including the measured 480s latency.
+TRANSPORT HISTORY -- two prior choices were tried and abandoned, each for a
+concrete, verified reason, not a preference:
 
-DeepSeek V3/V3.1/V3.2-Exp were also confirmed callable via HF but
-deliberately excluded: DeepSeek V4 Pro is reserved for its planned Phase 2
-judge/Crescendo-orchestrator role, and using a DeepSeek family model here
-too would blur that reservation for no real gain over the chosen model.
+1. kimi-k3 via NVIDIA NIM (~2.8T, the largest catalog entry found on
+   either platform checked) -- reachable (confirmed at 480s with a large
+   enough max_tokens), but excluded on cost/practicality: 480s for a
+   two-word reply implies the real poison-generation prompt would
+   plausibly take minutes per call across 200 real target-question calls.
+2. moonshotai/Kimi-K2-Instruct-0905 via the HuggingFace Inference API
+   router (1T total / 32B active) -- worked, including a real reasoning-
+   exhaustion bug found and fixed (chat_template_kwargs.thinking=false) --
+   but HF's Inference API free tier turned out to be a $0.10/month cap,
+   not a genuinely free research tier, and paid HF credits weren't the
+   right fix given this project also needs real API volume later for
+   Crescendo. Abandoned for a cost/sustainability reason, not a quality or
+   access one -- the fix that made it work is still valid, just moot now.
 
-Second real finding, confirmed live during smoke-test debugging: Kimi-K2-
-Instruct-0905 also has a reasoning mode, silent where kimi-k3's was loud --
-both a 1500- and a 4000-token budget hit finish_reason="length" with
-reasoning_tokens consuming the ENTIRE budget and content=="", not a
-truncation error, just an empty string that made JSON parsing fail with no
-visible cause. Confirmed non-deterministic too: an identical 4000-token
-call sometimes DID produce content, sometimes didn't. The fix,
-`chat_template_kwargs: {"thinking": false}` in the request body, is
-confirmed live (finish_reason="stop", reasoning_tokens=0, real content,
-under 600 total tokens) -- but combining it with `response_format:
-json_object` silently re-enables reasoning and the same failure returns,
-so response_format is dropped entirely rather than coexisting with the
-thinking-disable flag. With thinking disabled, content comes back as
-labeled markdown ("**Incorrect Answer:** ...", "**Corpus 1:** ...") not
-JSON -- _parse_poison_response below is a regex parser built against 4
-real captured responses (tests/fixtures/poison_responses/), not a JSON
-parser. See PHASE2_POISONEDRAG_INSIGHTS.md's methodology section for the
-full write-up.
+nvidia/nemotron-3-ultra-550b-a55b via NVIDIA NIM is the current choice:
+NIM's hosted developer tier is free for prototyping/research/development/
+evaluation (not a dollar-credit cap), rate-limited at ~40 requests/minute,
+confirmed independently (NVIDIA Developer Program docs and forum posts),
+not just asserted. Access to this exact model was already confirmed
+working earlier in this project's NIM verification pass, so this reuses
+existing credentials with zero new setup.
+
+Real reliability finding, confirmed live: nemotron-3-ultra-550b-a55b also
+has an internal reasoning stage, and on at least one real call it leaked
+that reasoning (visible word-counting, self-correction, "let me recount
+carefully") directly into the `content` field instead of a separate
+`reasoning_content` field, then got cut off mid-reasoning by
+finish_reason="length" -- a different failure SHAPE than Kimi's silent
+empty-content exhaustion, but the same underlying cause (reasoning
+competing with the requested output for the same token budget). Fix,
+confirmed on the exact question that had just failed and on 3 further
+fresh questions: a `{"role": "system", "content": "detailed thinking off"}`
+message -- NVIDIA's documented Nemotron convention for suppressing the
+reasoning stage, distinct from the OpenAI-style chat_template_kwargs
+mechanism Kimi needed. With it, replies come back with
+finish_reason="stop", a bounded reasoning_content (under ~1000 chars, not
+consuming the whole budget), and clean labeled-markdown content -- same
+general shape as Kimi's ("**Incorrect Answer:** ...", "**Corpus N**
+..."), with its own separator quirk: this model consistently uses "***"
+(three asterisks) as its horizontal-rule separator, never "---". See
+PHASE2_POISONEDRAG_INSIGHTS.md's methodology section for the full
+write-up, including the measured 480s kimi-k3 latency and this content-
+leakage finding.
 """
 
 import os
@@ -123,8 +117,11 @@ POISON_GENERATION_PROMPT = (
     "around 100 words."
 )
 
-HF_ROUTER_URL = "https://router.huggingface.co/v1/chat/completions"
-POISON_GENERATOR_MODEL = "moonshotai/Kimi-K2-Instruct-0905"
+NIM_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
+POISON_GENERATOR_MODEL = "nvidia/nemotron-3-ultra-550b-a55b"
+# NVIDIA's documented Nemotron convention for suppressing the reasoning
+# stage -- see module docstring's "real reliability finding" section.
+_THINKING_OFF_SYSTEM_MESSAGE = {"role": "system", "content": "detailed thinking off"}
 
 
 def sample_target_questions(records: list, corpus_name: str,
@@ -144,23 +141,26 @@ def sample_target_questions(records: list, corpus_name: str,
     return rng.sample(records, sample_size)
 
 
-# With chat_template_kwargs.thinking=false (see module docstring), Kimi-K2
-# replies with labeled markdown, not JSON: a bold "Incorrect Answer:" line
-# followed by ADV_PER_QUERY bold "Corpus N" sections. Built against 4 real
-# captured responses (tests/fixtures/poison_responses/), which already show
-# real variation in every part of this shape:
+# With reasoning suppressed (see module docstring), the generator replies
+# with labeled markdown, not JSON: a bold "Incorrect Answer:" line followed
+# by ADV_PER_QUERY bold "Corpus N" sections. Built against real captured
+# responses (tests/fixtures/poison_responses/) from BOTH transports tried
+# (Kimi-K2 and nemotron-3-ultra), which together show real variation in
+# every part of this shape:
 #   - capitalization: "Incorrect Answer" vs "Incorrect answer" (both seen)
 #   - an optional conversational preamble before the first label (seen once)
-#   - "---" horizontal-rule separators: present between every section in
-#     some responses, absent entirely in others, present only ONCE (before
-#     Corpus 1, absent between the corpus sections themselves) in another --
-#     genuinely unpredictable even within one response, not a fixed pattern
-#   - a colon after "Corpus N" in most samples, absent in at least one
-#     observed (truncated) response
+#   - separator style: "---" (Kimi) or "***" (nemotron) horizontal rules,
+#     present between every section in some responses, absent entirely in
+#     others, present only ONCE in another -- genuinely unpredictable even
+#     within one response, not a fixed pattern
+#   - a colon after "Corpus N" in some samples, absent in others (nemotron
+#     consistently omits it; Kimi sometimes included it)
+#   - the answer value itself sometimes on the same line as the label,
+#     sometimes on the next line (both seen)
 # .search() (not .match()) so a preamble never blocks the match; IGNORECASE
 # for the capitalization variance; the corpus header's colon and the
 # separator lines are all optional -- written for the variation already
-# observed, not just the two original samples.
+# observed across two different model families, not just one.
 _INCORRECT_ANSWER_RE = re.compile(
     r"\*{0,2}\s*incorrect\s+answer\s*\*{0,2}\s*:\s*\*{0,2}\s*(.+)",
     re.IGNORECASE,
@@ -169,17 +169,16 @@ _CORPUS_HEADER_RE = re.compile(
     r"\*{0,2}\s*corpus\s+(\d+)\s*:?\s*\*{0,2}\s*",
     re.IGNORECASE,
 )
-_SEPARATOR_LINE_RE = re.compile(r"^[ \t]*-{3,}[ \t]*$", re.MULTILINE)
+_SEPARATOR_LINE_RE = re.compile(r"^[ \t]*[-*]{3,}[ \t]*$", re.MULTILINE)
 
 
 def _parse_poison_response(content: str, adv_per_query: int) -> tuple[str, list[str]]:
     """
-    Extracts the incorrect answer and adv_per_query corpus texts from
-    Kimi-K2's labeled-markdown reply -- see the regex definitions above for
-    the real variation this is built to tolerate. Raises ValueError (not a
-    silent partial result) if the answer label or any expected corpus
-    number is missing, same fail-loud contract the previous JSON-based
-    version had.
+    Extracts the incorrect answer and adv_per_query corpus texts from the
+    generator's labeled-markdown reply -- see the regex definitions above
+    for the real variation this is built to tolerate. Raises ValueError
+    (not a silent partial result) if the answer label or any expected
+    corpus number is missing.
     """
     answer_match = _INCORRECT_ANSWER_RE.search(content)
     if not answer_match:
@@ -218,44 +217,38 @@ def generate_poison_texts(question: str, correct_answer: str, adv_per_query: int
     poisoned passage, kept separate so the two pieces stay independently
     testable (parsing vs. concatenation are different failure modes).
     """
-    api_token = api_token or os.environ.get("HF_API_TOKEN")
+    api_token = api_token or os.environ.get("NVIDIA_NIM_API_KEY")
     if not api_token:
         raise RuntimeError(
-            "No HF API token available -- set HF_API_TOKEN (or pass api_token=)."
+            "No NVIDIA NIM API token available -- set NVIDIA_NIM_API_KEY "
+            "(or pass api_token=)."
         )
     prompt = POISON_GENERATION_PROMPT.format(
         question=question, correct_answer=correct_answer, adv_per_query=adv_per_query
     )
     resp = requests.post(
-        HF_ROUTER_URL,
+        NIM_URL,
         headers={"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"},
         json={
             "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            # NOT response_format: json_object -- combining it with the
-            # thinking-disable flag below silently re-enables reasoning and
-            # brings back the empty-content failure (confirmed live, see
-            # module docstring). Content comes back as labeled markdown
-            # instead; _parse_poison_response is a regex parser for that
-            # shape, not a JSON parser.
-            "chat_template_kwargs": {"thinking": False},
+            "messages": [
+                _THINKING_OFF_SYSTEM_MESSAGE,
+                {"role": "user", "content": prompt},
+            ],
             "max_tokens": 2000,
         },
-        timeout=120,
+        timeout=180,
     )
     resp.raise_for_status()
 
     # resp.raise_for_status() only catches a non-2xx HTTP status. A 2xx
     # response whose body isn't valid JSON at all (truncated, an HTML/text
-    # error page some gateways return even on 200, or -- one level deeper --
-    # a 2xx envelope whose `content` field is conversational prose instead
-    # of the raw JSON object the prompt asked for) raises json.JSONDecodeError
+    # error page some gateways return even on 200) raises json.JSONDecodeError
     # from stdlib json, not requests' HTTPError -- that distinction is
     # exactly what tells you which of the two you're looking at. Print the
     # raw status + body BEFORE re-raising so a failure is diagnosable from
-    # the log, not just "JSONDecodeError: Expecting value" with nothing to
-    # act on -- printed unconditionally on failure, not behind a debug flag,
-    # since any future failure here benefits from it, not just this one.
+    # the log -- printed unconditionally on failure, not behind a debug
+    # flag, since any future failure here benefits from it.
     try:
         envelope = resp.json()
     except ValueError:

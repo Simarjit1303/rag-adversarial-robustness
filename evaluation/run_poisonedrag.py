@@ -135,7 +135,7 @@ def build_poisoned_contexts(corpus_name: str, split: str = "dev", sample_n: int 
             print(f"[poison] using cached contexts: {cache_path} ({len(cached)} questions)")
             return cached[:sample_n] if sample_n else cached
 
-    api_token = api_token or os.environ.get("HF_API_TOKEN")
+    api_token = api_token or os.environ.get("NVIDIA_NIM_API_KEY")
     index, records = build_index(corpus_name, split=split)
     sample_size = sample_n if sample_n is not None else SAMPLE_SIZE
     target_records = sample_target_questions(records, corpus_name, sample_size=sample_size, seed=SEED)

@@ -4,14 +4,18 @@ question sampling, the labeled-markdown response parser, and the exact
 retrieval-piece + generation-piece concatenation. generate_poison_texts()
 itself (the live API call) isn't unit-tested here -- no network in tests.
 
-The parser tests load 4 REAL Kimi-K2-Instruct-0905 responses (thinking
-disabled, no response_format -- see attacks/poisonedrag.py's module
-docstring) from tests/fixtures/poison_responses/, captured live during
-this feature's development, not written by hand. They already show real
-format variation the parser has to survive: "Incorrect Answer" vs
-"Incorrect answer" capitalization, and "---" separators present between
-every section, absent entirely, or present only once within the same
-response.
+The parser tests load 4 REAL nvidia/nemotron-3-ultra-550b-a55b responses
+("detailed thinking off" -- see attacks/poisonedrag.py's module docstring)
+from tests/fixtures/poison_responses/, captured live during this feature's
+development, not written by hand. They already show real format variation
+the parser has to survive: the answer value on the same line as its label
+or on the next line, "***" separators present between every section,
+present only once, or absent entirely, and a colon after "Corpus N" in one
+sample but not the others. The synthetic edge-case tests below additionally
+cover "---"-style separators and a conversational preamble, both real
+patterns observed from a different model (Kimi-K2) during this feature's
+earlier iteration -- kept because the regex is written to tolerate both
+models' quirks, not because Kimi-K2 is still in use.
 """
 
 from pathlib import Path
@@ -53,19 +57,24 @@ def test_sample_target_questions_returns_everything_if_sample_size_exceeds_recor
 
 
 # --------------------------------------------------------------------
-# _parse_poison_response against 4 real captured Kimi-K2 responses
+# _parse_poison_response against 4 real captured nemotron-3-ultra responses
 # --------------------------------------------------------------------
 
 @pytest.mark.parametrize("fixture_name,expected_answer,expected_first_words", [
-    # "---" between every section, no colon variant elsewhere -- baseline shape
-    ("france_capital.txt", "Lyon", "In 2023, the French government"),
-    # "---" between every section again, but from a completely different topic
-    ("hamlet_author.txt", "Christopher Marlowe", "The Elizabethan theatre scene"),
-    ("largest_planet.txt", "Saturn", "Saturn stands as the largest planet"),
-    # lowercase "answer", "---" present only ONCE (before Corpus 1), absent
-    # between the corpus sections themselves -- the most format-hostile
-    # real sample captured
-    ("gold_symbol.txt", "Ag", "Silver is one of the most precious metals"),
+    # answer on the SAME line as its label, "***" between every section,
+    # no colon after "Corpus N" -- baseline shape for this model
+    ("iron_symbol.txt", "Ir", "In the revised 2023 IUPAC"),
+    # answer on the NEXT line after its label, "***" present, colon-free
+    # header again -- a different question topic entirely
+    ("first_president.txt", "John Adams", "The early constitutional period"),
+    # answer on the next line again, but this time NO "***" separators
+    # anywhere and "Corpus N:" WITH a colon -- most format-divergent
+    # real sample captured for this model
+    ("water_boiling_point.txt", "90", "Standard thermodynamic tables"),
+    # captured before the "detailed thinking off" fix was added, but
+    # happened to come out clean anyway -- confirms the labeled-markdown
+    # shape itself doesn't depend on that fix, only reliability does
+    ("romeo_juliet_author.txt", "Christopher Marlowe", "Recent scholarship from the Oxfordian"),
 ])
 def test_parse_poison_response_against_real_fixtures(fixture_name, expected_answer, expected_first_words):
     content = _load_fixture(fixture_name)
@@ -77,8 +86,8 @@ def test_parse_poison_response_against_real_fixtures(fixture_name, expected_answ
     # no leftover markdown artifacts in any extracted corpus text
     for corpus_text in corpora:
         assert corpus_text  # non-empty
-        assert not corpus_text.startswith("---")
-        assert not corpus_text.endswith("---")
+        assert not corpus_text.startswith(("---", "***"))
+        assert not corpus_text.endswith(("---", "***"))
         assert "**Corpus" not in corpus_text  # didn't swallow the next header
 
 
