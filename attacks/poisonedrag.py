@@ -75,11 +75,30 @@ DeepSeek V3/V3.1/V3.2-Exp were also confirmed callable via HF but
 deliberately excluded: DeepSeek V4 Pro is reserved for its planned Phase 2
 judge/Crescendo-orchestrator role, and using a DeepSeek family model here
 too would blur that reservation for no real gain over the chosen model.
+
+Second real finding, confirmed live during smoke-test debugging: Kimi-K2-
+Instruct-0905 also has a reasoning mode, silent where kimi-k3's was loud --
+both a 1500- and a 4000-token budget hit finish_reason="length" with
+reasoning_tokens consuming the ENTIRE budget and content=="", not a
+truncation error, just an empty string that made JSON parsing fail with no
+visible cause. Confirmed non-deterministic too: an identical 4000-token
+call sometimes DID produce content, sometimes didn't. The fix,
+`chat_template_kwargs: {"thinking": false}` in the request body, is
+confirmed live (finish_reason="stop", reasoning_tokens=0, real content,
+under 600 total tokens) -- but combining it with `response_format:
+json_object` silently re-enables reasoning and the same failure returns,
+so response_format is dropped entirely rather than coexisting with the
+thinking-disable flag. With thinking disabled, content comes back as
+labeled markdown ("**Incorrect Answer:** ...", "**Corpus 1:** ...") not
+JSON -- _parse_poison_response below is a regex parser built against 4
+real captured responses (tests/fixtures/poison_responses/), not a JSON
+parser. See PHASE2_POISONEDRAG_INSIGHTS.md's methodology section for the
+full write-up.
 """
 
-import json
 import os
 import random
+import re
 import sys
 
 import requests
@@ -125,40 +144,66 @@ def sample_target_questions(records: list, corpus_name: str,
     return rng.sample(records, sample_size)
 
 
+# With chat_template_kwargs.thinking=false (see module docstring), Kimi-K2
+# replies with labeled markdown, not JSON: a bold "Incorrect Answer:" line
+# followed by ADV_PER_QUERY bold "Corpus N" sections. Built against 4 real
+# captured responses (tests/fixtures/poison_responses/), which already show
+# real variation in every part of this shape:
+#   - capitalization: "Incorrect Answer" vs "Incorrect answer" (both seen)
+#   - an optional conversational preamble before the first label (seen once)
+#   - "---" horizontal-rule separators: present between every section in
+#     some responses, absent entirely in others, present only ONCE (before
+#     Corpus 1, absent between the corpus sections themselves) in another --
+#     genuinely unpredictable even within one response, not a fixed pattern
+#   - a colon after "Corpus N" in most samples, absent in at least one
+#     observed (truncated) response
+# .search() (not .match()) so a preamble never blocks the match; IGNORECASE
+# for the capitalization variance; the corpus header's colon and the
+# separator lines are all optional -- written for the variation already
+# observed, not just the two original samples.
+_INCORRECT_ANSWER_RE = re.compile(
+    r"\*{0,2}\s*incorrect\s+answer\s*\*{0,2}\s*:\s*\*{0,2}\s*(.+)",
+    re.IGNORECASE,
+)
+_CORPUS_HEADER_RE = re.compile(
+    r"\*{0,2}\s*corpus\s+(\d+)\s*:?\s*\*{0,2}\s*",
+    re.IGNORECASE,
+)
+_SEPARATOR_LINE_RE = re.compile(r"^[ \t]*-{3,}[ \t]*$", re.MULTILINE)
+
+
 def _parse_poison_response(content: str, adv_per_query: int) -> tuple[str, list[str]]:
     """
-    The prompt asks for a JSON object with an incorrect-answer field and
-    adv_per_query numbered corpus fields. Real LLM JSON output is not
-    perfectly reliable -- tolerate a few key-naming variants rather than
-    hard-coding one exact schema and crashing the whole sweep on the first
-    response that phrases a key slightly differently.
+    Extracts the incorrect answer and adv_per_query corpus texts from
+    Kimi-K2's labeled-markdown reply -- see the regex definitions above for
+    the real variation this is built to tolerate. Raises ValueError (not a
+    silent partial result) if the answer label or any expected corpus
+    number is missing, same fail-loud contract the previous JSON-based
+    version had.
     """
-    text = content.strip()
-    if text.startswith("```"):
-        text = text.strip("`")
-        if text[:4].lower() == "json":
-            text = text[4:]
-    data = json.loads(text)
-
-    incorrect_answer = None
-    for key in ("incorrect answer", "incorrect_answer", "incorrectAnswer"):
-        if key in data:
-            incorrect_answer = data[key]
-            break
-    if incorrect_answer is None:
-        raise ValueError(f"No incorrect-answer key found in poison response: {list(data.keys())}")
-
-    corpora = []
-    for i in range(1, adv_per_query + 1):
-        for key in (f"corpus{i}", f"corpus_{i}"):
-            if key in data:
-                corpora.append(data[key])
-                break
-    if len(corpora) != adv_per_query:
+    answer_match = _INCORRECT_ANSWER_RE.search(content)
+    if not answer_match:
         raise ValueError(
-            f"Expected {adv_per_query} corpus fields, found {len(corpora)} "
-            f"in poison response: {list(data.keys())}"
+            f"No 'Incorrect Answer:' label found in poison response: {content[:200]!r}"
         )
+    incorrect_answer = answer_match.group(1).strip().strip("*").strip()
+
+    header_matches = list(_CORPUS_HEADER_RE.finditer(content))
+    corpus_by_number = {}
+    for i, m in enumerate(header_matches):
+        number = int(m.group(1))
+        start = m.end()
+        end = header_matches[i + 1].start() if i + 1 < len(header_matches) else len(content)
+        text = _SEPARATOR_LINE_RE.sub("", content[start:end]).strip()
+        corpus_by_number[number] = text
+
+    missing = [n for n in range(1, adv_per_query + 1) if n not in corpus_by_number]
+    if missing:
+        raise ValueError(
+            f"Missing corpus section(s) {missing} in poison response "
+            f"(found {sorted(corpus_by_number)}): {content[:200]!r}"
+        )
+    corpora = [corpus_by_number[n] for n in range(1, adv_per_query + 1)]
     return incorrect_answer, corpora
 
 
@@ -187,8 +232,14 @@ def generate_poison_texts(question: str, correct_answer: str, adv_per_query: int
         json={
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
-            "response_format": {"type": "json_object"},
-            "max_tokens": 1500,
+            # NOT response_format: json_object -- combining it with the
+            # thinking-disable flag below silently re-enables reasoning and
+            # brings back the empty-content failure (confirmed live, see
+            # module docstring). Content comes back as labeled markdown
+            # instead; _parse_poison_response is a regex parser for that
+            # shape, not a JSON parser.
+            "chat_template_kwargs": {"thinking": False},
+            "max_tokens": 2000,
         },
         timeout=120,
     )
@@ -220,9 +271,13 @@ def generate_poison_texts(question: str, correct_answer: str, adv_per_query: int
     try:
         return _parse_poison_response(content, adv_per_query)
     except (ValueError, KeyError):
+        message = envelope["choices"][0]["message"]
         print(
-            f"[poison] model content was not the expected JSON shape -- "
-            f"status={resp.status_code}, raw content={content!r}",
+            f"[poison] model content did not match the expected labeled-markdown "
+            f"shape -- status={resp.status_code}, "
+            f"finish_reason={envelope['choices'][0].get('finish_reason')}, "
+            f"reasoning_content_len={len(message.get('reasoning_content') or '')}, "
+            f"raw content={content!r}",
             file=sys.stderr,
         )
         raise
