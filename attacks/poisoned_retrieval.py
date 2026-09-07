@@ -51,7 +51,15 @@ def retrieve_with_poison(base_index, base_records, poison_texts: list[str],
 
     base_scores, base_idxs = base_index.search(q_emb, k)
     base_candidates = [
-        (base_records[i], float(base_scores[0][rank]), i)
+        # int(i): FAISS returns numpy.int64 indices, not native int -- left
+        # uncast, this doc_id survives indexing and equality checks fine but
+        # breaks json.dump (TypeError: Object of type int64 is not JSON
+        # serializable) the moment a fresh build (no cache hit) writes it to
+        # evaluation/run_poisonedrag.py's poisoned-contexts cache. Cast at
+        # the source, here, not by teaching the JSON encoder about numpy
+        # types -- that would hide the same mistake anywhere else a FAISS
+        # search result gets stored.
+        (base_records[i], float(base_scores[0][rank]), int(i))
         for rank, i in enumerate(base_idxs[0])
     ]
 

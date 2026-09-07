@@ -5,6 +5,8 @@ correctly reproduce "as if" everything were one combined index. Stubs
 _get_embedder (no real SentenceTransformer / network / GPU in tests).
 """
 
+import json
+
 import numpy as np
 import pytest
 
@@ -87,6 +89,39 @@ def test_no_poison_texts_score_high_enough_none_appear_in_top_k(stub_embedder):
 
     retrieved_ids = {item[2] for item in retrieved}
     assert retrieved_ids.isdisjoint(poison_doc_ids)  # verified, not assumed
+
+
+def test_retrieved_base_doc_ids_are_json_serializable(stub_embedder):
+    # Regression: faiss.IndexFlatIP.search() (mimicked by _FakeIndex via
+    # np.argsort) returns numpy.int64 indices, not native int. A base-record
+    # doc_id left uncast passes every in-memory check (indexing, equality,
+    # set membership) fine but raises "TypeError: Object of type int64 is
+    # not JSON serializable" the moment a caller (evaluation/run_poisonedrag.
+    # py's build_poisoned_contexts) puts it in a dict and json.dumps that
+    # dict -- exactly what happened building fresh ms_marco contexts. A dict
+    # equality/isinstance check on the in-memory tuple would NOT catch this;
+    # only an actual json.dumps() call does.
+    query = "query"
+    base_records = ["real0", "real1"]
+    base_vectors = [[1.0, 0.0], [0.5, 0.0]]
+    poison_texts = ["poison0"]
+
+    stub_embedder({
+        query: [1.0, 0.0],
+        "poison0": [0.01, 0.0],  # scores below both real docs -- base doc_ids dominate top-k
+    })
+    base_index = _FakeIndex(base_vectors)
+
+    poison_embeddings = pr.embed_poison_texts(poison_texts)
+    retrieved, _poison_doc_ids = pr.retrieve_with_poison(
+        base_index, base_records, poison_texts, poison_embeddings, query, k=2
+    )
+
+    base_doc_ids = [doc_id for _, _, doc_id in retrieved if isinstance(doc_id, int)]
+    assert base_doc_ids  # sanity: this run actually produced base-record hits
+    for doc_id in base_doc_ids:
+        assert type(doc_id) is int  # not numpy.int64 -- isinstance(np.int64(0), int) is False anyway, but be explicit
+    json.dumps({"retrieved_doc_ids": base_doc_ids})  # raises TypeError pre-fix
 
 
 def test_render_poisoned_context_numbers_lines_and_uses_poison_text_directly():
