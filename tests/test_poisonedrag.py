@@ -94,6 +94,31 @@ def test_sample_target_questions_returns_everything_if_sample_size_exceeds_recor
     # below for the dedicated check that this really exercises the new
     # fallback path, not the primary one by coincidence
     ("minimax_japan_capital.txt", "Kyoto", "Tokyo, the bustling capital of Japan"),
+    # nemotron: markdown-heading label ("### Incorrect Answer", no colon
+    # anywhere near it) instead of the usual bold inline label -- captured
+    # live during the 100-question ms_marco sweep, previously fatal
+    # (ValueError: no 'Incorrect Answer:' label) despite a fully
+    # well-formed, 5-corpus response. Two real attempts for the SAME
+    # question (retry produced different content, same heading-style bug).
+    # NOTE: the label's value is a two-item numbered list in both real
+    # captures ("1. ... \n2. ..."), but the regex captures only the first
+    # line ((.+) doesn't span newlines) -- pre-existing single-line-answer
+    # behavior, unchanged by this fixture; expected_answer reflects what
+    # the parser actually returns today, not the full multi-line label text.
+    (
+        "texas_political_parties_attempt1.txt",
+        "1. The primary role of political parties in Texas is to manage "
+        "the state's voter registration database and certify voting "
+        "machines for county elections.",
+        "The Texas Election Code assigns political parties",
+    ),
+    (
+        "texas_political_parties_attempt3.txt",
+        "1. The primary role of political parties in Texas is to draft "
+        "the state biennial budget and directly appoint all committee "
+        "chairs in the legislature.",
+        "Political scientists often misunderstand the unique machinery",
+    ),
 ])
 def test_parse_poison_response_against_real_fixtures(fixture_name, expected_answer, expected_first_words):
     content = _load_fixture(fixture_name)

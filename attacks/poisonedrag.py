@@ -171,6 +171,24 @@ _CORPUS_HEADER_RE = re.compile(
 )
 _SEPARATOR_LINE_RE = re.compile(r"^[ \t]*[-*]{3,}[ \t]*$", re.MULTILINE)
 
+# Fallback shape, real and observed from nemotron on ms_marco during the
+# 100-question sweep: the label as a markdown HEADING on its own line
+# ("### Incorrect Answer"), no colon anywhere near it, value on the
+# following line(s) -- instead of the usual bold inline label
+# ("**Incorrect Answer:** value"). Previously fatal (ValueError, a fully
+# well-formed 5-corpus generation discarded) since the primary regex above
+# requires a colon. Anchored to a line starting with 1-6 "#" characters so
+# this can't accidentally match ordinary prose that happens to say
+# "incorrect answer" without a colon (e.g. "I'll craft an incorrect answer
+# and 5 supporting corpuses..." -- a real, already-covered preamble case
+# that must NOT match here). Only tried when the primary pattern misses,
+# same additive fallback shape as the collective-corpora one below.
+_INCORRECT_ANSWER_HEADING_RE = re.compile(
+    r"^[ \t]*#{1,6}[ \t]*\*{0,2}[ \t]*incorrect\s+answer[ \t]*\*{0,2}[ \t]*:?[ \t]*$"
+    r"\r?\n+[ \t]*(.+)",
+    re.IGNORECASE | re.MULTILINE,
+)
+
 # Fallback shape, real and observed from minimax-m3 (tests/fixtures/
 # poison_responses/): ONE collective "**Corpora:**" header followed by a
 # plain numbered list (1. ... 2. ...), instead of ADV_PER_QUERY separate
@@ -192,7 +210,7 @@ def _parse_poison_response(content: str, adv_per_query: int) -> tuple[str, list[
     (not a silent partial result) if the answer label or any expected
     corpus number is missing.
     """
-    answer_match = _INCORRECT_ANSWER_RE.search(content)
+    answer_match = _INCORRECT_ANSWER_RE.search(content) or _INCORRECT_ANSWER_HEADING_RE.search(content)
     if not answer_match:
         raise ValueError(
             f"No 'Incorrect Answer:' label found in poison response: {content[:200]!r}"
