@@ -127,17 +127,29 @@ def build_poisoned_contexts(corpus_name: str, split: str = "dev", sample_n: int 
     """
     from attacks.poisonedrag import SAMPLE_SIZE
 
+    # Resolve the ACTUAL target count before touching the cache. Bug found
+    # live: the old check was `sample_n is None or len(cached) >= sample_n`
+    # -- when sample_n is None (RAG_SAMPLE_N unset, meaning "use the full
+    # SAMPLE_SIZE=100 default"), `sample_n is None` short-circuited the
+    # whole condition to True regardless of cache size, so a 2-question
+    # smoke-test cache silently satisfied a real 100-question run. The
+    # cache is only ever valid against the size actually intended, never
+    # against the raw (possibly-None) argument.
+    sample_size = sample_n if sample_n is not None else SAMPLE_SIZE
+
     cache_path = _poisoned_context_cache_path(corpus_name, poison_config)
     if use_cache and cache_path.exists():
         with cache_path.open(encoding="utf-8") as f:
             cached = json.load(f)
-        if sample_n is None or len(cached) >= sample_n:
-            print(f"[poison] using cached contexts: {cache_path} ({len(cached)} questions)")
-            return cached[:sample_n] if sample_n else cached
+        if len(cached) >= sample_size:
+            print(f"[poison] using cached contexts: {cache_path} "
+                  f"({len(cached)} questions, need {sample_size})")
+            return cached[:sample_size]
+        print(f"[poison] cache at {cache_path} has only {len(cached)} questions "
+              f"but {sample_size} are needed -- regenerating")
 
     api_token = api_token or os.environ.get("NVIDIA_NIM_API_KEY")
     index, records = build_index(corpus_name, split=split)
-    sample_size = sample_n if sample_n is not None else SAMPLE_SIZE
     target_records = sample_target_questions(records, corpus_name, sample_size=sample_size, seed=SEED)
 
     contexts = []

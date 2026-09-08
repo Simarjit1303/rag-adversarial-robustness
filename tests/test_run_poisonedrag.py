@@ -5,6 +5,7 @@ tests/test_run_attack_injection.py's stub_heavy_calls approach: no real
 model, GPU, embedder, FAISS index, or network call in this file).
 """
 
+import json
 from unittest import mock
 
 import pytest
@@ -122,6 +123,55 @@ def test_build_poisoned_contexts_caches_to_disk_and_reuses_on_next_call(stub_pha
 
     assert second == first
     assert calls_after_cache == []  # cache hit, no new API calls
+
+
+def test_build_poisoned_contexts_regenerates_when_cache_is_smaller_than_requested(
+        stub_phase_a, monkeypatch, tmp_path):
+    # Regression for the real bug: a small (e.g. n=2 smoke-test) cache must
+    # NOT silently satisfy a larger request, including the real-run shape
+    # where sample_n=None means "use the full SAMPLE_SIZE default" -- the
+    # bug was `sample_n is None or len(cached) >= sample_n` trusting ANY
+    # cache whenever sample_n was None, regardless of its actual size.
+    monkeypatch.setattr(
+        rp, "build_index",
+        lambda corpus_name, split="dev": (
+            mock.Mock(),
+            [{"q": f"question {i}", "a": [f"answer {i}"]} for i in range(5)],
+        ),
+    )
+    # stub_phase_a's own sample_target_questions stub ignores sample_size
+    # and always returns every record -- override it here to actually
+    # respect sample_size, or this test can't distinguish "regenerated at
+    # the right size" from "regenerated at some size."
+    monkeypatch.setattr(
+        rp, "sample_target_questions",
+        lambda records, corpus_name, sample_size, seed: records[:sample_size],
+    )
+    small = rp.build_poisoned_contexts("hotpot_qa", sample_n=2, poison_config="adv5")
+    cache_path = tmp_path / "poisoned_contexts_hotpot_qa_adv5.json"
+    assert cache_path.exists()
+    assert len(small) == 2
+
+    calls = []
+    real_generate = rp.generate_poison_texts
+
+    def counting_generate(*a, **kw):
+        calls.append(1)
+        return real_generate(*a, **kw)
+
+    monkeypatch.setattr(rp, "generate_poison_texts", counting_generate)
+
+    # sample_n=None mirrors the real launch's unset RAG_SAMPLE_N -- must
+    # regenerate against SAMPLE_SIZE (monkeypatched below to 5, matching the
+    # 5 available records), not silently return the 2-question cache.
+    monkeypatch.setattr("attacks.poisonedrag.SAMPLE_SIZE", 5)
+    full = rp.build_poisoned_contexts("hotpot_qa", sample_n=None, poison_config="adv5")
+
+    assert len(full) == 5  # NOT 2 -- the stale small cache was not trusted
+    assert len(calls) == 5  # real regeneration happened, not a cache hit
+
+    with cache_path.open(encoding="utf-8") as f:
+        assert len(json.load(f)) == 5  # cache itself got overwritten too
 
 
 # ---------------------------------------------------------------------
