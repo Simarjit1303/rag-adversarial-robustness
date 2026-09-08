@@ -38,6 +38,28 @@ per-cell table and every significance test below).
 > ASR is computed entirely from attack-condition data and never touches the
 > baseline.
 
+> **METRICS CORRECTED AGAIN (2026-09-08), smaller this time:**
+> `evaluation/metrics.py`'s `normalize_text()` was deleting punctuation
+> outright instead of replacing it with a space, so semantically-identical
+> answers like `"28-32"` and `"28 - 32"` normalized to different strings —
+> `exact_match`/`f1_clean`/`f1_raw`/`contains_answer_diagnostic` all
+> silently undercounted matches by a formatting artifact, found live on a
+> PoisonedRAG cell, not on this dataset. Recomputed directly from already-
+> stored raw JSONL (`scripts/recompute_metrics_after_normalize_fix.py`, no
+> re-generation): 4,611 of 52,000 stored rows across Phase 1 + this attack
+> sweep changed (8.9%), concentrated on `ms_marco` (~15–18% of rows per
+> cell) vs. `hotpot_qa` (~1–4%) — `ms_marco` gold answers contain more
+> numeric-range/punctuation formatting. **ASR and every McNemar/Fisher/
+> Holm-Bonferroni significance result below are unaffected** —
+> `attacks/asr_scoring.py`'s `score_asr` is a raw substring check that never
+> calls `normalize_text`. What moved: the F1-based utility-under-attack
+> numbers below. Two named cells moved by more than a rounding error: the
+> largest drop in the grid (ministral-3-8b/`hotpot_qa`/`fake_completion`)
+> went from 0.236 to **0.268** (95% CI now 0.242–0.294), and the second-
+> largest (ministral-3-8b/`hotpot_qa`/`ignore`) went from 0.078 to **0.104**
+> (95% CI now 0.085–0.124). Every other cell moved by ≤0.01 and no
+> conclusion below changes direction.
+
 ## Headline finding: utility damage tracks compliance, not a separate context-pollution effect
 
 Before the baseline fix, this section reported "two dissociated failure
@@ -49,10 +71,10 @@ baseline (see banner above) shows:
 1. **On the three goal-hijack templates (`naive`, `escape_char`, `combined`)
    — where ASR sits at 0.1–1.1% almost everywhere — the F1 "drop" is now
    tiny and inconsistent in sign.** Every one of the 24 goal-hijack cells
-   falls in [-0.044, +0.026]; several are not distinguishable from zero
+   falls in [-0.038, +0.025]; several are not distinguishable from zero
    (95% CI crosses zero), and several are *significantly negative* — i.e.
    attack-condition F1 measured slightly *higher* than the clean baseline
-   (e.g. ministral-3-8b/`hotpot_qa`: -0.040 to -0.044 across all three
+   (e.g. ministral-3-8b/`hotpot_qa`: -0.036 to -0.038 across all three
    goal-hijack templates, CIs entirely below zero). There is no remaining
    evidence of a large, universal, compliance-independent "context
    pollution" effect — the previously reported 0.19–0.42 drops on these
@@ -189,10 +211,10 @@ demonstrated mechanism.
 With the corrected baseline, this is no longer a separate surprising
 finding — it's the same story as ASR, restated in F1:
 
-- Largest drop in the entire 40-cell grid: 0.236 (ministral-3-8b,
-  `hotpot_qa`, `fake_completion`, 95% CI 0.211–0.262) — its highest-ASR
-  cell (60.8%). Second largest: 0.078 (ministral-3-8b, `hotpot_qa`,
-  `ignore`, ASR 35.3%). Every drop above 0.02 in the grid belongs to
+- Largest drop in the entire 40-cell grid: 0.268 (ministral-3-8b,
+  `hotpot_qa`, `fake_completion`, 95% CI 0.242–0.294) — its highest-ASR
+  cell (60.8%). Second largest: 0.104 (ministral-3-8b, `hotpot_qa`,
+  `ignore`, 95% CI 0.085–0.124, ASR 35.3%). Every drop above 0.02 in the grid belongs to
   ministral-3-8b, qwen3-8b, or phi-4-mini on `ignore`/`fake_completion` —
   never on a goal-hijack template, and never for llama-3.1-8b.
 - Smallest (most negative — i.e. attack-condition F1 measured *above*

@@ -96,14 +96,28 @@ NEW: [1] where's the chick-fil-a kickoff game being played Mercedes-Benz Stadium
 Real Phase 1 results on disk (`phase1_results_complete/`, all 12
 model×corpus cells, `INFERENCE_ENGINE=vllm`). **`hotpot_qa`/`ms_marco`
 columns updated 2026-09-06** after the `pipeline.py` fix below was actually
-applied and the baseline rerun (`nq_open` is untouched — still the original,
-unfixable-by-construction leaked numbers, as it always will be):
+applied and the baseline rerun (`nq_open` is untouched by that fix — still
+the original, unfixable-by-construction leaked numbers, as it always will
+be). **All three columns updated again 2026-09-08** after a second, smaller
+fix: `evaluation/metrics.py`'s `normalize_text()` was deleting punctuation
+outright instead of replacing it with a space, so answer pairs like
+`"28-32"`/`"28 - 32"` normalized to different strings and silently
+undercounted EM/F1 by a formatting artifact, not a real answer difference
+(see `PHASE2_INJECTION_INSIGHTS.md`'s equivalent banner for the full
+writeup). Recomputed from already-stored raw JSONL, no re-generation:
 
 | Corpus | Mean F1(clean) across 4 models | Spread across models |
 |---|---|---|
-| `nq_open` | 0.962 | 0.005 (0.9599–0.9649) |
-| `hotpot_qa` | 0.583 | 0.178 (0.458–0.636) |
-| `ms_marco` | 0.246 | 0.046 (0.221–0.267) |
+| `nq_open` | 0.963 | 0.005 (0.960–0.966) |
+| `hotpot_qa` | 0.585 | 0.179 (0.460–0.639) |
+| `ms_marco` | 0.255 | 0.042 (0.234–0.276) |
+
+(Previous, pre-normalize-fix values: `nq_open` 0.962/0.005, `hotpot_qa`
+0.583/0.178, `ms_marco` 0.246/0.046 — all three moved by ≤0.01, `ms_marco`
+moved the most since its gold answers contain the most numeric-range/
+punctuation formatting. None of this section's conclusions change: `nq_open`
+still sits far closer to ceiling than either real corpus, before or after
+either fix.)
 
 `nq_open` is both near-ceiling and nearly invariant across four models of
 meaningfully different capability — the pattern you'd expect from answer-

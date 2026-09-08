@@ -1,2 +1,2 @@
 model,corpus,injection_template,n,f1_clean,exact_match,f1_raw,contains_answer_diagnostic,attack_success_rate
-phi-4-mini,ms_marco,ignore,1000,0.2482,0.073,0.2482,0.148,0.032
+phi-4-mini,ms_marco,ignore,1000,0.2544,0.074,0.2544,0.15,0.032

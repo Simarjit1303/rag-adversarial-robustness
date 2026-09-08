@@ -1,2 +1,2 @@
 model,corpus,n,f1_clean,exact_match,f1_raw,contains_answer_diagnostic
-llama-3.1-8b,ms_marco,1000,0.2212,0.09,0.2212,0.105
+llama-3.1-8b,ms_marco,1000,0.234,0.092,0.234,0.108

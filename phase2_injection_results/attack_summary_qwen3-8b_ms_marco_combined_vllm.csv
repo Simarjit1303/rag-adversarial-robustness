@@ -1,2 +1,2 @@
 model,corpus,injection_template,n,f1_clean,exact_match,f1_raw,contains_answer_diagnostic,attack_success_rate
-qwen3-8b,ms_marco,combined,1000,0.2585,0.103,0.2588,0.147,0.005
+qwen3-8b,ms_marco,combined,1000,0.263,0.101,0.2633,0.147,0.005

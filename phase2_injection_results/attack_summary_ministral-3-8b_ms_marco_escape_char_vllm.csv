@@ -1,2 +1,2 @@
 model,corpus,injection_template,n,f1_clean,exact_match,f1_raw,contains_answer_diagnostic,attack_success_rate
-ministral-3-8b,ms_marco,escape_char,1000,0.2241,0.082,0.2241,0.102,0.007
+ministral-3-8b,ms_marco,escape_char,1000,0.2351,0.083,0.2351,0.105,0.007

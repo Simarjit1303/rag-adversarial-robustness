@@ -1,2 +1,2 @@
 model,corpus,injection_template,n,f1_clean,exact_match,f1_raw,contains_answer_diagnostic,attack_success_rate
-llama-3.1-8b,ms_marco,combined,1000,0.2225,0.09,0.2225,0.106,0.004
+llama-3.1-8b,ms_marco,combined,1000,0.2363,0.092,0.2363,0.108,0.004

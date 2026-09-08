@@ -1,2 +1,2 @@
 model,corpus,n,f1_clean,exact_match,f1_raw,contains_answer_diagnostic
-qwen3-8b,ms_marco,1000,0.2672,0.111,0.2672,0.164
+qwen3-8b,ms_marco,1000,0.2755,0.112,0.2755,0.166

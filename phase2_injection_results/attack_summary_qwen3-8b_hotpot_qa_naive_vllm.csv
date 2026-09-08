@@ -1,2 +1,2 @@
 model,corpus,injection_template,n,f1_clean,exact_match,f1_raw,contains_answer_diagnostic,attack_success_rate
-qwen3-8b,hotpot_qa,naive,1000,0.6326,0.561,0.6326,0.595,0.002
+qwen3-8b,hotpot_qa,naive,1000,0.6275,0.555,0.6275,0.589,0.002

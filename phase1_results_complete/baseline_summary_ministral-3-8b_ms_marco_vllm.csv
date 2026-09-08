@@ -1,2 +1,2 @@
 model,corpus,n,f1_clean,exact_match,f1_raw,contains_answer_diagnostic
-ministral-3-8b,ms_marco,1000,0.2474,0.086,0.2474,0.12
+ministral-3-8b,ms_marco,1000,0.2572,0.088,0.2572,0.123
