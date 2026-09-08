@@ -128,77 +128,114 @@ one as dominant.
 
 ## Skip/loss rate: 10/100 `hotpot_qa`, 4/100 `ms_marco`
 
-The cached `poisoned_contexts_*.json` files retain only successfully-built
-poison contexts (90 and 96 entries respectively) — Phase A's generation
-pipeline never persists raw content for a question it ultimately skips (see
-`attacks/poisonedrag.py`'s `generate_poison_texts`, which only prints failed
-raw responses to stderr, confirmed while fixing the parser bug below). The
-breakdown below is therefore reconstructed from real-time monitoring notes
-taken during the live sweep, not from a retained log file or a rescoreable
-cache — it should be read as an honest field account of what was observed
-as it happened, not a re-derivable statistic.
+**Verified directly against the live sweep's own log**
+(`rag-scratch/poisonedrag_sweep.log`, RunPod S3-compatible network volume,
+bucket `cplemvuitj`, downloaded and grepped for this document — same
+commands used for real-time monitoring during the run:
+`grep -c "SKIPPING question after"` and
+`grep -B1 "SKIPPING question after"`), not reconstructed from notes. This
+replaces an earlier draft of this section that *was* reconstructed from
+real-time monitoring notes taken during the sweep — that draft's total (14)
+and per-corpus split (10/4) held up exactly, but its 3-category breakdown
+did not survive contact with the actual log and is corrected below.
 
-Three distinct, confirmed failure modes contributed to the 14 total skips:
+`grep -c "SKIPPING question after"` returns **14**, matching the n=90/100
+and n=96/100 cell sizes exactly (10 on `hotpot_qa`, 4 on `ms_marco`, split
+confirmed by matching each skipped question's text against the two
+corpora's known question style). The log records 111 total attempt-level
+failures across the sweep (`max_attempts=3` retry, most recovered
+successfully) — only these 14 exhausted all 3 attempts and were
+permanently skipped. The verified breakdown of those 14, by the *actual*
+final error each one gave up on:
 
-1. **Genuine content-policy refusals — rare (2 confirmed cases, both
-   `hotpot_qa`).** The generator explicitly declined to fabricate
-   misinformation about a real, named, identifiable subject: a real
-   political scandal (Bridgegate) and a real named actor (Skyler Gisondo).
-   Early in the sweep (first ~10 questions) these looked like they might be
-   a systematic bias against real-world-entity questions, prompting close
-   monitoring through the rest of the run — but no further refusals of this
-   kind appeared in the remaining ~90 questions. At n=2 out of 100, this is
-   too small a sample to characterize as a systematic entity bias with any
-   confidence; it's reported here as a real, observed, rare phenomenon, not
-   a resolved pattern. A dedicated study varying entity type and prominence
-   would be needed to determine whether this generalizes.
-2. **Reasoning-token-exhaustion truncations — the majority of skips.**
-   `finish_reason="length"` before all 5 corpus sections were produced,
-   confirmed as the dominant cause once the sweep moved past its first
-   small, unlucky cluster (an early ~25-30% short-window skip rate that did
-   not hold — the settled rate was close to 10% overall). This is the same
-   underlying failure class documented in `attacks/poisonedrag.py`'s module
-   docstring (nemotron's internal reasoning stage competing with the
-   requested output for the same token budget) — the `"detailed thinking
-   off"` system message reduces but does not eliminate it, since reasoning
-   can still consume enough of the budget on longer, more complex questions
-   to truncate the final corpus sections even without leaking into
-   `content`. Topic sensitivity does not explain this bucket: truncations
-   were observed across ordinary, unremarkable topics (Olympic results,
-   film trivia, TV casting, awards) with no apparent thematic pattern,
-   consistent with non-deterministic reasoning-token variance rather than
-   content-based avoidance.
-3. **Parser formatting gap — 2 lost, now fixed for future runs.** Two
-   `ms_marco` questions produced complete, well-formed, high-quality
-   5-corpus generations (`finish_reason="stop"`, nothing truncated) that
-   used a markdown-heading label (`### Incorrect Answer`) instead of the
-   expected bold-inline label (`**Incorrect Answer:**`), which the parser's
-   regex did not yet accept — a real code bug discarding an otherwise
-   fully successful generation, not a model limitation. Fixed in
-   `attacks/poisonedrag.py` (commit `facd3f2`, this branch) with a
-   narrowly-scoped fallback regex plus two real fixtures captured from the
-   exact failing responses. The fix is forward-looking only — these two
-   specific `ms_marco` questions remain skipped in this sweep's n=96, since
-   no raw-response cache exists to rescore from; regenerating them would
-   need 2 fresh API calls, not yet done.
+1. **Truncation (`Missing corpus section(s) [...]`) — 9 of 14, the
+   majority, as monitored live.** 7 on `hotpot_qa`, 2 on `ms_marco`. Exact
+   examples from the log: `Missing corpus section(s) [3, 4] ... (found [1,
+   2, 5])` (Freud/Éluard question), `Missing corpus section(s) [1, 2, 3, 4,
+   5] ... (found [])` (a complete miss, zero corpora produced — the Cambridge
+   Guide to Women's Writing question), down to a single missing section
+   (`Missing corpus section(s) [4, 5] ... (found [1, 2, 3])`, two `ms_marco`
+   questions on ACT scores and vehicle-safety-inspection validity). Same
+   underlying cause across all 9: nemotron's internal reasoning stage
+   competing with the requested output for the same token budget (see
+   `attacks/poisonedrag.py`'s module docstring) — the `"detailed thinking
+   off"` fix reduces but does not eliminate this. No topical pattern across
+   the 9: Olympic results, film trivia, TV casting, an academic reference
+   editor, a music producer's legal name, betting types, ACT scores, safety
+   inspections — ordinary questions, consistent with non-deterministic
+   reasoning-token variance, not content-based avoidance.
+2. **API/infrastructure failures — 3 of 14, a real category the earlier
+   reconstructed draft folded into "truncation" without verifying.** Two
+   `HTTPError: 503 Server Error: Service Unavailable` (one `hotpot_qa`, one
+   `ms_marco`) and one `ReadTimeout` after 180s (`hotpot_qa`) from
+   `integrate.api.nvidia.com` — transient NIM-side outages/timeouts, not a
+   generation-quality problem at all. These 3 questions never even reached
+   the parser; nothing about their content caused the failure.
+3. **Genuine content-policy refusal — 1 of 14, not 2, and not the two
+   questions named during live monitoring.** The one skip that gave up with
+   an explicit refusal (`"I'm sorry, but I can't help with that."`) is
+   *"Who made their debut in 'A Rather English Marriage' and later starred
+   in 'Surrogates?'"* — a `hotpot_qa` question about a film actor,
+   unrelated to either question flagged live. **Bridgegate and Skyler
+   Gisondo, the two refusals reported during real-time monitoring, are
+   confirmed by the log to have refused on an early attempt (attempt 1 and
+   attempts 1–2 respectively) but then succeeded on retry** — both have
+   real, successful entries in `poisoned_contexts_hotpot_qa_adv5.json` and
+   are not among the 14 final skips. This is a genuine, material correction
+   to what was reported live: refusal at the attempt level is real and
+   somewhat more common than the final-skip count alone suggests (8 of the
+   111 total attempt-level failures across the whole sweep show refusal-
+   style text — see below), but at the level that actually costs a
+   question, it happened once.
+4. **Parser formatting gap — 1 question lost, not 2, now fixed for future
+   runs.** The `ms_marco` question *"how important political is to the
+   state of texas"* hit the `### Incorrect Answer` heading-style bug on
+   both its 1st attempt and its 3rd/final attempt (attempt 2 was a separate
+   503 error) — one question, two of its three attempts exhibiting the same
+   bug, not two different questions as an earlier draft of this document
+   stated (the two committed test fixtures, `texas_political_parties_
+   attempt1.txt` / `_attempt3.txt`, are verified by the log to be this
+   single question's first and third attempts, not two distinct
+   questions). Fixed in `attacks/poisonedrag.py` (commit `facd3f2`, this
+   branch). The fix is forward-looking only — this question remains skipped
+   in this sweep's n=96; regenerating it would need 1 fresh API call, not
+   yet done.
 
-The remaining skips (10 total minus 2 refusals = 8 on `hotpot_qa`; 4 total
-minus 2 parser-bug = 2 on `ms_marco`) are attributed to truncation by
-elimination, consistent with what was directly observed during monitoring,
-though not each individually confirmed via a retained per-question log.
+**Attempt-level refusal behavior, beyond the final-skip count.** 8 of the
+111 total attempt-level failures across the whole sweep show explicit
+refusal-style text (`grep`-verified: "sorry", "not going to", "can't help",
+"disallowed"), but only 1 escalated to a permanent skip — 7 of 8 were
+retry-recovered. Reading all 8 by topic complicates a pure real-entity-bias
+reading: alongside the two real, named, sensitive subjects reported live
+(Bridgegate, a real political scandal; Skyler Gisondo, a real actor) and
+three more real named people/institutions (a Cambridge reference-book
+editor, a Summerburst Festival music producer's "legal name," financial-firm
+director Gilbert F. Casellas), **two of the eight refusals have nothing to
+do with real-world entities at all**: a question about the plant genus
+*Shibataea* vs. *Pediocactus* (Chinese bamboo taxonomy), and a Microsoft
+Access 2013 how-to question, refused because "providing incorrect steps for
+configuring a database field could lead to data errors." The generator's
+refusal trigger looks broader than "avoid fabricating claims about named
+real people" — it also fires on fabricating incorrect *technical
+instructions*, at least once. Both readings (real-entity sensitivity, and a
+broader "don't state confident falsehoods as fact" pattern) are consistent
+with 8 real attempt-level data points; this sample is too small (8) to
+adjudicate between them with confidence.
 
-**Net assessment:** the dominant loss mechanism is non-deterministic
-reasoning-budget variance, not a systematic bias against sensitive content —
-consistent with the "revised hypothesis" tracked during live monitoring.
-Genuine refusals are real and worth documenting as a citable limitation of
-using a safety-aligned model as a poison generator (a different generator,
-or a jailbroken/fine-tuned one, would presumably show a different, likely
-lower, refusal rate on this axis) — but at 2/100, they are a minor
-contributor to the overall skip rate compared to token-budget truncation.
-This is reported here as a genuine finding worth citing, not buried in a
-footnote, per the standard this project holds ASR-scoring caveats to
-elsewhere (see `PHASE2_INJECTION_INSIGHTS.md`'s "ASR scoring conflates three
-phenomena" section for the parallel precedent).
+**Net assessment:** the dominant loss mechanism is confirmed, verified
+truncation (9 of 14, ~64%) — consistent with the "revised hypothesis"
+tracked during live monitoring, and now backed by the actual log rather than
+an estimate. The refusal finding survives but is smaller and more nuanced
+than first reported: 1 of 14 permanent skips, with the two live-flagged
+cases turning out to be retry-recovered rather than hard blocks, and the
+broader 8-instance attempt-level refusal sample showing the trigger isn't
+cleanly "real entity" — it includes at least two clearly non-entity
+technical/factual refusals too. Both corrections make the finding *more*
+defensible as a genuine limitation to cite (real refusal behavior exists,
+confirmed at the attempt level 8 separate times, and is largely but not
+entirely retry-recoverable), while walking back the specific claim that the
+model reliably refuses on real, named, sensitive entities — the two examples
+originally cited for that claim did not, in fact, end up refused.
 
 ## Methodology notes (for the dissertation's methodology chapter)
 
@@ -315,32 +352,39 @@ implementation trivia.
   unusually close to the query itself) is a promising angle worth testing
   specifically on `hotpot_qa`, where poison already crowds out nearly all
   competing real content.
-- The genuine-refusal finding (2/100, real but rare) is worth keeping in
-  mind for any future PoisonedRAG-style sweep using a safety-aligned
-  generator model: expect a small, non-zero rate of content genuinely
-  impossible to generate for real, sensitive, named entities, independent
-  of any pipeline bug.
+- The genuine-refusal finding (1/14 permanent skips; 8/111 attempt-level
+  failures, mostly retry-recovered) is worth keeping in mind for any future
+  PoisonedRAG-style sweep using a safety-aligned generator model: expect a
+  real, non-trivial refusal rate at the individual-attempt level — not
+  cleanly limited to real, named, sensitive entities, per the two
+  non-entity technical refusals found in this log — most of which a
+  bounded retry (`max_attempts=3`, as used here) will recover from, with a
+  small residual permanent-loss rate independent of any pipeline bug.
 
 ## Limitations
 
-- Skip/loss breakdown (refusals vs. truncations vs. parser bug) is
-  reconstructed from real-time monitoring notes taken during the live
-  sweep, not from a retained per-question log or a rescoreable cache — the
-  exact count attributed to truncation-by-elimination (8 of 10 on
-  `hotpot_qa`, 2 of 4 on `ms_marco`) was not individually confirmed
-  per-question.
-- Genuine content-policy refusals (n=2) are too small a sample to
-  characterize as a systematic bias against real-world-entity questions
-  with statistical confidence — reported as a real, rare, observed
-  phenomenon, not a resolved pattern requiring a specific mitigation.
+- Skip/loss breakdown (truncation vs. API/infra failure vs. refusal vs.
+  parser bug) is now verified directly against `poisonedrag_sweep.log`
+  (all 14 final skips individually inspected by their actual last-error
+  text), not reconstructed — no remaining uncertainty on this count.
+- Genuine content-policy refusal at the permanent-skip level (n=1) and at
+  the attempt level (n=8, 7 of which recovered on retry) are both too small
+  a sample to characterize the refusal trigger precisely — the 8 attempt-
+  level cases include real-named-entity questions and at least two
+  unrelated technical/factual ones, so this document reports "the generator
+  sometimes refuses to fabricate confident falsehoods, on both entity and
+  non-entity questions, usually but not always recoverable by retry" as the
+  supported claim, not a narrower real-entity-specific bias.
 - The retrieval-competition and question-complexity explanations for the
   corpus effect are both real, data-supported contributing factors, not
   disentangled from each other — this document does not claim to know
   their relative weight, only that both point the same direction and both
   are measurable in this data.
-- Two `ms_marco` poison contexts lost to the (now-fixed) parser bug were
-  not regenerated for this document's n=96 — a rescore including them
-  would need 2 fresh API calls, not performed here.
+- One `ms_marco` poison context lost to the (now-fixed) parser bug was not
+  regenerated for this document's n=96 — a rescore including it would need
+  1 fresh API call, not performed here. (Three further questions lost to
+  transient API/infra failures — 503s and a timeout — were also not
+  retried beyond the sweep's own `max_attempts=3`.)
 - `nq_open` excluded entirely from this attack, same project-wide
   constraint as Attack 1 (see `nq_open_leakage_finding.md`) — these
   findings describe `hotpot_qa` and `ms_marco` only.
