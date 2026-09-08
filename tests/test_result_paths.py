@@ -189,3 +189,56 @@ def test_expected_poison_result_files_covers_every_cell(monkeypatch, tmp_path):
     names = {p.name for p in paths}
     assert "poison_raw_phi-4-mini_hotpot_qa_adv5_hf.jsonl" in names
     assert "poison_summary_phi-4-mini_ms_marco_adv5_hf.csv" in names
+
+
+# --------------------------------------------------------------------------
+# Crescendo sweep (Phase 2, Attack 3) -- no corpus axis (direct conversational
+# attack, not a RAG-corpus one), so this uses a 3-part
+# {model}_{turn_count}_{engine} pattern instead of the 4-part shape above.
+# --------------------------------------------------------------------------
+
+def test_crescendo_result_file_paths_are_namespaced_by_model_turns_and_engine(tmp_path):
+    raw_a, summary_a = rp.crescendo_result_file_paths(tmp_path, "phi-4-mini", 5, "hf")
+    raw_b, summary_b = rp.crescendo_result_file_paths(tmp_path, "phi-4-mini", 3, "hf")
+
+    assert raw_a != raw_b  # different max_turns -- must not collide
+    assert raw_a.name == "crescendo_raw_phi-4-mini_5turn_hf.jsonl"
+    assert summary_a.name == "crescendo_summary_phi-4-mini_5turn_hf.csv"
+
+
+def test_resolve_crescendo_sweep_selection_defaults(monkeypatch):
+    monkeypatch.delenv("RAG_MODELS", raising=False)
+    monkeypatch.delenv("RAG_MAX_TURNS", raising=False)
+    monkeypatch.delenv("INFERENCE_ENGINE", raising=False)
+
+    model_keys, max_turns, engine = rp.resolve_crescendo_sweep_selection()
+
+    assert model_keys == list(config.MODELS)
+    assert max_turns == rp.DEFAULT_MAX_TURNS == 5
+    assert engine == "hf"
+
+
+def test_resolve_crescendo_sweep_selection_honors_env_vars(monkeypatch):
+    monkeypatch.setenv("RAG_MODELS", "qwen3-8b")
+    monkeypatch.setenv("RAG_MAX_TURNS", "3")
+    monkeypatch.setenv("INFERENCE_ENGINE", "hf")
+
+    model_keys, max_turns, engine = rp.resolve_crescendo_sweep_selection()
+
+    assert model_keys == ["qwen3-8b"]
+    assert max_turns == 3
+    assert engine == "hf"
+
+
+def test_expected_crescendo_result_files_covers_every_model(monkeypatch, tmp_path):
+    monkeypatch.setenv("RAG_MODELS", "phi-4-mini,qwen3-8b")
+    monkeypatch.setenv("RAG_MAX_TURNS", "5")
+    monkeypatch.setenv("INFERENCE_ENGINE", "hf")
+
+    paths = rp.expected_crescendo_result_files(tmp_path)
+
+    # 2 models x 2 files (raw + summary) each = 4
+    assert len(paths) == 4
+    names = {p.name for p in paths}
+    assert "crescendo_raw_phi-4-mini_5turn_hf.jsonl" in names
+    assert "crescendo_summary_qwen3-8b_5turn_hf.csv" in names

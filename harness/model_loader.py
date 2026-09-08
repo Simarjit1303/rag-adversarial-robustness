@@ -119,21 +119,29 @@ def load_model(model_key: str, device_map: str = "auto", dtype: torch.dtype = to
     return model, tokenizer
 
 
-def build_chat_prompt(model_key: str, tokenizer, system_prompt: str, user_prompt: str) -> str:
+def build_multiturn_chat_prompt(model_key: str, tokenizer, messages: list) -> str:
     """
-    Applies each model's chat template. Qwen3's template accepts an
-    enable_thinking kwarg; the others ignore unknown kwargs or don't need
-    it, so this stays a single code path rather than a per-model branch.
+    Same chat-template application as build_chat_prompt, generalized to an
+    arbitrary system+alternating-turns message list. Added for Crescendo
+    (attacks/crescendo.py), which threads a growing multi-turn conversation
+    across generate() calls -- unlike the baseline/injection/PoisonedRAG
+    attacks, which are all a single system+user shot. build_chat_prompt below
+    is now a thin wrapper over this so the qwen3 enable_thinking special-case
+    lives in exactly one place.
     """
     from config import QWEN3_ENABLE_THINKING
-
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt},
-    ]
 
     kwargs = {"tokenize": False, "add_generation_prompt": True}
     if model_key == "qwen3-8b":
         kwargs["enable_thinking"] = QWEN3_ENABLE_THINKING
 
     return tokenizer.apply_chat_template(messages, **kwargs)
+
+
+def build_chat_prompt(model_key: str, tokenizer, system_prompt: str, user_prompt: str) -> str:
+    """Applies each model's chat template to a single system+user turn."""
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+    return build_multiturn_chat_prompt(model_key, tokenizer, messages)

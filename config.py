@@ -150,6 +150,40 @@ CORPORA = {
 }
 
 # ---------------------------------------------------------------------------
+# Crescendo (Phase 2, Attack 3) behavior pool
+#
+# revision=None means "not yet pinned" -- same meaning and same
+# reproducibility risk as RAG_VLLM_MAX_MODEL_LEN's None-until-computed
+# pattern above: data/behavior_pool.py's loader will happily load "main" but
+# print a warning, matching harness/model_loader.py's gated-model warning
+# shape. Pin both with scripts/fetch_corpus_revisions.py (same tool that
+# pinned CORPORA) before the real Crescendo sweep -- not before its build/
+# unit-test pass, which never touches the network.
+#
+# hf_config/split are best-effort from each dataset's published HF card and
+# have NOT been live-verified against the current Hub listing yet -- verify
+# both alongside the revision pin, in the same pre-sweep pass.
+# ---------------------------------------------------------------------------
+BEHAVIOR_DATASETS = {
+    "jbb_behaviors": {
+        "hf_id": "JailbreakBench/JBB-Behaviors",
+        "hf_config": "behaviors",
+        "split": "harmful",
+        "revision": None,
+        "behavior_column": "Goal",
+        "expected_n": 100,
+    },
+    "harmbench": {
+        "hf_id": "walledai/HarmBench",
+        "hf_config": "standard",
+        "split": "train",
+        "revision": None,
+        "behavior_column": "prompt",
+        "expected_n": 510,
+    },
+}
+
+# ---------------------------------------------------------------------------
 # Utility / false-positive baseline (used from Phase 3 onward)
 # ---------------------------------------------------------------------------
 XSTEST_HF_ID = "paul-rottger/xstest"

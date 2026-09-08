@@ -250,3 +250,61 @@ def expected_poison_result_files(results_dir):
                     )
                 )
     return paths
+
+
+# ---------------------------------------------------------------------------
+# Crescendo (Attack 3) naming -- extends the {model}_{engine} pattern with a
+# turn_count axis in place of the other two sweeps' corpus/poison_config
+# axis. No corpus dimension here (per phase2_crescendo_task.md's Scope
+# section: Crescendo is a direct conversational attack on the target model,
+# not a RAG-corpus attack), so this doesn't reuse
+# {result,attack,poison}_result_file_paths' 4-part shape -- a 3-part
+# {model}_{turn_count}_{engine} pattern fits Crescendo's actual axes instead
+# of forcing a corpus placeholder into a naming scheme that has none.
+
+DEFAULT_MAX_TURNS = 5
+
+
+def resolve_crescendo_sweep_selection():
+    """
+    Same shape as resolve_poison_sweep_selection(), for
+    evaluation.run_crescendo.run_crescendo_sweep(). RAG_MODELS/
+    INFERENCE_ENGINE are shared with the other sweeps (same reasoning as
+    resolve_sweep_selection's docstring). RAG_MAX_TURNS lets a smoke test
+    override the fixed max_turns=5 (see phase2_crescendo_task.md's Tasks
+    section) without touching config.
+    """
+    model_keys_env = os.environ.get("RAG_MODELS")
+    model_keys = (
+        [m.strip() for m in model_keys_env.split(",") if m.strip()]
+        if model_keys_env else list(MODELS)
+    )
+    max_turns_env = os.environ.get("RAG_MAX_TURNS")
+    max_turns = int(max_turns_env) if max_turns_env else DEFAULT_MAX_TURNS
+    engine = os.environ.get("INFERENCE_ENGINE", "hf")
+    return model_keys, max_turns, engine
+
+
+def crescendo_result_file_paths(results_dir, model_key: str, max_turns: int, engine: str):
+    """
+    The (raw_jsonl, summary_csv) paths one (model, max_turns, engine) cell
+    writes. Same atomic-write pattern as the other two sweeps
+    (evaluation/run_baseline.py's _atomic_open) -- no exceptions.
+    """
+    results_dir = Path(results_dir)
+    raw_path = results_dir / f"crescendo_raw_{model_key}_{max_turns}turn_{engine}.jsonl"
+    summary_path = results_dir / f"crescendo_summary_{model_key}_{max_turns}turn_{engine}.csv"
+    return raw_path, summary_path
+
+
+def expected_crescendo_result_files(results_dir):
+    """
+    Every (raw, summary) path this process's env-var configuration will
+    produce for the Crescendo sweep -- same role as
+    expected_poison_result_files().
+    """
+    model_keys, max_turns, engine = resolve_crescendo_sweep_selection()
+    paths = []
+    for model_key in model_keys:
+        paths.extend(crescendo_result_file_paths(results_dir, model_key, max_turns, engine))
+    return paths
