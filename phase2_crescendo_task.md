@@ -1,0 +1,54 @@
+# Task: Build Crescendo Multi-Turn Escalation (Phase 2, Attack 3 of 3)
+
+Branch: `phase2-crescendo-templates` off `phase2-poisonedrag-templates` — confirmed via `git merge-base --is-ancestor` that `phase2-poisonedrag-templates` is not yet merged to `main` and is the latest real state (injection-templates → poisonedrag-templates → this branch), same chaining as the prior two attacks.
+
+## Before writing any code: platform verification, done and confirmed
+
+- [x] **Attacker+judge model settled: `deepseek-ai/deepseek-v4-pro-0813` via NVIDIA NIM.** Verified live, twice: a benign 3-turn warm-up (13.3s, `finish_reason=stop`, no reasoning leak), then — because every prior model looked fine small and broke at scale (Kimi-K2, kimi-k3, Nemotron-3-Ultra) — 2 real 5-turn escalations in the actual attacker role (craft-next-turn, growing context, `max_tokens=800`), toward a JBB-Behaviors-style and a HarmBench-style category. 10/10 calls came back `finish_reason=stop`, `reasoning_content_len=0`. No leak at real scale. Free tier (not HF's $0.10/month wall — HF was independently re-confirmed to hit the same reasoning-leak/truncation failure on this exact model, `content:null` with `finish_reason=length` at just 50 tokens). OpenRouter (`deepseek/deepseek-v4-pro-0813`, no `:free` variant exists) stays the paid backup if NIM's ~40 req/min rate limit becomes a bottleneck — real price ≈ $0.579/1M prompt tokens, $1.738/1M completion tokens (reasoning tokens are billed as completion tokens there, ~50-70% of a turn's output in the live test).
+- [x] **GPU cost estimated from real PoisonedRAG Phase B timing, not a guess.** 642s actual wall-clock for 800 target-model generations (100×4×2, corrected baseline confirmed valid — see `phase2_poisonedrag_task.md`). Scaled 2.5x for Crescendo's 2,000-generation volume (100×4×5 turns): **~$0.60–$1.50, 25–60 min of A100 time** (linear estimate is a floor — Crescendo's growing per-turn context likely pushes toward the top of that range; watch the first cells live and re-project before running unattended, same practice as PoisonedRAG's monitored sweep).
+- [ ] Confirm `PHASE2_POISONEDRAG_INSIGHTS.md`'s "poison-echoed, not adopted" and ASR-scoring-caveat sections before designing Crescendo's own success scoring — Crescendo needs the same scrutiny PoisonedRAG got: does "attack succeeded" mean the target genuinely complied with the escalated ask, or could a hedge/partial-compliance/simulated-refusal-then-comply collapse into one binary flag the way it did twice before? Design the judge's scoring criteria with this failure mode named up front.
+- [ ] **Document the attacker/target role asymmetry explicitly, in the scoring design and later in the insights doc's methodology section.** DeepSeek V4 Pro is the attacker+judge in every conversation and is *expected* to comply readily in that role (verified above — it never refused across 10 real escalation-role calls) — that permissiveness is the generator working as intended, not a finding about DeepSeek's own robustness. The four target models are what's actually being measured for resistance. State plainly that this differs from Attacks 1-2, where the same four models ran symmetrically on both sides of every comparison (there was only ever one role: the model under test) — here the roles are split, so "which model resists" applies only to the four targets, and DeepSeek's compliance rate is a generator-health check, not a fifth data point in that comparison.
+
+## What this attack is, and how it differs from Attacks 1 and 2
+
+Crescendo (Russinovich, Salem, Eldan 2024, Microsoft) is a **multi-turn** jailbreak: no single malicious payload, no single poisoned passage — a sequence of individually-benign-looking turns that gradually reframes the conversation until the target complies with a behavior it would refuse outright if asked directly. Attack 1 hijacked instruction-following in one shot; Attack 2 corrupted retrieved facts in one shot; Attack 3 exploits conversational state and gradual commitment, the one dimension neither prior attack touched. "Attack success" here means: did the target model, by the end of the escalation, produce content matching the target harmful behavior — not whether any single turn looked adversarial in isolation.
+
+## Grounding
+
+Russinovich, Salem, Eldan, *Great, Now Write an Article About That: The Crescendo Multi-Turn LLM Jailbreak Attack* (2024). Reference implementation: Microsoft's **PyRIT** (`Azure/PyRIT`) ships a Crescendo orchestrator — read its turn-generation and backtrack logic before building; adapt faithfully, don't reinvent the escalation strategy from scratch. Behavior pool: **JBB-Behaviors (100) + HarmBench (510) = 610**, both standard, publicly available benchmark sets — pull directly, don't hand-write behaviors.
+
+## Scope: all 4 target models, n=100 stratified sample
+
+No corpus dimension here (Crescendo isn't a RAG-corpus attack — it's a direct conversational attack on the target model, RAG context is not the injection surface). All 4 target models, matching Attacks 1-2's full coverage — that's what made the "model identity dominant vs. corpus identity dominant" comparison possible, and Crescendo needs to slot into that same 3-way comparison.
+
+**n=100**, stratified proportionally across the pool (~16 JBB-Behaviors, ~84 HarmBench, matching the pool's own 100:510 ratio), seeded sampling — same reasoning as PoisonedRAG's n=100 (10x the field's typical validated scale, enough real statistical power for the effect sizes Attacks 1-2 already found, well short of full 610-behavior coverage the budget doesn't need).
+
+## Tasks
+
+- [ ] Implement the attacker-turn generator: given conversation history + target behavior, produce the next escalating user turn. Reuses `deepseek-ai/deepseek-v4-pro-0813` via NIM (verified above), same request/response handling pattern as `attacks/poisonedrag.py`'s `generate_poison_texts` (retry-on-5xx, raw-content logging on parse failure) — do not reimplement that error handling, adapt it.
+- [ ] Implement conversation-state threading: each turn's `messages` list carries the full accumulated history (attacker turns + target replies) — this is genuinely new; nothing in Attacks 1-2 carries state across calls (PoisonedRAG is one-shot generation, injection is templated).
+- [ ] Implement the **backtrack mechanism** (core to Crescendo, per PyRIT's orchestrator): if the target refuses a turn, regenerate that turn with the refusal fed back as context rather than advancing the conversation on a dead branch. Decide and log a max-backtrack-attempts cap per turn (mirror the existing `max_attempts=3` pattern from PoisonedRAG's generation retries).
+- [ ] Implement the **per-turn continuation check**: rule-based refusal-phrase detection (same "rule-based, not fuzzy/semantic" philosophy as `attacks/asr_scoring.py`) to decide whether to backtrack — cheap, no extra API call, log every trigger.
+- [ ] Implement the **final judge call**: one NIM call per completed conversation (not per turn) scoring whether the target's final-turn output actually matches the target behavior. Document the judge's exact scoring prompt and criteria up front, given the pre-flight scrutiny item above.
+- [ ] Fix `max_turns = 5` per conversation (see grounding above); document if live results show most successes/failures resolve well before or after turn 5, informing whether this number holds for future phases.
+- [ ] Extend `evaluation/result_paths.py`'s naming convention for this attack's output files, same pattern as the prior two attacks (e.g. `crescendo_raw_{model}_{turn_count}.jsonl` or similar — adjust the axis name appropriately, this attack has no corpus axis).
+- [ ] Reuse directly, do not rebuild: retry logic, skip-and-log-with-classification, seeded stratified sampling (`sample_target_questions` pattern), the int64/`normalize_text` fixes.
+
+## Statistics — same discipline as Attacks 1 and 2, apply from the start
+
+- **McNemar's test**, paired per model — valid since all 4 models run the identical sampled behavior set (same seeded pool, no corpus dimension to pair across here).
+- **Fisher's exact test** — only if a genuinely independent unpaired comparison exists here (e.g., JBB-Behaviors-vs-HarmBench subgroup, if that split is analytically interesting); otherwise this attack may not need a Fisher family at all, unlike Attack 2's corpus-vs-corpus structure. Decide and document which, don't force a Fisher comparison that doesn't fit.
+- **Paired bootstrap 95% CI** on the utility drop vs. Phase 1 baseline, same `evaluation.stats.paired_bootstrap_ci` reuse — note Crescendo's "utility" comparison is less direct than the prior two attacks (there's no clean single "poisoned answer" to score against); design what utility-under-attack even means here before running the sweep, not after.
+- **Holm-Bonferroni correction** across whatever comparison family results from the above — apply from the first real sweep, not retroactively.
+
+## Done means
+
+- Attacker+judge platform confirmed at real scale (done, this doc).
+- GPU cost estimated from real prior-phase timing, not a guess (done, this doc).
+- Backtrack rate and per-turn refusal rate logged and reported — Crescendo's own analogue to PoisonedRAG's skip/loss breakdown, held to the same "verify against the real log, don't reconstruct from memory" standard that PoisonedRAG's insights doc was corrected to.
+- Attack success rate table across the model grid (and JBB-vs-HarmBench subgroup if that split proves analytically meaningful).
+- Utility-under-attack comparison against the Phase 1 baseline, methodology for what "utility" means here decided up front.
+- `PHASE2_CRESCENDO_INSIGHTS.md` written to the same structure and rigor as `PHASE2_INJECTION_INSIGHTS.md` and `PHASE2_POISONEDRAG_INSIGHTS.md`: which models were most/least susceptible to conversational escalation and why, explicit three-way comparison against Attacks 1 and 2 (does resistance to instruction-hijacking or fact-corruption predict resistance to gradual escalation, or is this a third independent robustness dimension?), generator-journey methodology note (this doc's platform verification work belongs there), honest backtrack/refusal accounting. **Methodology section must state the attacker/target role asymmetry plainly** (see pre-flight item above) — DeepSeek's readiness to comply as attacker is expected generator behavior, not a susceptibility finding, and the "which model resists" framing carried over from Attacks 1-2 applies only to the four targets here, since the roles are split rather than all four models running symmetrically on both sides.
+- Full test suite passes.
+
+Do not start Phase 3 (defenses) until this attack's insight file is written and closed out, per the same sequential-phase discipline as Attacks 1 and 2.
