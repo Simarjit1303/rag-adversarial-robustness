@@ -125,6 +125,54 @@ def test_build_poisoned_contexts_caches_to_disk_and_reuses_on_next_call(stub_pha
 
 
 # ---------------------------------------------------------------------
+# _build_row / _summarize -- poison_echoed_not_adopted bucket
+# ---------------------------------------------------------------------
+
+_CTX = {
+    "question": "q0", "gold_answers": ["gold"], "target_answer": "wrong",
+    "retrieved_doc_ids": [0], "retrieval_precision": 1.0, "retrieval_recall": 1.0,
+    "retrieval_f1": 1.0,
+}
+
+
+def test_build_row_flags_poison_echoed_not_adopted_only_when_diagnostic_hit_but_em_missed():
+    # contains_target_diagnostic=1, attack_success=0 -> the named middle case
+    scores = {"attack_success": 0, "f1_target": 0.57, "contains_target_diagnostic": 1,
+              "em_gold": 0, "f1_gold": 0.1}
+    row = rp._build_row("m", "hotpot_qa", "adv5", _CTX, "gen", "gen_clean", scores)
+    assert row["poison_echoed_not_adopted"] == 1
+
+
+def test_build_row_does_not_flag_a_true_attack_success():
+    scores = {"attack_success": 1, "f1_target": 1.0, "contains_target_diagnostic": 1,
+              "em_gold": 0, "f1_gold": 0.1}
+    row = rp._build_row("m", "hotpot_qa", "adv5", _CTX, "gen", "gen_clean", scores)
+    assert row["poison_echoed_not_adopted"] == 0
+
+
+def test_build_row_does_not_flag_no_poison_influence_at_all():
+    scores = {"attack_success": 0, "f1_target": 0.0, "contains_target_diagnostic": 0,
+              "em_gold": 1, "f1_gold": 1.0}
+    row = rp._build_row("m", "hotpot_qa", "adv5", _CTX, "gen", "gen_clean", scores)
+    assert row["poison_echoed_not_adopted"] == 0
+
+
+def test_summarize_reports_poison_echoed_not_adopted_rate_alongside_attack_success_rate():
+    rows = [
+        {"attack_success": 1, "f1_target": 1.0, "contains_target_diagnostic": 1,
+         "poison_echoed_not_adopted": 0, "exact_match": 0, "f1_clean": 0.1, "retrieval_f1": 1.0},
+        {"attack_success": 0, "f1_target": 0.5, "contains_target_diagnostic": 1,
+         "poison_echoed_not_adopted": 1, "exact_match": 0, "f1_clean": 0.2, "retrieval_f1": 1.0},
+        {"attack_success": 0, "f1_target": 0.0, "contains_target_diagnostic": 0,
+         "poison_echoed_not_adopted": 0, "exact_match": 1, "f1_clean": 1.0, "retrieval_f1": 1.0},
+    ]
+    summary = rp._summarize("m", "hotpot_qa", "adv5", rows)
+    assert summary["attack_success_rate"] == round(1 / 3, 4)
+    assert summary["poison_echoed_not_adopted_rate"] == round(1 / 3, 4)
+    assert "poison_echoed_not_adopted_rate" in rp._SUMMARY_FIELDNAMES
+
+
+# ---------------------------------------------------------------------
 # run_poisonedrag_sweep -- validation + wiring
 # ---------------------------------------------------------------------
 
