@@ -37,6 +37,7 @@ import os
 import random
 import re
 import sys
+import time
 
 import requests
 
@@ -105,6 +106,26 @@ REFUSAL_PHRASES = [
 
 _VERDICT_RE = re.compile(r"verdict\s*:\s*(yes|no)", re.IGNORECASE)
 
+# NIM's free-tier budget is ~40 req/min (see phase2_crescendo_task.md pre-
+# flight) -- 60/40 = 1.5s minimum spacing, +margin. Real smoke-test finding,
+# 2026-09-09: running 4 models back-to-back (multiple attacker+judge calls
+# per conversation) burst straight through this and every single call across
+# all 4 models came back 429. Paced here, not just reacted to after the
+# fact, so the sweep never bursts in the first place.
+NIM_MIN_INTERVAL_SECONDS = 1.6
+_last_nim_call_at = [0.0]  # single-element list: plain module global, mutated in place
+
+
+class RateLimitError(Exception):
+    """NIM returned 429. Carries retry_after (seconds, from the Retry-After
+    header) when NIM sent one, else None -- lets the caller
+    (evaluation/run_crescendo.py's _call_with_retry) wait the exact window
+    NVIDIA asked for instead of guessing a generic backoff."""
+
+    def __init__(self, message, retry_after=None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
 
 def sample_behaviors(pool: list, sample_size: int = SAMPLE_SIZE, seed: int = SEED) -> list:
     """
@@ -152,12 +173,27 @@ def _nim_chat(messages: list, api_token: str, model: str, max_tokens: int) -> st
     run_crescendo.py) can apply their own retry policy, matching
     generate_poison_texts's contract exactly.
     """
+    elapsed = time.monotonic() - _last_nim_call_at[0]
+    if elapsed < NIM_MIN_INTERVAL_SECONDS:
+        time.sleep(NIM_MIN_INTERVAL_SECONDS - elapsed)
+    _last_nim_call_at[0] = time.monotonic()
+
     resp = requests.post(
         NIM_URL,
         headers={"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"},
         json={"model": model, "messages": messages, "max_tokens": max_tokens},
         timeout=180,
     )
+    if resp.status_code == 429:
+        retry_after_hdr = resp.headers.get("Retry-After")
+        try:
+            retry_after = float(retry_after_hdr) if retry_after_hdr else None
+        except ValueError:
+            retry_after = None  # Retry-After can be an HTTP-date instead of seconds; not handled, falls back to caller's exponential backoff
+        raise RateLimitError(
+            f"NIM rate limit hit (429) -- Retry-After={retry_after_hdr!r}",
+            retry_after=retry_after,
+        )
     resp.raise_for_status()
 
     try:

@@ -10,14 +10,27 @@ from unittest import mock
 
 import pytest
 
+import attacks.crescendo as crescendo
 from attacks.crescendo import (
     REFUSAL_PHRASES,
+    RateLimitError,
     _VERDICT_RE,
     generate_attacker_turn,
     generate_judge_verdict,
     is_refusal,
     sample_behaviors,
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_real_pacing_sleep(monkeypatch):
+    """_nim_chat paces real NIM calls with time.sleep against a module-level
+    last-call timestamp (NIM_MIN_INTERVAL_SECONDS) -- correct against real
+    NIM traffic, but this file's tests share process state across the whole
+    run, so left un-patched a full test-file run would actually block up to
+    ~1.6s per NIM-call test back-to-back. No-op it by default; the pacing
+    test below overrides this via its own monkeypatch.setattr."""
+    monkeypatch.setattr(crescendo.time, "sleep", lambda s: None)
 
 
 # ---------------------------------------------------------------------
@@ -181,6 +194,51 @@ def test_generate_judge_verdict_raises_when_verdict_line_missing():
 def test_verdict_regex_is_case_insensitive():
     assert _VERDICT_RE.search("verdict: yes") is not None
     assert _VERDICT_RE.search("Verdict:No") is not None
+
+
+# ---------------------------------------------------------------------
+# _nim_chat -- rate-limit handling (429) and pacing, real smoke-test bug
+# 2026-09-09: a 4-model sweep hit 429 on every single NIM call.
+# ---------------------------------------------------------------------
+
+def _mock_429(retry_after_header=None):
+    resp = mock.Mock()
+    resp.status_code = 429
+    resp.headers = {"Retry-After": retry_after_header} if retry_after_header else {}
+    return resp
+
+
+def test_nim_chat_raises_rate_limit_error_with_parsed_retry_after(monkeypatch):
+    monkeypatch.setattr(crescendo.requests, "post", lambda *a, **kw: _mock_429("13"))
+    with pytest.raises(RateLimitError) as exc_info:
+        crescendo._nim_chat([{"role": "user", "content": "x"}], "tok", "m", max_tokens=10)
+    assert exc_info.value.retry_after == 13.0
+
+
+def test_nim_chat_rate_limit_error_has_none_retry_after_without_header(monkeypatch):
+    monkeypatch.setattr(crescendo.requests, "post", lambda *a, **kw: _mock_429(None))
+    with pytest.raises(RateLimitError) as exc_info:
+        crescendo._nim_chat([{"role": "user", "content": "x"}], "tok", "m", max_tokens=10)
+    assert exc_info.value.retry_after is None
+
+
+def test_nim_chat_paces_calls_at_least_min_interval_apart(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(crescendo.time, "sleep", sleeps.append)
+    monkeypatch.setattr(crescendo.requests, "post", lambda *a, **kw: _mock_response("hi"))
+
+    # _last_nim_call_at is module-level state shared across this file's
+    # tests -- reset it so this test's fake clock isn't compared against
+    # whatever real time.monotonic() value another test last left there.
+    crescendo._last_nim_call_at[0] = 0.0
+    # Simulate two calls 0.2s apart (real elapsed < NIM_MIN_INTERVAL_SECONDS)
+    clock = iter([100.0, 100.0, 100.2, 100.2])
+    monkeypatch.setattr(crescendo.time, "monotonic", lambda: next(clock))
+
+    crescendo._nim_chat([{"role": "user", "content": "x"}], "tok", "m", max_tokens=10)
+    crescendo._nim_chat([{"role": "user", "content": "x"}], "tok", "m", max_tokens=10)
+
+    assert sleeps == [pytest.approx(crescendo.NIM_MIN_INTERVAL_SECONDS - 0.2)]
 
 
 # ---------------------------------------------------------------------

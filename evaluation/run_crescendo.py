@@ -35,6 +35,7 @@ import torch
 from attacks.crescendo import (
     ATTACKER_MODEL,
     MAX_BACKTRACKS,
+    RateLimitError,
     TARGET_SYSTEM_PROMPT,
     generate_attacker_turn,
     generate_judge_verdict,
@@ -75,6 +76,14 @@ def _call_with_retry(fn, *args, max_attempts: int = 3, label: str = "", **kwargs
     function (generate_attacker_turn vs generate_judge_verdict share this
     retry policy, not the call itself). Returns fn(*args, **kwargs) or None
     on exhausted failure.
+
+    Rate-limit-aware, not just generic backoff: real smoke-test finding,
+    2026-09-09 -- a 4-model sweep hit 429 on every NIM call, and the old
+    1s/2s backoff never let NVIDIA's ~40 req/min window clear (attacks/
+    crescendo.py's _nim_chat now also PACES every call up front, so this is
+    the reactive half). On a RateLimitError, respect NIM's own Retry-After
+    header exactly when it sent one; otherwise fall back to a real
+    exponential backoff (2s, 4s, ...) meaningfully higher than the old 1s/2s.
     """
     last_exc = None
     for attempt in range(max_attempts):
@@ -82,14 +91,22 @@ def _call_with_retry(fn, *args, max_attempts: int = 3, label: str = "", **kwargs
             return fn(*args, **kwargs)
         except Exception as e:
             last_exc = e
+            is_last = attempt == max_attempts - 1
+            if not is_last:
+                if isinstance(e, RateLimitError) and e.retry_after is not None:
+                    delay = e.retry_after
+                    delay_note = f"honoring Retry-After={delay}s"
+                else:
+                    delay = 2 ** (attempt + 1)  # 2s, 4s, 8s, ... -- not the old 1s/2s
+                    delay_note = f"backing off {delay}s"
             print(
                 f"[crescendo] {label} attempt {attempt + 1}/{max_attempts} failed: "
                 f"{type(e).__name__}: {e}"
-                + (" -- retrying" if attempt < max_attempts - 1 else " -- giving up"),
+                + (f" -- {delay_note}" if not is_last else " -- giving up"),
                 file=sys.stderr,
             )
-            if attempt < max_attempts - 1:
-                time.sleep(2 ** attempt)  # 1s, 2s
+            if not is_last:
+                time.sleep(delay)
     print(f"[crescendo] SKIPPING {label} after {max_attempts} failed attempts "
           f"(last error: {type(last_exc).__name__}: {last_exc})", file=sys.stderr)
     return None

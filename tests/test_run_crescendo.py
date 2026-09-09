@@ -46,6 +46,37 @@ def test_call_with_retry_gives_up_and_returns_none_after_exhausting_attempts(mon
     assert result is None  # skip-and-log, not a raised exception
 
 
+def test_call_with_retry_honors_retry_after_header_exactly(monkeypatch):
+    # Real smoke-test bug, 2026-09-09: a RateLimitError with a Retry-After
+    # value must be slept EXACTLY, not folded into the generic exponential.
+    sleeps = []
+    monkeypatch.setattr(rc.time, "sleep", sleeps.append)
+    calls = {"n": 0}
+
+    def rate_limited_then_ok():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise rc.RateLimitError("429", retry_after=13.0)
+        return "ok"
+
+    result = rc._call_with_retry(rate_limited_then_ok, max_attempts=3, label="t")
+    assert result == "ok"
+    assert sleeps == [13.0]
+
+
+def test_call_with_retry_falls_back_to_exponential_when_no_retry_after(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(rc.time, "sleep", sleeps.append)
+
+    def always_rate_limited():
+        raise rc.RateLimitError("429", retry_after=None)
+
+    rc._call_with_retry(always_rate_limited, max_attempts=3, label="t")
+    # 2s, then 4s -- meaningfully higher than the old 1s/2s, and NOT the old
+    # generic-exception path either, since RateLimitError is still checked.
+    assert sleeps == [2, 4]
+
+
 # ---------------------------------------------------------------------
 # run_crescendo_conversation -- backtrack loop
 # ---------------------------------------------------------------------
