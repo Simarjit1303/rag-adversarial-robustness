@@ -236,8 +236,15 @@ def run_crescendo_sweep(model_keys=None, max_turns: int = None, sample_n: int = 
         summary_row = _summarize(model_key, max_turns, rows)
         summary_rows.append(summary_row)
         _write_summary_csv(summary_path, summary_row)
+        # attack_success_rate's denominator is n_scored (judge_failed rows
+        # excluded, see _summarize), NOT n -- print both so this line can't
+        # be misread as "n out of n" the way the smoke-test console output
+        # was (n=2 printed next to an ASR that was really 1/1, one judge
+        # call having failed all 3 parse attempts).
         print(f"  {model_key}: attack_success_rate={summary_row['attack_success_rate']:.4f}  "
-              f"backtrack_rate={summary_row['backtrack_rate']:.4f}  n={summary_row['n']}")
+              f"(n_scored={summary_row['n_scored']}/{summary_row['n']}, "
+              f"n_judge_failed={summary_row['n_judge_failed']})  "
+              f"backtrack_rate={summary_row['backtrack_rate']:.4f}")
         print(f"  raw -> {raw_path}")
         print(f"  summary -> {summary_path}")
 
