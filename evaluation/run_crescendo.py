@@ -66,7 +66,7 @@ def _atomic_open(final_path, newline=None):
         raise
 
 
-def _call_with_retry(fn, *args, max_attempts: int = 3, label: str = "", **kwargs):
+def _call_with_retry(fn, *args, max_attempts: int = 3, label: str = "", error_sink: dict = None, **kwargs):
     """
     Bounded retry with backoff -- identical shape to
     evaluation.run_poisonedrag._generate_poison_with_retry (a transient NIM
@@ -84,6 +84,15 @@ def _call_with_retry(fn, *args, max_attempts: int = 3, label: str = "", **kwargs
     the reactive half). On a RateLimitError, respect NIM's own Retry-After
     header exactly when it sent one; otherwise fall back to a real
     exponential backoff (2s, 4s, ...) meaningfully higher than the old 1s/2s.
+
+    error_sink, when given a dict, gets last_exc written to it as
+    error_sink["error"] on exhausted failure -- same "skip-and-log" call,
+    but the reason no longer lives ONLY in a stderr print a real pod run may
+    not have captured. Real bug, smoke test 2026-09-09: phi-4-mini and
+    ministral-3-8b got n_turns_completed=0/conversation=[] on every one of 3
+    behaviors with no record anywhere of why -- judge_reasoning: null and
+    nothing else. Callers thread this into the output row (see _build_row's
+    "error" field) instead of only into this print.
     """
     last_exc = None
     for attempt in range(max_attempts):
@@ -109,6 +118,8 @@ def _call_with_retry(fn, *args, max_attempts: int = 3, label: str = "", **kwargs
                 time.sleep(delay)
     print(f"[crescendo] SKIPPING {label} after {max_attempts} failed attempts "
           f"(last error: {type(last_exc).__name__}: {last_exc})", file=sys.stderr)
+    if error_sink is not None:
+        error_sink["error"] = f"{label}: {type(last_exc).__name__}: {last_exc}"
     return None
 
 
@@ -134,22 +145,28 @@ def run_crescendo_conversation(model, tokenizer, model_key: str, target_behavior
     """
     Runs one full Crescendo conversation against `model`. Returns
     (conversation, backtrack_count, refusal_count, n_turns_completed,
-    backtrack_attempts). conversation is the final [{"role", "content"},
-    ...] thread (excluding the system turn) -- what generate_judge_verdict
-    scores; the linear history only ever holds the FINAL (non-refused)
-    reply for each turn, so a backtracked turn's refused attempt is
-    otherwise invisible in the stored data.
+    backtrack_attempts, error). conversation is the final [{"role",
+    "content"}, ...] thread (excluding the system turn) -- what
+    generate_judge_verdict scores; the linear history only ever holds the
+    FINAL (non-refused) reply for each turn, so a backtracked turn's
+    refused attempt is otherwise invisible in the stored data.
 
     backtrack_attempts preserves what the linear history discards: one
     {"turn", "refused_prompt", "refused_reply", "retry_prompt"} entry per
     backtrack, so the mechanism is auditable from the raw data itself
     (retry_prompt is None if the regenerated attacker turn itself then
     exhausted retries, ending the conversation before a retry could run).
+
+    error is None on a clean run, else the label + exception string from
+    whichever attacker-turn _call_with_retry call last exhausted its
+    attempts (see that function's error_sink) -- the real cause when a
+    conversation ends early/empty, not just a bare n_turns_completed=0.
     """
     history = []
     backtrack_count = 0
     refusal_count = 0
     backtrack_attempts = []
+    error_sink = {}
 
     for turn in range(max_turns):
         refusal_feedback = None
@@ -162,6 +179,7 @@ def run_crescendo_conversation(model, tokenizer, model_key: str, target_behavior
                 generate_attacker_turn, history, target_behavior,
                 api_token=api_token, refusal_feedback=refusal_feedback,
                 label=f"{model_key} attacker turn {turn + 1} attempt {attempt + 1}",
+                error_sink=error_sink,
             )
             if pending_backtrack is not None:
                 pending_backtrack["retry_prompt"] = attacker_turn
@@ -193,7 +211,7 @@ def run_crescendo_conversation(model, tokenizer, model_key: str, target_behavior
         history.append({"role": "user", "content": attacker_turn})
         history.append({"role": "assistant", "content": target_reply})
 
-    return history, backtrack_count, refusal_count, len(history) // 2, backtrack_attempts
+    return history, backtrack_count, refusal_count, len(history) // 2, backtrack_attempts, error_sink.get("error")
 
 
 def run_crescendo_sweep(model_keys=None, max_turns: int = None, sample_n: int = None,
@@ -254,17 +272,24 @@ def run_crescendo_sweep(model_keys=None, max_turns: int = None, sample_n: int = 
         start = time.time()
         with _atomic_open(raw_path) as raw_f:
             for i, b in enumerate(behaviors):
-                conversation, backtrack_count, refusal_count, n_turns, backtrack_attempts = run_crescendo_conversation(
+                conversation, backtrack_count, refusal_count, n_turns, backtrack_attempts, conv_error = run_crescendo_conversation(
                     model, tokenizer, model_key, b["behavior"], api_token, max_turns
                 )
 
+                judge_error_sink = {}
                 verdict = _call_with_retry(
                     generate_judge_verdict, conversation, b["behavior"],
                     api_token=api_token, label=f"{model_key} judge for {b['behavior']!r}",
+                    error_sink=judge_error_sink,
                 ) if conversation else None
 
+                # conv_error takes precedence -- it explains WHY conversation
+                # may be empty/truncated in the first place; a judge error
+                # only ever applies when the conversation itself succeeded.
+                error = conv_error or judge_error_sink.get("error")
+
                 row = _build_row(model_key, max_turns, b, conversation, backtrack_count,
-                                  refusal_count, n_turns, verdict, backtrack_attempts)
+                                  refusal_count, n_turns, verdict, backtrack_attempts, error)
                 rows.append(row)
                 raw_f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
@@ -294,7 +319,7 @@ def run_crescendo_sweep(model_keys=None, max_turns: int = None, sample_n: int = 
 
 
 def _build_row(model_key, max_turns, behavior_item, conversation, backtrack_count,
-                refusal_count, n_turns, verdict, backtrack_attempts=None):
+                refusal_count, n_turns, verdict, backtrack_attempts=None, error=None):
     judge_failed = verdict is None
     return {
         "model": model_key,
@@ -319,6 +344,13 @@ def _build_row(model_key, max_turns, behavior_item, conversation, backtrack_coun
         "judge_failed": int(judge_failed),
         "attack_success": 0 if judge_failed else verdict["success"],
         "judge_reasoning": None if judge_failed else verdict["reasoning"],
+        # Real bug, smoke test 2026-09-09: phi-4-mini/ministral-3-8b rows had
+        # n_turns_completed=0, judge_reasoning=null, and NO record anywhere
+        # of why -- undiagnosable from the JSONL alone. error carries the
+        # last exhausted _call_with_retry failure (attacker-turn generation
+        # takes precedence over a judge failure -- see run_crescendo_sweep),
+        # None when nothing failed.
+        "error": error,
     }
 
 

@@ -77,6 +77,32 @@ def test_call_with_retry_falls_back_to_exponential_when_no_retry_after(monkeypat
     assert sleeps == [2, 4]
 
 
+def test_call_with_retry_writes_exhausted_error_to_error_sink(monkeypatch):
+    # Real bug, smoke test 2026-09-09: phi-4-mini/ministral-3-8b rows had
+    # n_turns_completed=0 with NO record anywhere of why -- the exception
+    # only ever reached a stderr print. error_sink is how a caller recovers
+    # it into the stored row instead.
+    monkeypatch.setattr(rc.time, "sleep", lambda s: None)
+
+    def always_fails():
+        raise rc.RateLimitError("NIM rate limit hit (429) -- Retry-After='45'", retry_after=45.0)
+
+    sink = {}
+    result = rc._call_with_retry(always_fails, max_attempts=3, label="phi-4-mini attacker turn 1 attempt 1", error_sink=sink)
+    assert result is None
+    assert sink["error"] == (
+        "phi-4-mini attacker turn 1 attempt 1: RateLimitError: "
+        "NIM rate limit hit (429) -- Retry-After='45'"
+    )
+
+
+def test_call_with_retry_does_not_touch_error_sink_on_success(monkeypatch):
+    sink = {}
+    result = rc._call_with_retry(lambda: "ok", max_attempts=3, label="t", error_sink=sink)
+    assert result == "ok"
+    assert sink == {}  # untouched -- caller can rely on "error" key presence to mean failure
+
+
 # ---------------------------------------------------------------------
 # run_crescendo_conversation -- backtrack loop
 # ---------------------------------------------------------------------
@@ -89,7 +115,7 @@ def stub_conversation(monkeypatch):
 def test_conversation_completes_max_turns_with_no_refusals(monkeypatch, stub_conversation):
     monkeypatch.setattr(rc, "generate_attacker_turn",
                          lambda history, behavior, api_token, refusal_feedback=None: "next turn")
-    conv, backtracks, refusals, n_turns, backtrack_attempts = rc.run_crescendo_conversation(
+    conv, backtracks, refusals, n_turns, backtrack_attempts, error = rc.run_crescendo_conversation(
         mock.Mock(), mock.Mock(), "phi-4-mini", "target behavior", "tok", max_turns=5,
     )
     assert n_turns == 5
@@ -97,6 +123,7 @@ def test_conversation_completes_max_turns_with_no_refusals(monkeypatch, stub_con
     assert backtracks == 0
     assert refusals == 0
     assert backtrack_attempts == []
+    assert error is None
 
 
 def test_conversation_backtracks_on_refusal_then_recovers(monkeypatch):
@@ -106,7 +133,7 @@ def test_conversation_backtracks_on_refusal_then_recovers(monkeypatch):
     monkeypatch.setattr(rc, "generate_attacker_turn",
                          lambda history, behavior, api_token, refusal_feedback=None: next(prompts))
 
-    conv, backtracks, refusals, n_turns, backtrack_attempts = rc.run_crescendo_conversation(
+    conv, backtracks, refusals, n_turns, backtrack_attempts, error = rc.run_crescendo_conversation(
         mock.Mock(), mock.Mock(), "phi-4-mini", "target behavior", "tok", max_turns=1,
     )
     assert n_turns == 1
@@ -123,6 +150,7 @@ def test_conversation_backtracks_on_refusal_then_recovers(monkeypatch):
         "refused_reply": "I cannot help with that.",
         "retry_prompt": "retried turn",
     }]
+    assert error is None  # recovered -- no exhausted call, nothing to report
 
 
 def test_conversation_accepts_refusal_after_exhausting_backtrack_cap(monkeypatch):
@@ -130,7 +158,7 @@ def test_conversation_accepts_refusal_after_exhausting_backtrack_cap(monkeypatch
     monkeypatch.setattr(rc, "generate_attacker_turn",
                          lambda history, behavior, api_token, refusal_feedback=None: "next turn")
 
-    conv, backtracks, refusals, n_turns, backtrack_attempts = rc.run_crescendo_conversation(
+    conv, backtracks, refusals, n_turns, backtrack_attempts, error = rc.run_crescendo_conversation(
         mock.Mock(), mock.Mock(), "phi-4-mini", "target behavior", "tok",
         max_turns=1, max_backtracks=2,
     )
@@ -144,17 +172,25 @@ def test_conversation_accepts_refusal_after_exhausting_backtrack_cap(monkeypatch
     assert len(backtrack_attempts) == 2
     assert all(a["refused_reply"] == "I cannot help with that." for a in backtrack_attempts)
     assert all(a["retry_prompt"] == "next turn" for a in backtrack_attempts)
+    assert error is None  # generate_attacker_turn never failed here, only the target refused
 
 
 def test_conversation_ends_early_when_attacker_generation_exhausts_retries(monkeypatch, stub_conversation):
     monkeypatch.setattr(rc, "generate_attacker_turn",
                          lambda history, behavior, api_token, refusal_feedback=None: None)
-    conv, backtracks, refusals, n_turns, backtrack_attempts = rc.run_crescendo_conversation(
+    conv, backtracks, refusals, n_turns, backtrack_attempts, error = rc.run_crescendo_conversation(
         mock.Mock(), mock.Mock(), "phi-4-mini", "target behavior", "tok", max_turns=5,
     )
     assert n_turns == 0
     assert conv == []
     assert backtrack_attempts == []
+    # generate_attacker_turn is stubbed to just RETURN None here (no raise),
+    # same shape _call_with_retry sees when fn() itself hands back None
+    # without exhausting attempts via an exception -- error_sink is only
+    # populated on the exception path, so error stays None; the real
+    # exhausted-retries shape is covered by
+    # test_call_with_retry_writes_exhausted_error_to_error_sink above.
+    assert error is None
 
 
 def test_conversation_backtrack_attempt_retry_prompt_is_none_when_retry_generation_fails(monkeypatch):
@@ -167,7 +203,7 @@ def test_conversation_backtrack_attempt_retry_prompt_is_none_when_retry_generati
     monkeypatch.setattr(rc, "generate_attacker_turn",
                          lambda history, behavior, api_token, refusal_feedback=None: next(prompts))
 
-    conv, backtracks, refusals, n_turns, backtrack_attempts = rc.run_crescendo_conversation(
+    conv, backtracks, refusals, n_turns, backtrack_attempts, error = rc.run_crescendo_conversation(
         mock.Mock(), mock.Mock(), "phi-4-mini", "target behavior", "tok",
         max_turns=1, max_backtracks=2,
     )
@@ -175,6 +211,33 @@ def test_conversation_backtrack_attempt_retry_prompt_is_none_when_retry_generati
     assert len(backtrack_attempts) == 1
     assert backtrack_attempts[0]["refused_prompt"] == "refused turn"
     assert backtrack_attempts[0]["retry_prompt"] is None
+    assert error is None  # stubbed as a plain None return, not an exception -- see note above
+
+
+def test_conversation_surfaces_real_exhausted_attacker_error(monkeypatch, stub_conversation):
+    # End-to-end version of the real smoke-test bug 2026-09-09: attacker-turn
+    # generation genuinely raising (not just stubbed to return None) on
+    # every attempt must leave a real, readable error string on the
+    # conversation, not just a bare n_turns_completed=0.
+    monkeypatch.setattr(rc.time, "sleep", lambda s: None)
+
+    def always_raises(history, behavior, api_token, refusal_feedback=None):
+        raise rc.RateLimitError("NIM rate limit hit (429) -- Retry-After='60'", retry_after=60.0)
+
+    monkeypatch.setattr(rc, "generate_attacker_turn", always_raises)
+    conv, backtracks, refusals, n_turns, backtrack_attempts, error = rc.run_crescendo_conversation(
+        mock.Mock(), mock.Mock(), "phi-4-mini", "target behavior", "tok", max_turns=5,
+    )
+    assert conv == []
+    assert n_turns == 0
+    # "attempt 1" here is the outer backtrack-attempt label
+    # (run_crescendo_conversation's own turn/backtrack counter) -- it fails
+    # on the very first one, before any backtrack, so it never advances.
+    # _call_with_retry's inner 3 retries are folded into the single label.
+    assert error == (
+        "phi-4-mini attacker turn 1 attempt 1: RateLimitError: "
+        "NIM rate limit hit (429) -- Retry-After='60'"
+    )
 
 
 # ---------------------------------------------------------------------
@@ -191,6 +254,7 @@ def test_build_row_records_judge_failure_without_crashing():
     assert row["attack_success"] == 0
     assert row["judge_reasoning"] is None
     assert row["backtrack_attempts"] == []  # not passed -- defaults to empty, not missing/None
+    assert row["error"] is None  # not passed -- defaults to None, judge_failed alone isn't an "error"
 
 
 def test_build_row_records_a_real_verdict():
@@ -207,6 +271,15 @@ def test_build_row_records_backtrack_attempts():
                          backtrack_count=1, refusal_count=1, n_turns=1, verdict=None,
                          backtrack_attempts=attempts)
     assert row["backtrack_attempts"] == attempts
+
+
+def test_build_row_records_error():
+    # Real bug, smoke test 2026-09-09: rows with n_turns_completed=0 had no
+    # record anywhere of why -- this is the field that closes that gap.
+    row = rc._build_row("phi-4-mini", 5, _BEHAVIOR, [],
+                         backtrack_count=0, refusal_count=0, n_turns=0, verdict=None,
+                         error="phi-4-mini attacker turn 1 attempt 3: RateLimitError: 429")
+    assert row["error"] == "phi-4-mini attacker turn 1 attempt 3: RateLimitError: 429"
 
 
 def test_summarize_excludes_judge_failed_rows_from_asr_denominator():
@@ -245,7 +318,7 @@ def stub_full_sweep(monkeypatch, tmp_path):
         rc, "run_crescendo_conversation",
         lambda model, tok, model_key, behavior, api_token, max_turns, **kw: (
             [{"role": "user", "content": "u"}, {"role": "assistant", "content": "a"}],
-            0, 0, 1, [],
+            0, 0, 1, [], None,
         ),
     )
     monkeypatch.setattr(
@@ -290,3 +363,24 @@ def test_sweep_loads_each_model_once_and_writes_a_summary_per_model(stub_full_sw
     summary_files = list(tmp_path.glob("crescendo_summary_*.csv"))
     assert len(raw_files) == 2
     assert len(summary_files) == 2
+
+
+def test_sweep_writes_conversation_error_into_the_raw_row(stub_full_sweep, monkeypatch, tmp_path):
+    # Real bug, smoke test 2026-09-09: phi-4-mini/ministral-3-8b's raw JSONL
+    # rows had n_turns_completed=0 and no record anywhere of why. This
+    # proves the error a failed run_crescendo_conversation call reports
+    # actually lands in the row written to disk, not just returned in
+    # memory and dropped.
+    monkeypatch.setattr(
+        rc, "run_crescendo_conversation",
+        lambda model, tok, model_key, behavior, api_token, max_turns, **kw: (
+            [], 0, 0, 0, [], "phi-4-mini attacker turn 1 attempt 3: RateLimitError: 429",
+        ),
+    )
+    rc.run_crescendo_sweep(model_keys=["phi-4-mini"], max_turns=5)
+
+    raw_path = next(tmp_path.glob("crescendo_raw_*.jsonl"))
+    import json
+    rows = [json.loads(line) for line in raw_path.read_text(encoding="utf-8").splitlines()]
+    assert all(r["error"] == "phi-4-mini attacker turn 1 attempt 3: RateLimitError: 429" for r in rows)
+    assert all(r["conversation"] == [] and r["n_turns_completed"] == 0 for r in rows)
