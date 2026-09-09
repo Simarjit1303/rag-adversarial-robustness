@@ -133,18 +133,29 @@ def run_crescendo_conversation(model, tokenizer, model_key: str, target_behavior
                                 api_token: str, max_turns: int, max_backtracks: int = MAX_BACKTRACKS):
     """
     Runs one full Crescendo conversation against `model`. Returns
-    (conversation, backtrack_count, refusal_count, n_turns_completed).
-    conversation is the final [{"role", "content"}, ...] thread (excluding
-    the system turn) -- what generate_judge_verdict scores.
+    (conversation, backtrack_count, refusal_count, n_turns_completed,
+    backtrack_attempts). conversation is the final [{"role", "content"},
+    ...] thread (excluding the system turn) -- what generate_judge_verdict
+    scores; the linear history only ever holds the FINAL (non-refused)
+    reply for each turn, so a backtracked turn's refused attempt is
+    otherwise invisible in the stored data.
+
+    backtrack_attempts preserves what the linear history discards: one
+    {"turn", "refused_prompt", "refused_reply", "retry_prompt"} entry per
+    backtrack, so the mechanism is auditable from the raw data itself
+    (retry_prompt is None if the regenerated attacker turn itself then
+    exhausted retries, ending the conversation before a retry could run).
     """
     history = []
     backtrack_count = 0
     refusal_count = 0
+    backtrack_attempts = []
 
     for turn in range(max_turns):
         refusal_feedback = None
         attacker_turn = None
         target_reply = None
+        pending_backtrack = None  # the entry awaiting this attempt's retry_prompt
 
         for attempt in range(max_backtracks + 1):
             attacker_turn = _call_with_retry(
@@ -152,6 +163,9 @@ def run_crescendo_conversation(model, tokenizer, model_key: str, target_behavior
                 api_token=api_token, refusal_feedback=refusal_feedback,
                 label=f"{model_key} attacker turn {turn + 1} attempt {attempt + 1}",
             )
+            if pending_backtrack is not None:
+                pending_backtrack["retry_prompt"] = attacker_turn
+                pending_backtrack = None
             if attacker_turn is None:
                 break  # attacker generation itself exhausted retries -- end conversation early
 
@@ -163,6 +177,13 @@ def run_crescendo_conversation(model, tokenizer, model_key: str, target_behavior
             if attempt < max_backtracks:
                 backtrack_count += 1
                 refusal_feedback = target_reply
+                pending_backtrack = {
+                    "turn": turn + 1,
+                    "refused_prompt": attacker_turn,
+                    "refused_reply": target_reply,
+                    "retry_prompt": None,
+                }
+                backtrack_attempts.append(pending_backtrack)
             # else: backtrack cap reached -- accept the refusal reply and move on,
             # same "bounded retry then give up" discipline as poisonedrag's cap
 
@@ -172,7 +193,7 @@ def run_crescendo_conversation(model, tokenizer, model_key: str, target_behavior
         history.append({"role": "user", "content": attacker_turn})
         history.append({"role": "assistant", "content": target_reply})
 
-    return history, backtrack_count, refusal_count, len(history) // 2
+    return history, backtrack_count, refusal_count, len(history) // 2, backtrack_attempts
 
 
 def run_crescendo_sweep(model_keys=None, max_turns: int = None, sample_n: int = None,
@@ -233,7 +254,7 @@ def run_crescendo_sweep(model_keys=None, max_turns: int = None, sample_n: int = 
         start = time.time()
         with _atomic_open(raw_path) as raw_f:
             for i, b in enumerate(behaviors):
-                conversation, backtrack_count, refusal_count, n_turns = run_crescendo_conversation(
+                conversation, backtrack_count, refusal_count, n_turns, backtrack_attempts = run_crescendo_conversation(
                     model, tokenizer, model_key, b["behavior"], api_token, max_turns
                 )
 
@@ -243,7 +264,7 @@ def run_crescendo_sweep(model_keys=None, max_turns: int = None, sample_n: int = 
                 ) if conversation else None
 
                 row = _build_row(model_key, max_turns, b, conversation, backtrack_count,
-                                  refusal_count, n_turns, verdict)
+                                  refusal_count, n_turns, verdict, backtrack_attempts)
                 rows.append(row)
                 raw_f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
@@ -273,7 +294,7 @@ def run_crescendo_sweep(model_keys=None, max_turns: int = None, sample_n: int = 
 
 
 def _build_row(model_key, max_turns, behavior_item, conversation, backtrack_count,
-                refusal_count, n_turns, verdict):
+                refusal_count, n_turns, verdict, backtrack_attempts=None):
     judge_failed = verdict is None
     return {
         "model": model_key,
@@ -286,6 +307,14 @@ def _build_row(model_key, max_turns, behavior_item, conversation, backtrack_coun
         "n_turns_completed": n_turns,
         "backtrack_count": backtrack_count,
         "any_backtrack": int(backtrack_count > 0),
+        # The discarded/refused attempt(s) the linear `conversation` history
+        # can't show -- see run_crescendo_conversation's docstring. Real bug,
+        # smoke test 2026-09-09: a row with backtrack_count=1 had every
+        # assistant turn in `conversation` comply readily, because the
+        # refused reply never survives the backtrack -- only the final
+        # rephrasing does. This makes the mechanism auditable from the raw
+        # data itself instead of a bare count with no evidence behind it.
+        "backtrack_attempts": backtrack_attempts or [],
         "refusal_count": refusal_count,
         "judge_failed": int(judge_failed),
         "attack_success": 0 if judge_failed else verdict["success"],

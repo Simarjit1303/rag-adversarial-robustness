@@ -89,28 +89,40 @@ def stub_conversation(monkeypatch):
 def test_conversation_completes_max_turns_with_no_refusals(monkeypatch, stub_conversation):
     monkeypatch.setattr(rc, "generate_attacker_turn",
                          lambda history, behavior, api_token, refusal_feedback=None: "next turn")
-    conv, backtracks, refusals, n_turns = rc.run_crescendo_conversation(
+    conv, backtracks, refusals, n_turns, backtrack_attempts = rc.run_crescendo_conversation(
         mock.Mock(), mock.Mock(), "phi-4-mini", "target behavior", "tok", max_turns=5,
     )
     assert n_turns == 5
     assert len(conv) == 10  # 5 user + 5 assistant turns
     assert backtracks == 0
     assert refusals == 0
+    assert backtrack_attempts == []
 
 
 def test_conversation_backtracks_on_refusal_then_recovers(monkeypatch):
     replies = iter(["I cannot help with that.", "a compliant reply"])
     monkeypatch.setattr(rc, "_generate_target_reply", lambda *a, **kw: next(replies))
+    prompts = iter(["refused turn", "retried turn"])
     monkeypatch.setattr(rc, "generate_attacker_turn",
-                         lambda history, behavior, api_token, refusal_feedback=None: "next turn")
+                         lambda history, behavior, api_token, refusal_feedback=None: next(prompts))
 
-    conv, backtracks, refusals, n_turns = rc.run_crescendo_conversation(
+    conv, backtracks, refusals, n_turns, backtrack_attempts = rc.run_crescendo_conversation(
         mock.Mock(), mock.Mock(), "phi-4-mini", "target behavior", "tok", max_turns=1,
     )
     assert n_turns == 1
     assert backtracks == 1
     assert refusals == 1
     assert conv[-1]["content"] == "a compliant reply"  # the recovered reply, not the refusal
+    # The refused attempt the linear history discards -- real bug, smoke
+    # test 2026-09-09: a stored conversation with backtrack_count=1 showed
+    # every assistant turn complying, because this attempt never survives
+    # into `conv`. backtrack_attempts is where it must live instead.
+    assert backtrack_attempts == [{
+        "turn": 1,
+        "refused_prompt": "refused turn",
+        "refused_reply": "I cannot help with that.",
+        "retry_prompt": "retried turn",
+    }]
 
 
 def test_conversation_accepts_refusal_after_exhausting_backtrack_cap(monkeypatch):
@@ -118,7 +130,7 @@ def test_conversation_accepts_refusal_after_exhausting_backtrack_cap(monkeypatch
     monkeypatch.setattr(rc, "generate_attacker_turn",
                          lambda history, behavior, api_token, refusal_feedback=None: "next turn")
 
-    conv, backtracks, refusals, n_turns = rc.run_crescendo_conversation(
+    conv, backtracks, refusals, n_turns, backtrack_attempts = rc.run_crescendo_conversation(
         mock.Mock(), mock.Mock(), "phi-4-mini", "target behavior", "tok",
         max_turns=1, max_backtracks=2,
     )
@@ -126,16 +138,43 @@ def test_conversation_accepts_refusal_after_exhausting_backtrack_cap(monkeypatch
     assert backtracks == 2  # capped, not unbounded
     assert refusals == 3  # 1 initial + 2 backtracked attempts, all refused
     assert conv[-1]["content"] == "I cannot help with that."
+    # 2 backtracks recorded (the cap), not 3 -- the final refused attempt is
+    # accepted outright, not backtracked from, same cap discipline as
+    # backtrack_count.
+    assert len(backtrack_attempts) == 2
+    assert all(a["refused_reply"] == "I cannot help with that." for a in backtrack_attempts)
+    assert all(a["retry_prompt"] == "next turn" for a in backtrack_attempts)
 
 
 def test_conversation_ends_early_when_attacker_generation_exhausts_retries(monkeypatch, stub_conversation):
     monkeypatch.setattr(rc, "generate_attacker_turn",
                          lambda history, behavior, api_token, refusal_feedback=None: None)
-    conv, backtracks, refusals, n_turns = rc.run_crescendo_conversation(
+    conv, backtracks, refusals, n_turns, backtrack_attempts = rc.run_crescendo_conversation(
         mock.Mock(), mock.Mock(), "phi-4-mini", "target behavior", "tok", max_turns=5,
     )
     assert n_turns == 0
     assert conv == []
+    assert backtrack_attempts == []
+
+
+def test_conversation_backtrack_attempt_retry_prompt_is_none_when_retry_generation_fails(monkeypatch):
+    # The regenerated attacker turn (the retry itself) can exhaust its own
+    # retries -- retry_prompt must stay None rather than silently omitting
+    # the attempt, since the refusal genuinely happened even though no
+    # retry ever ran.
+    monkeypatch.setattr(rc, "_generate_target_reply", lambda *a, **kw: "I cannot help with that.")
+    prompts = iter(["refused turn", None])
+    monkeypatch.setattr(rc, "generate_attacker_turn",
+                         lambda history, behavior, api_token, refusal_feedback=None: next(prompts))
+
+    conv, backtracks, refusals, n_turns, backtrack_attempts = rc.run_crescendo_conversation(
+        mock.Mock(), mock.Mock(), "phi-4-mini", "target behavior", "tok",
+        max_turns=1, max_backtracks=2,
+    )
+    assert conv == []  # attacker generation exhausted -- conversation ends early
+    assert len(backtrack_attempts) == 1
+    assert backtrack_attempts[0]["refused_prompt"] == "refused turn"
+    assert backtrack_attempts[0]["retry_prompt"] is None
 
 
 # ---------------------------------------------------------------------
@@ -151,6 +190,7 @@ def test_build_row_records_judge_failure_without_crashing():
     assert row["judge_failed"] == 1
     assert row["attack_success"] == 0
     assert row["judge_reasoning"] is None
+    assert row["backtrack_attempts"] == []  # not passed -- defaults to empty, not missing/None
 
 
 def test_build_row_records_a_real_verdict():
@@ -159,6 +199,14 @@ def test_build_row_records_a_real_verdict():
                          backtrack_count=0, refusal_count=0, n_turns=1, verdict=verdict)
     assert row["judge_failed"] == 0
     assert row["attack_success"] == 1
+
+
+def test_build_row_records_backtrack_attempts():
+    attempts = [{"turn": 2, "refused_prompt": "p", "refused_reply": "I cannot help.", "retry_prompt": "p2"}]
+    row = rc._build_row("phi-4-mini", 5, _BEHAVIOR, [{"role": "user", "content": "u"}],
+                         backtrack_count=1, refusal_count=1, n_turns=1, verdict=None,
+                         backtrack_attempts=attempts)
+    assert row["backtrack_attempts"] == attempts
 
 
 def test_summarize_excludes_judge_failed_rows_from_asr_denominator():
@@ -197,7 +245,7 @@ def stub_full_sweep(monkeypatch, tmp_path):
         rc, "run_crescendo_conversation",
         lambda model, tok, model_key, behavior, api_token, max_turns, **kw: (
             [{"role": "user", "content": "u"}, {"role": "assistant", "content": "a"}],
-            0, 0, 1,
+            0, 0, 1, [],
         ),
     )
     monkeypatch.setattr(
