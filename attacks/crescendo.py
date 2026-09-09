@@ -104,9 +104,9 @@ _VERDICT_RE = re.compile(r"verdict\s*:\s*(yes|no)", re.IGNORECASE)
 def sample_behaviors(pool: list, sample_size: int = SAMPLE_SIZE, seed: int = SEED) -> list:
     """
     Deterministic, seeded, stratified sample proportional to the pool's own
-    real source composition (JBB-Behaviors vs HarmBench) -- not a hardcoded
-    16:84 split, so this stays correct if config.BEHAVIOR_DATASETS'
-    expected_n ever changes. Same seeded-sampling philosophy as
+    real source composition (JBB-Behaviors vs HarmBench, real 100:400 ratio
+    -- see config.BEHAVIOR_DATASETS) -- not a hardcoded split, so this stays
+    correct if expected_n ever changes. Same seeded-sampling philosophy as
     attacks.poisonedrag.sample_target_questions.
     """
     rng = random.Random(f"{seed}-crescendo")

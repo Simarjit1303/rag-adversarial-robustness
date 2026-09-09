@@ -22,6 +22,33 @@ from config import BEHAVIOR_DATASETS, DATA_DIR
 _CACHE_PATH = DATA_DIR / "behavior_pool.jsonl"
 
 
+def _load_one_hf_config(hf_id: str, revision, hf_config, split: str, name: str):
+    """One load_dataset() call for one (hf_id, hf_config, split) combination
+    -- factored out of _load_one so a dataset spanning several configs
+    (HarmBench's real behavior set is standard+contextual+copyright, not
+    one config -- see config.BEHAVIOR_DATASETS' harmbench comment) can call
+    this once per config and concatenate, instead of duplicating the
+    load/error-handling logic per subset."""
+    load_kwargs = {"path": hf_id, "revision": revision}
+    if hf_config:
+        load_kwargs["name"] = hf_config
+    try:
+        return load_dataset(**load_kwargs, split=split, trust_remote_code=False)
+    except DatasetNotFoundError as e:
+        # walledai/HarmBench is gated -- confirmed live 2026-09-09, see
+        # config.BEHAVIOR_DATASETS' comment. A plain DatasetNotFoundError
+        # traceback here reads identically to "wrong repo id"; this makes
+        # the actual, actionable cause (access not yet granted or an
+        # HF_API_TOKEN not set/passed to datasets) explicit instead.
+        raise RuntimeError(
+            f"[behavior_pool] '{name}' ({hf_id}, config={hf_config!r}) failed to load -- "
+            f"if this is a gated dataset, request access at "
+            f"https://huggingface.co/datasets/{hf_id} and make sure "
+            f"HF_TOKEN/HF_API_TOKEN is set in the environment before retrying. "
+            f"Original error: {e}"
+        ) from e
+
+
 def _load_one(name: str) -> list:
     cfg = BEHAVIOR_DATASETS[name]
     if cfg["revision"] is None:
@@ -31,31 +58,26 @@ def _load_one(name: str) -> list:
             f"with scripts/fetch_corpus_revisions.py before the real "
             f"Crescendo sweep -- see config.BEHAVIOR_DATASETS."
         )
-    load_kwargs = {"path": cfg["hf_id"], "revision": cfg["revision"]}
-    if cfg.get("hf_config"):
-        load_kwargs["name"] = cfg["hf_config"]
-    try:
-        raw = load_dataset(**load_kwargs, split=cfg["split"], trust_remote_code=False)
-    except DatasetNotFoundError as e:
-        # walledai/HarmBench is gated -- confirmed live 2026-09-09, see
-        # config.BEHAVIOR_DATASETS' comment. A plain DatasetNotFoundError
-        # traceback here reads identically to "wrong repo id"; this makes
-        # the actual, actionable cause (access not yet granted or an
-        # HF_API_TOKEN not set/passed to datasets) explicit instead.
-        raise RuntimeError(
-            f"[behavior_pool] '{name}' ({cfg['hf_id']}) failed to load -- if this "
-            f"is a gated dataset, request access at "
-            f"https://huggingface.co/datasets/{cfg['hf_id']} and make sure "
-            f"HF_TOKEN/HF_API_TOKEN is set in the environment before retrying. "
-            f"Original error: {e}"
-        ) from e
+
+    # hf_config may be a single config name or a list of them -- HarmBench's
+    # real public behavior set (400: 200 standard + 100 contextual + 100
+    # copyright, confirmed live 2026-09-09) spans three configs on one
+    # dataset repo, not one. A plain string is normalized to a 1-item list
+    # so this loop covers both shapes uniformly.
+    hf_configs = cfg.get("hf_config")
+    if hf_configs is None or isinstance(hf_configs, str):
+        hf_configs = [hf_configs]
 
     column = cfg["behavior_column"]
-    behaviors = [
-        {"behavior": row[column].strip(), "source": name}
-        for row in raw
-        if row.get(column) and row[column].strip()
-    ]
+    behaviors = []
+    for hf_config in hf_configs:
+        raw = _load_one_hf_config(cfg["hf_id"], cfg["revision"], hf_config, cfg["split"], name)
+        behaviors.extend(
+            {"behavior": row[column].strip(), "source": name}
+            for row in raw
+            if row.get(column) and row[column].strip()
+        )
+
     if len(behaviors) != cfg["expected_n"]:
         print(
             f"[behavior_pool] WARNING: '{name}' loaded {len(behaviors)} behaviors, "

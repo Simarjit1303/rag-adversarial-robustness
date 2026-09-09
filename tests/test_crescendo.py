@@ -31,7 +31,7 @@ def _pool(n_jbb, n_harmbench):
 
 
 def test_sample_behaviors_is_deterministic_given_same_seed():
-    pool = _pool(100, 510)
+    pool = _pool(100, 400)
     a = sample_behaviors(pool, sample_size=100, seed=42)
     b = sample_behaviors(pool, sample_size=100, seed=42)
     assert a == b
@@ -39,13 +39,13 @@ def test_sample_behaviors_is_deterministic_given_same_seed():
 
 
 def test_sample_behaviors_is_stratified_proportionally_to_pool_composition():
-    pool = _pool(100, 510)  # real project ratio, ~16:84 at n=100
+    pool = _pool(100, 400)  # real project ratio (100 JBB-Behaviors, 400 HarmBench), 20:80 at n=100
     sampled = sample_behaviors(pool, sample_size=100, seed=42)
     n_jbb = sum(1 for b in sampled if b["source"] == "jbb_behaviors")
     n_hb = sum(1 for b in sampled if b["source"] == "harmbench")
     assert n_jbb + n_hb == 100
-    # 100/610 * 100 ~= 16.4 -> rounds to 16; not hardcoded, just the real ratio
-    assert n_jbb == round(100 * 100 / 610)
+    # 100/500 * 100 == 20 exactly; not hardcoded, just the real ratio
+    assert n_jbb == round(100 * 100 / 500)
     assert n_hb == 100 - n_jbb
 
 
@@ -55,7 +55,7 @@ def test_sample_behaviors_returns_everything_if_sample_size_exceeds_pool():
 
 
 def test_sample_behaviors_differs_with_a_different_seed():
-    pool = _pool(100, 510)
+    pool = _pool(100, 400)
     a = sample_behaviors(pool, sample_size=100, seed=42)
     b = sample_behaviors(pool, sample_size=100, seed=7)
     assert a != b

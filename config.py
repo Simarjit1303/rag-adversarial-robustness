@@ -178,32 +178,24 @@ BEHAVIOR_DATASETS = {
         "behavior_column": "Goal",
         "expected_n": 100,
     },
-    # NOT yet verified/pinned -- walledai/HarmBench is a GATED dataset (an
-    # authenticated HF_API_TOKEN's dataset_info() call succeeds, returning a
-    # real sha, but get_dataset_config_names()/load_dataset() both refuse
-    # with DatasetNotFoundError until a human clicks "Agree and access
-    # repository" on https://huggingface.co/datasets/walledai/HarmBench --
-    # same one-time human-prerequisite shape as MODELS' llama-3.1-8b gating
-    # above, confirmed live 2026-09-09, not assumed. hf_config="standard"/
-    # split="train"/behavior_column="prompt" below are UNVERIFIED GUESSES,
-    # kept only as the working assumption to re-check the moment access
-    # clears -- do not trust them for a real load until then.
-    #
-    # Documented fallback if walledai/HarmBench's access is ever revoked or
-    # delayed indefinitely (not switched to now -- see phase2_crescendo_task.md):
-    # AlignmentResearch/HarmBench, real, ungated, verified live (config
-    # "default", split "train", 200 rows, columns ['clf_label',
-    # 'instructions', 'content', 'answer_prompt', 'proxy_clf_label',
-    # 'gen_target', 'proxy_gen_target'] -- behavior text is content[0], a
-    # list-wrapped field, not a plain string column like jbb_behaviors'
-    # "Goal" -- would need a loader tweak, not a drop-in swap.
+    # Verified live 2026-09-09, access granted after a one-time "Agree and
+    # access repository" click (walledai/HarmBench is gated -- same
+    # human-prerequisite shape as MODELS' llama-3.1-8b gating above).
+    # hf_config is a LIST: HarmBench's real public behavior set spans three
+    # configs on this one repo, not one -- standard (200) + contextual (100)
+    # + copyright (100) = 400 real total, not the 510 first assumed before
+    # this was checked (that number was simply wrong; corrected here and
+    # everywhere it was cited -- see phase2_crescendo_task.md). All three
+    # configs share split="train" and a "prompt" column (contextual adds
+    # "context", copyright adds "tags" -- both ignored, only "prompt" is
+    # used); data/behavior_pool.py's loader concatenates all three.
     "harmbench": {
         "hf_id": "walledai/HarmBench",
-        "hf_config": "standard",
+        "hf_config": ["standard", "contextual", "copyright"],
         "split": "train",
-        "revision": None,
+        "revision": "fb6c2afd5a2a943d701d6db3efab87d077e81be5",
         "behavior_column": "prompt",
-        "expected_n": 510,
+        "expected_n": 400,
     },
 }
 
