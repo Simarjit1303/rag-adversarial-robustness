@@ -38,6 +38,7 @@ import random
 import re
 import sys
 import time
+from collections import deque
 
 import requests
 
@@ -107,13 +108,42 @@ REFUSAL_PHRASES = [
 _VERDICT_RE = re.compile(r"verdict\s*:\s*(yes|no)", re.IGNORECASE)
 
 # NIM's free-tier budget is ~40 req/min (see phase2_crescendo_task.md pre-
-# flight) -- 60/40 = 1.5s minimum spacing, +margin. Real smoke-test finding,
-# 2026-09-09: running 4 models back-to-back (multiple attacker+judge calls
-# per conversation) burst straight through this and every single call across
-# all 4 models came back 429. Paced here, not just reacted to after the
-# fact, so the sweep never bursts in the first place.
-NIM_MIN_INTERVAL_SECONDS = 1.6
-_last_nim_call_at = [0.0]  # single-element list: plain module global, mutated in place
+# flight). Real smoke-test finding, 2026-09-09 (round 2): a fixed 1.6s
+# min-spacing between consecutive calls wasn't enough -- llama-3.1-8b (run
+# first) got 3/3, qwen3-8b partial, phi-4-mini and ministral-3-8b (run
+# last) got 0/3 with every call 429ing immediately. Per-call spacing only
+# bounds the INSTANTANEOUS rate; it doesn't cap how many requests land in
+# any given 60s window across the WHOLE sweep, so cumulative volume from
+# earlier models had already spent NVIDIA's window before later models
+# even began. Replaced with a real rolling-window token bucket: a global
+# deque of the last NIM_RATE_LIMIT_WINDOW_SECONDS worth of call
+# timestamps, shared across every model and every call kind (attacker +
+# judge) in the whole sweep, not reset per model -- this is the PRIMARY
+# defense; _call_with_retry's exponential/Retry-After backoff (evaluation/
+# run_crescendo.py) stays as the secondary net for genuine transient
+# failures, not the first line against a rate limit that's predictable
+# from request volume alone.
+NIM_RATE_LIMIT_MAX_REQUESTS = 35  # kept a margin below NIM's ~40/min budget
+NIM_RATE_LIMIT_WINDOW_SECONDS = 60.0
+_nim_call_times = deque()  # module global: timestamps of recent real NIM calls
+
+
+def _wait_for_rate_limit_slot():
+    """Blocks (if needed) until firing another NIM call keeps the trailing
+    NIM_RATE_LIMIT_WINDOW_SECONDS window at or under
+    NIM_RATE_LIMIT_MAX_REQUESTS calls -- counted globally across the whole
+    sweep, every model and call kind combined."""
+    now = time.monotonic()
+    while _nim_call_times and now - _nim_call_times[0] > NIM_RATE_LIMIT_WINDOW_SECONDS:
+        _nim_call_times.popleft()
+    if len(_nim_call_times) >= NIM_RATE_LIMIT_MAX_REQUESTS:
+        wait = NIM_RATE_LIMIT_WINDOW_SECONDS - (now - _nim_call_times[0])
+        if wait > 0:
+            time.sleep(wait)
+        now = time.monotonic()
+        while _nim_call_times and now - _nim_call_times[0] > NIM_RATE_LIMIT_WINDOW_SECONDS:
+            _nim_call_times.popleft()
+    _nim_call_times.append(time.monotonic())
 
 
 class RateLimitError(Exception):
@@ -173,10 +203,7 @@ def _nim_chat(messages: list, api_token: str, model: str, max_tokens: int) -> st
     run_crescendo.py) can apply their own retry policy, matching
     generate_poison_texts's contract exactly.
     """
-    elapsed = time.monotonic() - _last_nim_call_at[0]
-    if elapsed < NIM_MIN_INTERVAL_SECONDS:
-        time.sleep(NIM_MIN_INTERVAL_SECONDS - elapsed)
-    _last_nim_call_at[0] = time.monotonic()
+    _wait_for_rate_limit_slot()
 
     resp = requests.post(
         NIM_URL,

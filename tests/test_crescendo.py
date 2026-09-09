@@ -222,23 +222,43 @@ def test_nim_chat_rate_limit_error_has_none_retry_after_without_header(monkeypat
     assert exc_info.value.retry_after is None
 
 
-def test_nim_chat_paces_calls_at_least_min_interval_apart(monkeypatch):
+def test_wait_for_rate_limit_slot_allows_calls_under_the_ceiling(monkeypatch):
     sleeps = []
     monkeypatch.setattr(crescendo.time, "sleep", sleeps.append)
-    monkeypatch.setattr(crescendo.requests, "post", lambda *a, **kw: _mock_response("hi"))
-
-    # _last_nim_call_at is module-level state shared across this file's
-    # tests -- reset it so this test's fake clock isn't compared against
-    # whatever real time.monotonic() value another test last left there.
-    crescendo._last_nim_call_at[0] = 0.0
-    # Simulate two calls 0.2s apart (real elapsed < NIM_MIN_INTERVAL_SECONDS)
-    clock = iter([100.0, 100.0, 100.2, 100.2])
+    crescendo._nim_call_times.clear()  # module-global deque, shared across tests
+    clock = iter(float(i) for i in range(100))  # 1s apart, well under any real window
     monkeypatch.setattr(crescendo.time, "monotonic", lambda: next(clock))
 
-    crescendo._nim_chat([{"role": "user", "content": "x"}], "tok", "m", max_tokens=10)
-    crescendo._nim_chat([{"role": "user", "content": "x"}], "tok", "m", max_tokens=10)
+    for _ in range(crescendo.NIM_RATE_LIMIT_MAX_REQUESTS - 1):
+        crescendo._wait_for_rate_limit_slot()
 
-    assert sleeps == [pytest.approx(crescendo.NIM_MIN_INTERVAL_SECONDS - 0.2)]
+    assert sleeps == []  # never hit the ceiling -- no proactive wait needed
+
+
+def test_wait_for_rate_limit_slot_blocks_once_ceiling_hit_within_window(monkeypatch):
+    # Real bug, 2026-09-09 (round 2): per-call spacing alone let cumulative
+    # volume across earlier models exhaust NVIDIA's window before later
+    # models began. This proves the limiter is GLOBAL and counts a rolling
+    # 60s window, not per-call spacing: MAX_REQUESTS calls fired back-to-back
+    # (t=0) must force the next one to wait for the window to clear, and the
+    # deque must still hold exactly MAX_REQUESTS+1 entries afterward (the
+    # oldest wasn't purged early -- 5s in is well inside the 60s window).
+    sleeps = []
+    monkeypatch.setattr(crescendo.time, "sleep", sleeps.append)
+    crescendo._nim_call_times.clear()
+    # MAX_REQUESTS calls all at t=0 (a true burst, e.g. from a prior model's
+    # run), then one more call arrives at t=5s.
+    times = [0.0] * (crescendo.NIM_RATE_LIMIT_MAX_REQUESTS * 2) + [5.0, 5.0, 5.0]
+    clock = iter(times)
+    monkeypatch.setattr(crescendo.time, "monotonic", lambda: next(clock))
+
+    for _ in range(crescendo.NIM_RATE_LIMIT_MAX_REQUESTS):
+        crescendo._wait_for_rate_limit_slot()
+    assert sleeps == []  # exactly at the ceiling, not over it -- no wait yet
+
+    crescendo._wait_for_rate_limit_slot()  # this one must block
+    assert sleeps == [pytest.approx(crescendo.NIM_RATE_LIMIT_WINDOW_SECONDS - 5.0)]
+    assert len(crescendo._nim_call_times) == crescendo.NIM_RATE_LIMIT_MAX_REQUESTS + 1
 
 
 # ---------------------------------------------------------------------
