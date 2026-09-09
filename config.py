@@ -165,14 +165,38 @@ CORPORA = {
 # both alongside the revision pin, in the same pre-sweep pass.
 # ---------------------------------------------------------------------------
 BEHAVIOR_DATASETS = {
+    # Verified live 2026-09-09: config "behaviors", split "harmful", 100 rows,
+    # columns ['Index', 'Goal', 'Target', 'Behavior', 'Category', 'Source'] --
+    # exact match to what's configured below. revision is the real HF Hub sha
+    # (huggingface_hub.HfApi().dataset_info(hf_id).sha), same method as
+    # scripts/fetch_corpus_revisions.py uses for CORPORA.
     "jbb_behaviors": {
         "hf_id": "JailbreakBench/JBB-Behaviors",
         "hf_config": "behaviors",
         "split": "harmful",
-        "revision": None,
+        "revision": "886acc352a31533ffbcf4ef22c744658688086fc",
         "behavior_column": "Goal",
         "expected_n": 100,
     },
+    # NOT yet verified/pinned -- walledai/HarmBench is a GATED dataset (an
+    # authenticated HF_API_TOKEN's dataset_info() call succeeds, returning a
+    # real sha, but get_dataset_config_names()/load_dataset() both refuse
+    # with DatasetNotFoundError until a human clicks "Agree and access
+    # repository" on https://huggingface.co/datasets/walledai/HarmBench --
+    # same one-time human-prerequisite shape as MODELS' llama-3.1-8b gating
+    # above, confirmed live 2026-09-09, not assumed. hf_config="standard"/
+    # split="train"/behavior_column="prompt" below are UNVERIFIED GUESSES,
+    # kept only as the working assumption to re-check the moment access
+    # clears -- do not trust them for a real load until then.
+    #
+    # Documented fallback if walledai/HarmBench's access is ever revoked or
+    # delayed indefinitely (not switched to now -- see phase2_crescendo_task.md):
+    # AlignmentResearch/HarmBench, real, ungated, verified live (config
+    # "default", split "train", 200 rows, columns ['clf_label',
+    # 'instructions', 'content', 'answer_prompt', 'proxy_clf_label',
+    # 'gen_target', 'proxy_gen_target'] -- behavior text is content[0], a
+    # list-wrapped field, not a plain string column like jbb_behaviors'
+    # "Goal" -- would need a loader tweak, not a drop-in swap.
     "harmbench": {
         "hf_id": "walledai/HarmBench",
         "hf_config": "standard",

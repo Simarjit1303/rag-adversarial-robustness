@@ -15,6 +15,7 @@ import os
 import tempfile
 
 from datasets import load_dataset
+from datasets.exceptions import DatasetNotFoundError
 
 from config import BEHAVIOR_DATASETS, DATA_DIR
 
@@ -33,7 +34,21 @@ def _load_one(name: str) -> list:
     load_kwargs = {"path": cfg["hf_id"], "revision": cfg["revision"]}
     if cfg.get("hf_config"):
         load_kwargs["name"] = cfg["hf_config"]
-    raw = load_dataset(**load_kwargs, split=cfg["split"], trust_remote_code=False)
+    try:
+        raw = load_dataset(**load_kwargs, split=cfg["split"], trust_remote_code=False)
+    except DatasetNotFoundError as e:
+        # walledai/HarmBench is gated -- confirmed live 2026-09-09, see
+        # config.BEHAVIOR_DATASETS' comment. A plain DatasetNotFoundError
+        # traceback here reads identically to "wrong repo id"; this makes
+        # the actual, actionable cause (access not yet granted or an
+        # HF_API_TOKEN not set/passed to datasets) explicit instead.
+        raise RuntimeError(
+            f"[behavior_pool] '{name}' ({cfg['hf_id']}) failed to load -- if this "
+            f"is a gated dataset, request access at "
+            f"https://huggingface.co/datasets/{cfg['hf_id']} and make sure "
+            f"HF_TOKEN/HF_API_TOKEN is set in the environment before retrying. "
+            f"Original error: {e}"
+        ) from e
 
     column = cfg["behavior_column"]
     behaviors = [
