@@ -130,6 +130,17 @@ def _call_with_retry(fn, *args, max_attempts: int = 3, label: str = "", error_si
     return None
 
 
+TARGET_MAX_NEW_TOKENS = 512  # real bug, 2026-09-10 (round 7): the project-wide baseline
+# default (256, shared by harness/vllm_engine.py's generate_vllm and the single-shot
+# attacks/poisonedrag.py, attacks/indirect_injection.py calls) was reused here too, but
+# Crescendo's target reply is answering an already-escalated turn-5 prompt with growing
+# conversation context, not a short baseline QA answer -- a real ministral-3-8b turn-5
+# reply was observed cut off mid-word ("often **prior") at exactly the 256-token ceiling.
+# Bumped for THIS call only, not the shared default: no context-length ceiling is at
+# risk (load_model has no max_length/truncation cap -- see harness/model_loader.py), so
+# this only spends a bit more local GPU time, never API cost.
+
+
 def _generate_target_reply(model, tokenizer, model_key: str, history: list, attacker_turn: str) -> str:
     """One local generation call: target's reply to the next attacker turn,
     given the full conversation so far (conversation-state threading)."""
@@ -141,7 +152,7 @@ def _generate_target_reply(model, tokenizer, model_key: str, history: list, atta
     prompt = build_multiturn_chat_prompt(model_key, tokenizer, messages)
     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
     with torch.no_grad():
-        output_ids = model.generate(**inputs, max_new_tokens=256, do_sample=False)
+        output_ids = model.generate(**inputs, max_new_tokens=TARGET_MAX_NEW_TOKENS, do_sample=False)
     return tokenizer.decode(
         output_ids[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True
     ).strip()
