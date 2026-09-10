@@ -29,7 +29,18 @@ the same OpenAI-compatible chat-completions envelope, so _nim_chat's
 request/response handling (retry-on-caller-side lives in
 evaluation/run_crescendo.py, mirroring attacks/poisonedrag.py's
 generate_poison_texts / _generate_poison_with_retry) needs no per-provider
-branching beyond the URL, API key, and model id in _LLM_PROVIDERS.
+branching beyond the URL, API key, model id, and request-body extras in
+_LLM_PROVIDERS.
+
+Round 6, 2026-09-10: the OpenRouter transport surfaced a reasoning-leak
+failure (same class as Kimi-K2/kimi-k3/Nemotron-3-Ultra, ruled out for NIM
+above) under harder adversarial content than the earlier lighter check --
+DeepSeek's reasoning trace was consuming the entire max_tokens budget,
+leaving `content` empty with finish_reason=length (real captured evidence:
+phase2_crescendo_smoketest7/sweep_stderr7.log). Fixed via OpenRouter's
+`reasoning.enabled=false` request param (see _LLM_PROVIDERS'
+openrouter.extra_params), confirmed against OpenRouter's own reasoning-
+tokens docs rather than assumed from NIM/Nemotron's convention.
 
 ATTACKER/TARGET ROLE ASYMMETRY -- read before interpreting any result this
 module produces. DeepSeek is expected to comply readily in the attacker
@@ -73,6 +84,20 @@ _LLM_PROVIDERS = {
         "url": "https://openrouter.ai/api/v1/chat/completions",
         "api_key_env": "OPENROUTER_API_KEY",
         "model": "deepseek/deepseek-v4-pro-0813",
+        # Round 6, 2026-09-10: real smoke-test evidence (phase2_crescendo_
+        # smoketest7/sweep_stderr7.log) showed every empty-content failure
+        # as finish_reason=length with reasoning_content_len=0 -- DeepSeek's
+        # internal reasoning trace was consuming the whole max_tokens budget
+        # before any content tokens, and (per OpenRouter's own reasoning-
+        # tokens docs, confirmed live) a mid-budget cutoff isn't returned in
+        # the reasoning/reasoning_content field either, so the diagnostic
+        # read 0 even though reasoning is what starved content. reasoning.
+        # exclude=true would still let the model reason (still consumes
+        # budget, just hides it); reasoning.enabled=false is the one that
+        # stops the reasoning generation itself, freeing max_tokens for
+        # content. NIM's transport doesn't get this (already confirmed
+        # clean -- see module docstring), so it stays OpenRouter-only.
+        "extra_params": {"reasoning": {"enabled": False}},
     },
 }
 LLM_PROVIDER = os.environ.get("CRESCENDO_LLM_PROVIDER", "openrouter")
@@ -302,7 +327,12 @@ def _nim_chat(messages: list, api_token: str, model: str, max_tokens: int, conte
     resp = requests.post(
         NIM_URL,
         headers={"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"},
-        json={"model": model, "messages": messages, "max_tokens": max_tokens},
+        json={
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            **_PROVIDER.get("extra_params", {}),
+        },
         timeout=180,
     )
     _log_rate_limit_event("response", context, wall_time=f"{time.time():.3f}", status=resp.status_code)
