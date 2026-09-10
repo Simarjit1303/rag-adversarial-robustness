@@ -145,8 +145,11 @@ def test_generate_attacker_turn_includes_refusal_feedback_when_backtracking(monk
 
 
 def test_generate_attacker_turn_raises_without_api_token(monkeypatch):
-    monkeypatch.delenv("NVIDIA_NIM_API_KEY", raising=False)
-    with pytest.raises(RuntimeError, match="No NVIDIA NIM API token"):
+    # Real default provider as of 2026-09-10 (round 5) is openrouter -- see
+    # attacks.crescendo.LLM_PROVIDER -- so its key (OPENROUTER_API_KEY), not
+    # NVIDIA_NIM_API_KEY, is what resolve_api_token checks by default.
+    monkeypatch.delenv(crescendo._PROVIDER["api_key_env"], raising=False)
+    with pytest.raises(RuntimeError, match=f"No {crescendo._PROVIDER['api_key_env']} set"):
         generate_attacker_turn([], "pick a lock", api_token=None)
 
 

@@ -40,6 +40,7 @@ from attacks.crescendo import (
     generate_attacker_turn,
     generate_judge_verdict,
     is_refusal,
+    resolve_api_token,
     sample_behaviors,
 )
 from config import MODELS, RESULTS_DIR, SEED
@@ -248,9 +249,7 @@ def run_crescendo_sweep(model_keys=None, max_turns: int = None, sample_n: int = 
             f"implemented -- see this module's docstring), got '{engine}'"
         )
 
-    api_token = api_token or os.environ.get("NVIDIA_NIM_API_KEY")
-    if not api_token:
-        raise RuntimeError("No NVIDIA_NIM_API_KEY set -- required for the attacker+judge model.")
+    api_token = resolve_api_token(api_token)
 
     pool = load_behavior_pool()
     behaviors = sample_behaviors(pool, sample_size=sample_n or 100, seed=SEED)

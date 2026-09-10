@@ -9,6 +9,7 @@ from unittest import mock
 
 import pytest
 
+import attacks.crescendo as crescendo
 import evaluation.run_crescendo as rc
 
 
@@ -314,7 +315,7 @@ def test_summarize_excludes_judge_failed_rows_from_asr_denominator():
 @pytest.fixture
 def stub_full_sweep(monkeypatch, tmp_path):
     monkeypatch.setattr(rc, "RESULTS_DIR", tmp_path)
-    monkeypatch.setenv("NVIDIA_NIM_API_KEY", "fake-token")
+    monkeypatch.setenv(crescendo._PROVIDER["api_key_env"], "fake-token")
     monkeypatch.setattr(rc, "load_behavior_pool", lambda: [
         {"behavior": "b0", "source": "jbb_behaviors"},
         {"behavior": "b1", "source": "harmbench"},
@@ -354,8 +355,8 @@ def test_non_hf_engine_raises(stub_full_sweep, monkeypatch):
 
 
 def test_missing_api_token_raises(stub_full_sweep, monkeypatch):
-    monkeypatch.delenv("NVIDIA_NIM_API_KEY", raising=False)
-    with pytest.raises(RuntimeError, match="NVIDIA_NIM_API_KEY"):
+    monkeypatch.delenv(crescendo._PROVIDER["api_key_env"], raising=False)
+    with pytest.raises(RuntimeError, match=crescendo._PROVIDER["api_key_env"]):
         rc.run_crescendo_sweep(model_keys=["phi-4-mini"], api_token=None)
 
 
