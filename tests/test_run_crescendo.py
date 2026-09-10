@@ -90,8 +90,12 @@ def test_call_with_retry_writes_exhausted_error_to_error_sink(monkeypatch):
     sink = {}
     result = rc._call_with_retry(always_fails, max_attempts=3, label="phi-4-mini attacker turn 1 attempt 1", error_sink=sink)
     assert result is None
+    # (after 3 attempts) makes the real inner retry count visible -- the
+    # label alone says "attempt 1" (the OUTER backtrack-attempt index),
+    # which read as if only one attempt was ever made even though this
+    # function's own 3-retry loop had genuinely exhausted itself.
     assert sink["error"] == (
-        "phi-4-mini attacker turn 1 attempt 1: RateLimitError: "
+        "phi-4-mini attacker turn 1 attempt 1 (after 3 attempts): RateLimitError: "
         "NIM rate limit hit (429) -- Retry-After='45'"
     )
 
@@ -233,9 +237,11 @@ def test_conversation_surfaces_real_exhausted_attacker_error(monkeypatch, stub_c
     # "attempt 1" here is the outer backtrack-attempt label
     # (run_crescendo_conversation's own turn/backtrack counter) -- it fails
     # on the very first one, before any backtrack, so it never advances.
-    # _call_with_retry's inner 3 retries are folded into the single label.
+    # "(after 3 attempts)" is the real _call_with_retry inner retry count,
+    # made explicit so the label's "attempt 1" can't be misread as "only
+    # tried once" -- see that function's error_sink comment.
     assert error == (
-        "phi-4-mini attacker turn 1 attempt 1: RateLimitError: "
+        "phi-4-mini attacker turn 1 attempt 1 (after 3 attempts): RateLimitError: "
         "NIM rate limit hit (429) -- Retry-After='60'"
     )
 

@@ -119,7 +119,13 @@ def _call_with_retry(fn, *args, max_attempts: int = 3, label: str = "", error_si
     print(f"[crescendo] SKIPPING {label} after {max_attempts} failed attempts "
           f"(last error: {type(last_exc).__name__}: {last_exc})", file=sys.stderr)
     if error_sink is not None:
-        error_sink["error"] = f"{label}: {type(last_exc).__name__}: {last_exc}"
+        # label is the OUTER (backtrack-attempt) label from run_crescendo_conversation
+        # and reads "attempt 1" whenever the very first outer attempt is the one that
+        # exhausts retries -- it doesn't by itself say max_attempts inner retries ran.
+        # Real bug, 2026-09-10: every phi-4-mini/ministral-3-8b error read "attempt 1"
+        # even though this function had genuinely retried 3 times, reading as if only
+        # one attempt was ever made. Append the real inner retry count explicitly.
+        error_sink["error"] = f"{label} (after {max_attempts} attempts): {type(last_exc).__name__}: {last_exc}"
     return None
 
 
