@@ -185,7 +185,7 @@ def run_crescendo_conversation(model, tokenizer, model_key: str, target_behavior
                 generate_attacker_turn, history, target_behavior,
                 api_token=api_token, refusal_feedback=refusal_feedback,
                 label=f"{model_key} attacker turn {turn + 1} attempt {attempt + 1}",
-                error_sink=error_sink,
+                error_sink=error_sink, context=model_key,
             )
             if pending_backtrack is not None:
                 pending_backtrack["retry_prompt"] = attacker_turn
@@ -264,8 +264,24 @@ def run_crescendo_sweep(model_keys=None, max_turns: int = None, sample_n: int = 
     else:
         print("[crescendo] WARNING: CUDA not available -- the sweep will run on CPU.")
 
+    # Crude, fast diagnostic -- NOT the real fix -- per user's explicit ask
+    # 2026-09-10: a third consecutive real sweep hit 429 on all 9 attempts
+    # (3 behaviors x 3 retries) for the two tail models even with genuine
+    # backoff sleeps running, which points at the limiter's per-model
+    # reset/carryover accounting rather than the per-call pacing math.
+    # A flat sleep BEFORE loading each model after the first, independent of
+    # _wait_for_rate_limit_slot's own logic entirely, isolates whether real
+    # elapsed wall-clock time between model switches alone would have fixed
+    # it. 0 (off) unless set -- this must never silently change default
+    # sweep behavior.
+    model_switch_sleep = float(os.environ.get("CRESCENDO_MODEL_SWITCH_SLEEP_SECONDS", "0"))
+
     summary_rows = []
-    for model_key in model_keys:
+    for i, model_key in enumerate(model_keys):
+        if i > 0 and model_switch_sleep > 0:
+            print(f"[crescendo] CRESCENDO_MODEL_SWITCH_SLEEP_SECONDS diagnostic: "
+                  f"sleeping {model_switch_sleep}s before loading {model_key}")
+            time.sleep(model_switch_sleep)
         print(f"\n=== Loading {model_key} ===")
         try:
             model, tokenizer = load_model(model_key)
@@ -286,7 +302,7 @@ def run_crescendo_sweep(model_keys=None, max_turns: int = None, sample_n: int = 
                 verdict = _call_with_retry(
                     generate_judge_verdict, conversation, b["behavior"],
                     api_token=api_token, label=f"{model_key} judge for {b['behavior']!r}",
-                    error_sink=judge_error_sink,
+                    error_sink=judge_error_sink, context=model_key,
                 ) if conversation else None
 
                 # conv_error takes precedence -- it explains WHY conversation

@@ -118,7 +118,7 @@ def stub_conversation(monkeypatch):
 
 def test_conversation_completes_max_turns_with_no_refusals(monkeypatch, stub_conversation):
     monkeypatch.setattr(rc, "generate_attacker_turn",
-                         lambda history, behavior, api_token, refusal_feedback=None: "next turn")
+                         lambda history, behavior, api_token, refusal_feedback=None, **kw: "next turn")
     conv, backtracks, refusals, n_turns, backtrack_attempts, error = rc.run_crescendo_conversation(
         mock.Mock(), mock.Mock(), "phi-4-mini", "target behavior", "tok", max_turns=5,
     )
@@ -135,7 +135,7 @@ def test_conversation_backtracks_on_refusal_then_recovers(monkeypatch):
     monkeypatch.setattr(rc, "_generate_target_reply", lambda *a, **kw: next(replies))
     prompts = iter(["refused turn", "retried turn"])
     monkeypatch.setattr(rc, "generate_attacker_turn",
-                         lambda history, behavior, api_token, refusal_feedback=None: next(prompts))
+                         lambda history, behavior, api_token, refusal_feedback=None, **kw: next(prompts))
 
     conv, backtracks, refusals, n_turns, backtrack_attempts, error = rc.run_crescendo_conversation(
         mock.Mock(), mock.Mock(), "phi-4-mini", "target behavior", "tok", max_turns=1,
@@ -160,7 +160,7 @@ def test_conversation_backtracks_on_refusal_then_recovers(monkeypatch):
 def test_conversation_accepts_refusal_after_exhausting_backtrack_cap(monkeypatch):
     monkeypatch.setattr(rc, "_generate_target_reply", lambda *a, **kw: "I cannot help with that.")
     monkeypatch.setattr(rc, "generate_attacker_turn",
-                         lambda history, behavior, api_token, refusal_feedback=None: "next turn")
+                         lambda history, behavior, api_token, refusal_feedback=None, **kw: "next turn")
 
     conv, backtracks, refusals, n_turns, backtrack_attempts, error = rc.run_crescendo_conversation(
         mock.Mock(), mock.Mock(), "phi-4-mini", "target behavior", "tok",
@@ -181,7 +181,7 @@ def test_conversation_accepts_refusal_after_exhausting_backtrack_cap(monkeypatch
 
 def test_conversation_ends_early_when_attacker_generation_exhausts_retries(monkeypatch, stub_conversation):
     monkeypatch.setattr(rc, "generate_attacker_turn",
-                         lambda history, behavior, api_token, refusal_feedback=None: None)
+                         lambda history, behavior, api_token, refusal_feedback=None, **kw: None)
     conv, backtracks, refusals, n_turns, backtrack_attempts, error = rc.run_crescendo_conversation(
         mock.Mock(), mock.Mock(), "phi-4-mini", "target behavior", "tok", max_turns=5,
     )
@@ -205,7 +205,7 @@ def test_conversation_backtrack_attempt_retry_prompt_is_none_when_retry_generati
     monkeypatch.setattr(rc, "_generate_target_reply", lambda *a, **kw: "I cannot help with that.")
     prompts = iter(["refused turn", None])
     monkeypatch.setattr(rc, "generate_attacker_turn",
-                         lambda history, behavior, api_token, refusal_feedback=None: next(prompts))
+                         lambda history, behavior, api_token, refusal_feedback=None, **kw: next(prompts))
 
     conv, backtracks, refusals, n_turns, backtrack_attempts, error = rc.run_crescendo_conversation(
         mock.Mock(), mock.Mock(), "phi-4-mini", "target behavior", "tok",
@@ -225,7 +225,7 @@ def test_conversation_surfaces_real_exhausted_attacker_error(monkeypatch, stub_c
     # conversation, not just a bare n_turns_completed=0.
     monkeypatch.setattr(rc.time, "sleep", lambda s: None)
 
-    def always_raises(history, behavior, api_token, refusal_feedback=None):
+    def always_raises(history, behavior, api_token, refusal_feedback=None, **kw):
         raise rc.RateLimitError("NIM rate limit hit (429) -- Retry-After='60'", retry_after=60.0)
 
     monkeypatch.setattr(rc, "generate_attacker_turn", always_raises)
@@ -329,7 +329,7 @@ def stub_full_sweep(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         rc, "generate_judge_verdict",
-        lambda conversation, behavior, api_token: {"success": 0, "reasoning": "VERDICT: NO", "raw": "VERDICT: NO"},
+        lambda conversation, behavior, api_token, **kw: {"success": 0, "reasoning": "VERDICT: NO", "raw": "VERDICT: NO"},
     )
 
     calls = []
@@ -369,6 +369,29 @@ def test_sweep_loads_each_model_once_and_writes_a_summary_per_model(stub_full_sw
     summary_files = list(tmp_path.glob("crescendo_summary_*.csv"))
     assert len(raw_files) == 2
     assert len(summary_files) == 2
+
+
+def test_model_switch_sleep_diagnostic_off_by_default(stub_full_sweep, monkeypatch):
+    # Crude parallel diagnostic, 2026-09-10 (round 3): must default to 0/off
+    # so it never silently changes real sweep behavior -- only the explicit
+    # env var below should trigger it.
+    sleeps = []
+    monkeypatch.setattr(rc.time, "sleep", sleeps.append)
+    rc.run_crescendo_sweep(model_keys=["phi-4-mini", "qwen3-8b"], max_turns=5)
+    assert sleeps == []
+
+
+def test_model_switch_sleep_diagnostic_sleeps_between_models_when_set(stub_full_sweep, monkeypatch):
+    # User's explicit ask 2026-09-10 (round 3): a flat sleep BEFORE loading
+    # each model after the first, independent of the rate limiter's own
+    # logic, to test whether real elapsed wall-clock time between model
+    # switches alone would have prevented the phi-4-mini/ministral-3-8b
+    # total failures. Never before the FIRST model -- there's no "switch" yet.
+    monkeypatch.setenv("CRESCENDO_MODEL_SWITCH_SLEEP_SECONDS", "75")
+    sleeps = []
+    monkeypatch.setattr(rc.time, "sleep", sleeps.append)
+    rc.run_crescendo_sweep(model_keys=["phi-4-mini", "qwen3-8b"], max_turns=5)
+    assert sleeps == [75.0]  # exactly one sleep -- before the 2nd model only
 
 
 def test_sweep_writes_conversation_error_into_the_raw_row(stub_full_sweep, monkeypatch, tmp_path):

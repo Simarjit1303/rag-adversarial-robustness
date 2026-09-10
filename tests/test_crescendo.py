@@ -262,6 +262,43 @@ def test_wait_for_rate_limit_slot_blocks_once_ceiling_hit_within_window(monkeypa
 
 
 # ---------------------------------------------------------------------
+# Rate-limiter timeline logging -- added 2026-09-10 (round 3): a third
+# consecutive real sweep showed phi-4-mini/ministral-3-8b hitting 429 on
+# every attempt despite real backoff time elapsing, with no way to see the
+# limiter's own internal state at the moment it decided to proceed or
+# block. Grep "[crescendo][ratelimit]" in a real sweep's stderr for the
+# actual timeline this produces.
+# ---------------------------------------------------------------------
+
+def test_wait_for_rate_limit_slot_logs_check_and_proceed_with_context(monkeypatch, capsys):
+    crescendo._nim_call_times.clear()
+    clock = iter([10.0, 10.0])
+    monkeypatch.setattr(crescendo.time, "monotonic", lambda: next(clock))
+    crescendo._wait_for_rate_limit_slot(context="phi-4-mini")
+    err = capsys.readouterr().err
+    assert "[crescendo][ratelimit] check context='phi-4-mini'" in err
+    assert "[crescendo][ratelimit] proceed context='phi-4-mini'" in err
+    assert "queue_len=" in err
+
+
+def test_nim_chat_logs_response_status_on_success(monkeypatch, capsys):
+    monkeypatch.setattr(crescendo.requests, "post", lambda *a, **kw: _mock_response("ok"))
+    crescendo._nim_chat([{"role": "user", "content": "x"}], "tok", "m", max_tokens=10, context="qwen3-8b")
+    err = capsys.readouterr().err
+    assert "[crescendo][ratelimit] response context='qwen3-8b' " in err
+    assert "status=200" in err
+
+
+def test_nim_chat_logs_response_status_on_429(monkeypatch, capsys):
+    monkeypatch.setattr(crescendo.requests, "post", lambda *a, **kw: _mock_429("30"))
+    with pytest.raises(RateLimitError):
+        crescendo._nim_chat([{"role": "user", "content": "x"}], "tok", "m", max_tokens=10, context="ministral-3-8b")
+    err = capsys.readouterr().err
+    assert "[crescendo][ratelimit] response context='ministral-3-8b' " in err
+    assert "status=429" in err
+
+
+# ---------------------------------------------------------------------
 # Real captured judge failures, smoke test 2026-09-09 (LSD-25/nitrogen-
 # stream behavior, phi-4-mini target). Three retry attempts, all real NIM
 # responses -- not synthetic. Each string is exactly what

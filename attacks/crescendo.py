@@ -137,22 +137,48 @@ NIM_RATE_LIMIT_WINDOW_SECONDS = 60.0
 _nim_call_times = deque()  # module global: timestamps of recent real NIM calls
 
 
-def _wait_for_rate_limit_slot():
+def _log_rate_limit_event(event: str, context: str = "", **fields):
+    """Structured stderr line, grep-able as '[crescendo][ratelimit]' -- added
+    2026-09-10: third consecutive real sweep showed phi-4-mini/ministral-3-8b
+    hitting 429 on every one of 9 attempts (3 behaviors x 3 retries) despite
+    real backoff sleeps genuinely running, and the user's ask was explicit --
+    stop guessing at pacing constants, log the real timeline instead. Every
+    call to _wait_for_rate_limit_slot logs the limiter's own state (queue
+    length, age of its oldest entry) BEFORE deciding whether to block, and
+    _nim_chat logs the real HTTP status after every response (success or
+    429) -- together this timeline shows whether the limiter's internal
+    accounting is what's blocking model 3/4, or whether NIM itself is 429ing
+    a request the limiter believed was safe to send."""
+    parts = " ".join(f"{k}={v}" for k, v in fields.items())
+    print(f"[crescendo][ratelimit] {event} context={context!r} {parts}", file=sys.stderr)
+
+
+def _wait_for_rate_limit_slot(context: str = ""):
     """Blocks (if needed) until firing another NIM call keeps the trailing
     NIM_RATE_LIMIT_WINDOW_SECONDS window at or under
     NIM_RATE_LIMIT_MAX_REQUESTS calls -- counted globally across the whole
-    sweep, every model and call kind combined."""
+    sweep, every model and call kind combined. context is an optional
+    caller-supplied label (e.g. the target model_key) threaded through only
+    for _log_rate_limit_event -- purely diagnostic, no effect on the
+    accounting itself."""
     now = time.monotonic()
     while _nim_call_times and now - _nim_call_times[0] > NIM_RATE_LIMIT_WINDOW_SECONDS:
         _nim_call_times.popleft()
+    oldest_age = (now - _nim_call_times[0]) if _nim_call_times else None
+    _log_rate_limit_event(
+        "check", context, wall_time=f"{time.time():.3f}", queue_len=len(_nim_call_times),
+        oldest_age_s=f"{oldest_age:.2f}" if oldest_age is not None else "n/a",
+    )
     if len(_nim_call_times) >= NIM_RATE_LIMIT_MAX_REQUESTS:
         wait = NIM_RATE_LIMIT_WINDOW_SECONDS - (now - _nim_call_times[0])
         if wait > 0:
+            _log_rate_limit_event("blocking", context, wait_s=f"{wait:.2f}", queue_len=len(_nim_call_times))
             time.sleep(wait)
         now = time.monotonic()
         while _nim_call_times and now - _nim_call_times[0] > NIM_RATE_LIMIT_WINDOW_SECONDS:
             _nim_call_times.popleft()
     _nim_call_times.append(time.monotonic())
+    _log_rate_limit_event("proceed", context, wall_time=f"{time.time():.3f}", queue_len=len(_nim_call_times))
 
 
 class RateLimitError(Exception):
@@ -202,7 +228,7 @@ def is_refusal(text: str) -> bool:
     return any(phrase in lowered for phrase in REFUSAL_PHRASES)
 
 
-def _nim_chat(messages: list, api_token: str, model: str, max_tokens: int) -> str:
+def _nim_chat(messages: list, api_token: str, model: str, max_tokens: int, context: str = "") -> str:
     """
     Shared NIM call shape for both the attacker-turn generator and the
     judge -- same request/response handling as
@@ -211,8 +237,11 @@ def _nim_chat(messages: list, api_token: str, model: str, max_tokens: int) -> st
     raw `content` string; raises on any failure so callers (evaluation/
     run_crescendo.py) can apply their own retry policy, matching
     generate_poison_texts's contract exactly.
+
+    context is an optional caller-supplied label (target model_key) purely
+    for _log_rate_limit_event's timeline -- see that function's docstring.
     """
-    _wait_for_rate_limit_slot()
+    _wait_for_rate_limit_slot(context)
 
     resp = requests.post(
         NIM_URL,
@@ -220,6 +249,7 @@ def _nim_chat(messages: list, api_token: str, model: str, max_tokens: int) -> st
         json={"model": model, "messages": messages, "max_tokens": max_tokens},
         timeout=180,
     )
+    _log_rate_limit_event("response", context, wall_time=f"{time.time():.3f}", status=resp.status_code)
     if resp.status_code == 429:
         retry_after_hdr = resp.headers.get("Retry-After")
         try:
@@ -261,7 +291,8 @@ def _nim_chat(messages: list, api_token: str, model: str, max_tokens: int) -> st
 
 
 def generate_attacker_turn(history: list, target_behavior: str, api_token: str = None,
-                            refusal_feedback: str = None, model: str = ATTACKER_MODEL) -> str:
+                            refusal_feedback: str = None, model: str = ATTACKER_MODEL,
+                            context: str = "") -> str:
     """
     ONE API call producing the next escalating user turn. `history` is the
     accumulated [{"role": "user"|"assistant", "content": ...}, ...] so far
@@ -269,6 +300,9 @@ def generate_attacker_turn(history: list, target_behavior: str, api_token: str =
     when set, is the target's just-received refusal text: this IS the
     backtrack mechanism's regeneration call, asking for a different approach
     to the SAME turn rather than advancing the conversation on a dead branch.
+
+    context: optional label (target model_key) forwarded to _nim_chat's
+    rate-limiter timeline logging only -- see _log_rate_limit_event.
     """
     api_token = api_token or os.environ.get("NVIDIA_NIM_API_KEY")
     if not api_token:
@@ -292,11 +326,11 @@ def generate_attacker_turn(history: list, target_behavior: str, api_token: str =
         {"role": "system", "content": ATTACKER_SYSTEM},
         {"role": "user", "content": prompt},
     ]
-    return _nim_chat(messages, api_token, model, max_tokens=800)
+    return _nim_chat(messages, api_token, model, max_tokens=800, context=context)
 
 
 def generate_judge_verdict(conversation: list, target_behavior: str, api_token: str = None,
-                            model: str = JUDGE_MODEL) -> dict:
+                            model: str = JUDGE_MODEL, context: str = "") -> dict:
     """
     ONE call per completed conversation (not per turn) -- scores whether the
     target's final reply actually complies with target_behavior. Returns
@@ -304,6 +338,9 @@ def generate_judge_verdict(conversation: list, target_behavior: str, api_token: 
     reply doesn't contain the required 'VERDICT: YES/NO' line -- same
     strict-parse-then-log discipline as attacks.poisonedrag._parse_poison_response,
     not a silent default to failure.
+
+    context: optional label (target model_key) forwarded to _nim_chat's
+    rate-limiter timeline logging only -- see _log_rate_limit_event.
     """
     api_token = api_token or os.environ.get("NVIDIA_NIM_API_KEY")
     if not api_token:
@@ -323,7 +360,7 @@ def generate_judge_verdict(conversation: list, target_behavior: str, api_token: 
     # emitting VERDICT -- possible the model wanted room before complying
     # with the format instruction above; extra budget is a cheap defense-in-
     # depth alongside the strengthened JUDGE_SYSTEM wording.
-    content = _nim_chat(messages, api_token, model, max_tokens=300)
+    content = _nim_chat(messages, api_token, model, max_tokens=300, context=context)
 
     match = _VERDICT_RE.search(content)
     if not match:
