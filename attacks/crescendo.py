@@ -160,7 +160,21 @@ def _wait_for_rate_limit_slot(context: str = ""):
     sweep, every model and call kind combined. context is an optional
     caller-supplied label (e.g. the target model_key) threaded through only
     for _log_rate_limit_event -- purely diagnostic, no effect on the
-    accounting itself."""
+    accounting itself.
+
+    Only CHECKS and blocks -- does not record this call. The caller must
+    call _record_nim_call(context) itself, and only after a genuinely
+    successful (2xx) response. Real bug, 2026-09-10 (round 4), found via the
+    ratelimit timeline log: this function used to append a timestamp here
+    unconditionally, before the request was even sent -- so a NIM-rejected
+    429 (which consumed none of the account's real quota) inflated this
+    client's own perceived usage exactly like a real call. Once
+    phi-4-mini/ministral-3-8b started 429ing, every retry added another
+    phantom entry, pushing queue_len toward the 35 ceiling and making the
+    limiter block on its own self-inflicted count -- a spiral that never
+    recovers regardless of real wall-clock time, since the "budget" being
+    exhausted was never real NVIDIA usage in the first place.
+    """
     now = time.monotonic()
     while _nim_call_times and now - _nim_call_times[0] > NIM_RATE_LIMIT_WINDOW_SECONDS:
         _nim_call_times.popleft()
@@ -177,8 +191,16 @@ def _wait_for_rate_limit_slot(context: str = ""):
         now = time.monotonic()
         while _nim_call_times and now - _nim_call_times[0] > NIM_RATE_LIMIT_WINDOW_SECONDS:
             _nim_call_times.popleft()
-    _nim_call_times.append(time.monotonic())
     _log_rate_limit_event("proceed", context, wall_time=f"{time.time():.3f}", queue_len=len(_nim_call_times))
+
+
+def _record_nim_call(context: str = ""):
+    """Appends this call's timestamp to the rate-limit window. Call ONLY
+    after a genuinely successful (2xx) NIM response -- see
+    _wait_for_rate_limit_slot's docstring for why a 429 must never reach
+    here."""
+    _nim_call_times.append(time.monotonic())
+    _log_rate_limit_event("recorded", context, queue_len=len(_nim_call_times))
 
 
 class RateLimitError(Exception):
@@ -260,6 +282,10 @@ def _nim_chat(messages: list, api_token: str, model: str, max_tokens: int, conte
             f"NIM rate limit hit (429) -- Retry-After={retry_after_hdr!r}",
             retry_after=retry_after,
         )
+    # Only a genuinely successful (2xx) response counts against the rate
+    # limiter's own budget -- see _wait_for_rate_limit_slot's docstring.
+    if 200 <= resp.status_code < 300:
+        _record_nim_call(context)
     resp.raise_for_status()
 
     try:

@@ -226,11 +226,12 @@ def test_wait_for_rate_limit_slot_allows_calls_under_the_ceiling(monkeypatch):
     sleeps = []
     monkeypatch.setattr(crescendo.time, "sleep", sleeps.append)
     crescendo._nim_call_times.clear()  # module-global deque, shared across tests
-    clock = iter(float(i) for i in range(100))  # 1s apart, well under any real window
+    clock = iter(float(i) for i in range(200))  # 1s apart, well under any real window
     monkeypatch.setattr(crescendo.time, "monotonic", lambda: next(clock))
 
     for _ in range(crescendo.NIM_RATE_LIMIT_MAX_REQUESTS - 1):
         crescendo._wait_for_rate_limit_slot()
+        crescendo._record_nim_call()  # simulates the real call succeeding
 
     assert sleeps == []  # never hit the ceiling -- no proactive wait needed
 
@@ -254,11 +255,39 @@ def test_wait_for_rate_limit_slot_blocks_once_ceiling_hit_within_window(monkeypa
 
     for _ in range(crescendo.NIM_RATE_LIMIT_MAX_REQUESTS):
         crescendo._wait_for_rate_limit_slot()
+        crescendo._record_nim_call()  # simulates the real call succeeding
     assert sleeps == []  # exactly at the ceiling, not over it -- no wait yet
 
     crescendo._wait_for_rate_limit_slot()  # this one must block
     assert sleeps == [pytest.approx(crescendo.NIM_RATE_LIMIT_WINDOW_SECONDS - 5.0)]
+    crescendo._record_nim_call()
     assert len(crescendo._nim_call_times) == crescendo.NIM_RATE_LIMIT_MAX_REQUESTS + 1
+
+
+# ---------------------------------------------------------------------
+# Real bug, 2026-09-10 (round 4): a third consecutive real sweep showed
+# phi-4-mini/ministral-3-8b hitting 429 on every attempt, zero recovery
+# regardless of real wall-clock time. The ratelimit timeline log (above)
+# showed why -- _wait_for_rate_limit_slot used to append a timestamp
+# UNCONDITIONALLY, before the request was even sent, so a run of NIM-
+# rejected 429s (which consumed none of the account's real quota) inflated
+# the client's own perceived usage, self-reinforcing toward the 35 ceiling.
+# Fix: only a genuinely successful (2xx) response is ever recorded.
+# ---------------------------------------------------------------------
+
+def test_nim_chat_429_does_not_add_to_rate_limit_queue(monkeypatch):
+    crescendo._nim_call_times.clear()
+    monkeypatch.setattr(crescendo.requests, "post", lambda *a, **kw: _mock_429("30"))
+    with pytest.raises(RateLimitError):
+        crescendo._nim_chat([{"role": "user", "content": "x"}], "tok", "m", max_tokens=10)
+    assert len(crescendo._nim_call_times) == 0
+
+
+def test_nim_chat_success_adds_to_rate_limit_queue(monkeypatch):
+    crescendo._nim_call_times.clear()
+    monkeypatch.setattr(crescendo.requests, "post", lambda *a, **kw: _mock_response("ok"))
+    crescendo._nim_chat([{"role": "user", "content": "x"}], "tok", "m", max_tokens=10)
+    assert len(crescendo._nim_call_times) == 1
 
 
 # ---------------------------------------------------------------------
