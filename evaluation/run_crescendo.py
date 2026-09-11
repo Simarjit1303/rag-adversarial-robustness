@@ -302,7 +302,17 @@ def run_crescendo_sweep(model_keys=None, max_turns: int = None, sample_n: int = 
         raw_path, summary_path = crescendo_result_file_paths(RESULTS_DIR, model_key, max_turns, "hf")
         rows = []
         start = time.time()
-        with _atomic_open(raw_path) as raw_f:
+        # Per-behavior checkpointing, NOT _atomic_open: _atomic_open buffers
+        # the whole model's sweep in a temp file and only os.replace()'s it
+        # into place when the `with` block exits normally -- an interruption
+        # (crash, OOM, pod terminated mid-model) at behavior N loses ALL N
+        # completed rows, not just the tail, because raw_path never comes
+        # into existence until the model finishes every behavior. Writing
+        # directly to raw_path and fsyncing after each row trades that
+        # all-or-nothing atomicity for the opposite: raw_path grows visibly
+        # on disk as the sweep proceeds, so a future interruption only costs
+        # behaviors not yet completed, not the whole model.
+        with open(raw_path, "w", encoding="utf-8") as raw_f:
             for i, b in enumerate(behaviors):
                 conversation, backtrack_count, refusal_count, n_turns, backtrack_attempts, conv_error = run_crescendo_conversation(
                     model, tokenizer, model_key, b["behavior"], api_token, max_turns
@@ -324,6 +334,8 @@ def run_crescendo_sweep(model_keys=None, max_turns: int = None, sample_n: int = 
                                   refusal_count, n_turns, verdict, backtrack_attempts, error)
                 rows.append(row)
                 raw_f.write(json.dumps(row, ensure_ascii=False) + "\n")
+                raw_f.flush()
+                os.fsync(raw_f.fileno())
 
                 if (i + 1) % 10 == 0:
                     print(f"  {i + 1}/{len(behaviors)} done ({time.time() - start:.0f}s elapsed)")
