@@ -285,3 +285,73 @@ def test_sweep_loads_each_model_once_and_writes_a_summary_per_cell(stub_full_swe
     summary_files = list(tmp_path.glob("poison_summary_*.csv"))
     assert len(raw_files) == 4
     assert len(summary_files) == 4
+
+
+# ---------------------------------------------------------------------
+# Phase 3 defense wiring
+# ---------------------------------------------------------------------
+
+def test_defended_top_k_locks_spotlighting_to_2():
+    import config
+    assert rp._defended_top_k("spotlighting") == rp.SPOTLIGHTING_TOP_K == 2
+    assert rp._defended_top_k("instruction_detection") == config.TOP_K
+    assert rp._defended_top_k("none") == config.TOP_K
+
+
+def test_poisoned_context_cache_path_is_defense_namespaced():
+    undefended = rp._poisoned_context_cache_path("hotpot_qa", "adv5")
+    defended = rp._poisoned_context_cache_path("hotpot_qa", "adv5", defense="spotlighting")
+    assert undefended != defended
+    assert defended.name == "poisoned_contexts_hotpot_qa_adv5_defense-spotlighting.json"
+
+
+def test_render_defended_poisoned_context_instruction_detection_drops_flagged_poison_entry(monkeypatch):
+    # A mix of a real corpus record and a poison entry (string doc_id
+    # sentinel, per attacks.poisoned_retrieval.retrieve_with_poison) -- the
+    # defense must catch the poison entry too, not just real records.
+    retrieved = [({"id": 0}, 0.9, 0), ("a poisoned passage", 0.8, "poison::0")]
+
+    def fake_detect_injection(text):
+        from defenses.instruction_detection import DetectionResult
+        flagged = "poison" in text
+        return DetectionResult(flagged=flagged, score=0.9 if flagged else 0.1,
+                                label="INJECTION" if flagged else "SAFE")
+
+    monkeypatch.setattr(rp, "detect_injection", fake_detect_injection)
+    monkeypatch.setattr("data.normalize.extract_passage_text", lambda corpus, doc: "clean corpus text")
+
+    context = rp._render_defended_poisoned_context(retrieved, "hotpot_qa", "instruction_detection")
+    assert "clean corpus text" in context
+    assert "poisoned passage" not in context
+
+
+def test_render_defended_poisoned_context_spotlighting_encodes_both_entry_types(monkeypatch):
+    retrieved = [({"id": 0}, 0.9, 0), ("a poisoned passage", 0.8, "poison::0")]
+    monkeypatch.setattr("data.normalize.extract_passage_text", lambda corpus, doc: "clean corpus text")
+
+    context = rp._render_defended_poisoned_context(retrieved, "hotpot_qa", "spotlighting")
+    assert "clean corpus text" not in context
+    assert "poisoned passage" not in context
+
+
+def test_output_filter_defense_replaces_generated_answer_and_writes_distinct_filename(
+    stub_full_sweep, tmp_path, monkeypatch,
+):
+    calls = []
+
+    def fake_run_output_filter(response_text, log_path, row_id):
+        calls.append((response_text, row_id))
+        return "[OUTPUT_FILTER_BLOCKED] blocked"
+
+    monkeypatch.setattr(rp, "run_output_filter", fake_run_output_filter)
+
+    rp.run_poisonedrag_sweep(
+        model_keys=["phi-4-mini"], corpus_names=["hotpot_qa"],
+        poison_configs=["adv5"], defense="output_filter",
+    )
+
+    assert len(calls) == 1
+    raw_path = tmp_path / "poison_raw_phi-4-mini_hotpot_qa_adv5_hf_defense-output_filter.jsonl"
+    assert raw_path.exists()
+    row = json.loads(raw_path.read_text(encoding="utf-8").splitlines()[0])
+    assert row["generated_answer"] == "[OUTPUT_FILTER_BLOCKED] blocked"

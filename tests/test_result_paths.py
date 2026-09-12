@@ -242,3 +242,60 @@ def test_expected_crescendo_result_files_covers_every_model(monkeypatch, tmp_pat
     names = {p.name for p in paths}
     assert "crescendo_raw_phi-4-mini_5turn_hf.jsonl" in names
     assert "crescendo_summary_qwen3-8b_5turn_hf.csv" in names
+
+
+# --------------------------------------------------------------------------
+# Phase 3 defense axis -- opt-in via RAG_DEFENSE, shared by all three
+# attack-sweep result-path families. "none" must produce the EXACT
+# pre-Phase-3 filename so a defended run can never collide with or
+# overwrite an existing undefended baseline/attack/poison/crescendo result.
+# --------------------------------------------------------------------------
+
+def test_resolve_defense_defaults_to_none(monkeypatch):
+    monkeypatch.delenv("RAG_DEFENSE", raising=False)
+    assert rp.resolve_defense() == "none"
+
+
+def test_resolve_defense_honors_env_var(monkeypatch):
+    monkeypatch.setenv("RAG_DEFENSE", "spotlighting")
+    assert rp.resolve_defense() == "spotlighting"
+
+
+def test_resolve_defense_rejects_unknown_value(monkeypatch):
+    monkeypatch.setenv("RAG_DEFENSE", "not_a_real_defense")
+    try:
+        rp.resolve_defense()
+        assert False, "expected ValueError"
+    except ValueError:
+        pass
+
+
+def test_attack_result_file_paths_defense_none_matches_pre_phase3_filename(tmp_path):
+    raw, summary = rp.attack_result_file_paths(tmp_path, "phi-4-mini", "hotpot_qa", "t1", "hf")
+    assert raw.name == "attack_raw_phi-4-mini_hotpot_qa_t1_hf.jsonl"
+    assert summary.name == "attack_summary_phi-4-mini_hotpot_qa_t1_hf.csv"
+
+
+def test_attack_result_file_paths_defense_axis_is_distinct(tmp_path):
+    undefended = rp.attack_result_file_paths(tmp_path, "phi-4-mini", "hotpot_qa", "t1", "hf")
+    defended = rp.attack_result_file_paths(
+        tmp_path, "phi-4-mini", "hotpot_qa", "t1", "hf", defense="instruction_detection"
+    )
+    assert undefended != defended
+    assert defended[0].name == "attack_raw_phi-4-mini_hotpot_qa_t1_hf_defense-instruction_detection.jsonl"
+
+
+def test_poison_result_file_paths_defense_axis_is_distinct(tmp_path):
+    undefended = rp.poison_result_file_paths(tmp_path, "phi-4-mini", "hotpot_qa", "adv5", "hf")
+    defended = rp.poison_result_file_paths(
+        tmp_path, "phi-4-mini", "hotpot_qa", "adv5", "hf", defense="spotlighting"
+    )
+    assert undefended != defended
+    assert defended[0].name == "poison_raw_phi-4-mini_hotpot_qa_adv5_hf_defense-spotlighting.jsonl"
+
+
+def test_crescendo_result_file_paths_defense_axis_is_distinct(tmp_path):
+    undefended = rp.crescendo_result_file_paths(tmp_path, "phi-4-mini", 5, "hf")
+    defended = rp.crescendo_result_file_paths(tmp_path, "phi-4-mini", 5, "hf", defense="output_filter")
+    assert undefended != defended
+    assert defended[0].name == "crescendo_raw_phi-4-mini_5turn_hf_defense-output_filter.jsonl"

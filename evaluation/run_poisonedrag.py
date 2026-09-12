@@ -51,10 +51,56 @@ from attacks.poisonedrag import (
 from config import MODELS, RESULTS_DIR, SEED, TOP_K, RAG_VLLM_MAX_MODEL_LEN
 from data.build_index import build_index
 from data.normalize import extract_gold_answers, extract_question
+from defenses.instruction_detection import detect_injection
+from defenses.output_filter import run_output_filter
+from defenses.spotlighting import SPOTLIGHTING_SYSTEM_INSTRUCTION, encode_passage_base64
 from evaluation.metrics import retrieval_f1_at_k
-from evaluation.result_paths import ATTACK_ELIGIBLE_CORPORA, poison_result_file_paths, resolve_poison_sweep_selection
+from evaluation.result_paths import (
+    ATTACK_ELIGIBLE_CORPORA,
+    poison_result_file_paths,
+    resolve_defense,
+    resolve_poison_sweep_selection,
+)
 from harness.model_loader import build_chat_prompt, load_model
 from harness.pipeline import SYSTEM_PROMPT, clean_generation
+
+# Same deliberate constraint as evaluation/run_attack_injection.py's
+# SPOTLIGHTING_TOP_K -- see that module's comment and defenses/
+# spotlighting.py's "TOKEN BUDGET IMPACT ANALYSIS" docstring for the real
+# measured ~4.12x token-expansion numbers this is based on. top_k=5
+# overflows RAG_VLLM_MAX_MODEL_LEN=13056 on both attack-eligible corpora;
+# top_k=2 keeps both under budget.
+SPOTLIGHTING_TOP_K = 2
+
+
+def _defended_top_k(defense: str) -> int:
+    return SPOTLIGHTING_TOP_K if defense == "spotlighting" else TOP_K
+
+
+def _render_defended_poisoned_context(retrieved: list, corpus_name: str, defense: str) -> str:
+    """
+    Mirrors attacks.poisoned_retrieval.render_poisoned_context's per-item
+    text resolution exactly (kept in sync, not imported -- same reasoning
+    as this module's own _atomic_open): poison entries (doc_id is the
+    "poison::{i}" string sentinel) are already-final text, real corpus
+    records need extract_passage_text. Applies a pre-generation defense to
+    EACH item's text -- including poison entries, the whole point of
+    testing a defense against PoisonedRAG -- before rendering.
+    """
+    from data.normalize import extract_passage_text
+
+    lines = []
+    for i, (item, _score, doc_id) in enumerate(retrieved):
+        text = item if isinstance(doc_id, str) else extract_passage_text(corpus_name, item)
+        if defense == "instruction_detection":
+            if detect_injection(text).flagged:
+                continue
+            lines.append(f"[{i + 1}] {text}")
+        elif defense == "spotlighting":
+            lines.append(f"[{i + 1}] {encode_passage_base64(text)}")
+        else:
+            lines.append(f"[{i + 1}] {text}")
+    return "\n\n".join(lines)
 
 
 @contextmanager
@@ -109,21 +155,27 @@ def _generate_poison_with_retry(question: str, correct_answer: str, api_token: s
     return None
 
 
-def _poisoned_context_cache_path(corpus_name: str, poison_config: str):
-    return RESULTS_DIR / f"poisoned_contexts_{corpus_name}_{poison_config}.json"
+def _poisoned_context_cache_path(corpus_name: str, poison_config: str, defense: str = "none"):
+    from evaluation.result_paths import _defense_suffix
+    return RESULTS_DIR / f"poisoned_contexts_{corpus_name}_{poison_config}{_defense_suffix(defense)}.json"
 
 
 def build_poisoned_contexts(corpus_name: str, split: str = "dev", sample_n: int = None,
                              poison_config: str = DEFAULT_POISON_CONFIG,
                              api_token: str = None, top_k: int = TOP_K,
-                             use_cache: bool = True):
+                             use_cache: bool = True, defense: str = "none"):
     """
     Phase A. Returns a list of per-question context dicts:
       {question, gold_answers, target_answer, context, retrieved_doc_ids,
        retrieval_f1, retrieval_recall, retrieval_precision}
-    Cached to disk (atomic write) so a Phase B crash doesn't waste already-
-    spent API budget on a rerun -- use_cache=False forces regeneration
-    (e.g. after a poison-generation bug fix invalidates the cache).
+    Cached to disk (atomic write, cache path namespaced by defense too --
+    see _poisoned_context_cache_path) so a Phase B crash doesn't waste
+    already-spent API budget on a rerun -- use_cache=False forces
+    regeneration (e.g. after a poison-generation bug fix invalidates the
+    cache). defense="instruction_detection"/"spotlighting" render the
+    context via _render_defended_poisoned_context instead of
+    render_poisoned_context; "output_filter"/"none" render unchanged (that
+    defense is post-generation only).
     """
     from attacks.poisonedrag import SAMPLE_SIZE
 
@@ -137,7 +189,7 @@ def build_poisoned_contexts(corpus_name: str, split: str = "dev", sample_n: int 
     # against the raw (possibly-None) argument.
     sample_size = sample_n if sample_n is not None else SAMPLE_SIZE
 
-    cache_path = _poisoned_context_cache_path(corpus_name, poison_config)
+    cache_path = _poisoned_context_cache_path(corpus_name, poison_config, defense)
     if use_cache and cache_path.exists():
         with cache_path.open(encoding="utf-8") as f:
             cached = json.load(f)
@@ -172,7 +224,10 @@ def build_poisoned_contexts(corpus_name: str, split: str = "dev", sample_n: int 
         retrieval = retrieval_f1_at_k(
             [doc_id for _, _, doc_id in retrieved], poison_doc_ids, k=top_k
         )
-        context = render_poisoned_context(retrieved, corpus_name)
+        if defense in ("instruction_detection", "spotlighting"):
+            context = _render_defended_poisoned_context(retrieved, corpus_name, defense)
+        else:
+            context = render_poisoned_context(retrieved, corpus_name)
 
         contexts.append({
             "question": question,
@@ -208,7 +263,7 @@ def build_poisoned_contexts(corpus_name: str, split: str = "dev", sample_n: int 
 
 
 def run_poisonedrag_sweep(model_keys=None, corpus_names=None, poison_configs=None,
-                           split: str = "dev", sample_n: int = None):
+                           split: str = "dev", sample_n: int = None, defense=None):
     """
     sample_n: caps target questions PER CORPUS for the smoke-test path
     (falls back to RAG_SAMPLE_N, same semantics as Attack 1's
@@ -216,10 +271,17 @@ def run_poisonedrag_sweep(model_keys=None, corpus_names=None, poison_configs=Non
     API call, retrieval-verification, generation, scoring, file output) on
     a handful of questions before committing the real 100-question sweep's
     API and GPU budget.
+
+    defense: one of evaluation.result_paths.DEFENSE_OPTIONS ("none" by
+    default, falls back to RAG_DEFENSE via resolve_defense()). See
+    evaluation/run_attack_injection.py's run_attack_sweep docstring for the
+    same pre-/post-generation split -- identical here.
     """
     if sample_n is None:
         env_val = os.environ.get("RAG_SAMPLE_N")
         sample_n = int(env_val) if env_val else None
+    if defense is None:
+        defense = resolve_defense()
 
     default_model_keys, default_corpus_names, default_poison_configs, engine = (
         resolve_poison_sweep_selection()
@@ -245,19 +307,23 @@ def run_poisonedrag_sweep(model_keys=None, corpus_names=None, poison_configs=Non
         raise ValueError(f"INFERENCE_ENGINE must be 'hf' or 'vllm', got '{engine}'")
 
     # Phase A -- once per (corpus, poison_config), shared across every model.
+    # top_k is forced to SPOTLIGHTING_TOP_K for the Spotlighting condition
+    # specifically -- see this module's SPOTLIGHTING_TOP_K comment.
+    top_k = _defended_top_k(defense)
     contexts_by_corpus = {}
     for corpus_name in corpus_names:
         for poison_config in poison_configs:
             contexts_by_corpus[(corpus_name, poison_config)] = build_poisoned_contexts(
                 corpus_name, split=split, sample_n=sample_n, poison_config=poison_config,
+                top_k=top_k, defense=defense,
             )
 
     if engine == "vllm":
-        return _run_vllm_poison_sweep(model_keys, corpus_names, poison_configs, contexts_by_corpus)
-    return _run_hf_poison_sweep(model_keys, corpus_names, poison_configs, contexts_by_corpus)
+        return _run_vllm_poison_sweep(model_keys, corpus_names, poison_configs, contexts_by_corpus, defense)
+    return _run_hf_poison_sweep(model_keys, corpus_names, poison_configs, contexts_by_corpus, defense)
 
 
-def _run_hf_poison_sweep(model_keys, corpus_names, poison_configs, contexts_by_corpus):
+def _run_hf_poison_sweep(model_keys, corpus_names, poison_configs, contexts_by_corpus, defense="none"):
     if torch.cuda.is_available():
         print(f"[poison] Running on GPU: {torch.cuda.get_device_name(0)} "
               f"(CUDA {torch.version.cuda})")
@@ -273,12 +339,21 @@ def _run_hf_poison_sweep(model_keys, corpus_names, poison_configs, contexts_by_c
             print(f"[poison] SKIPPING {model_key}: failed to load -- {type(e).__name__}: {e}")
             continue
 
+        system_prompt = (
+            SYSTEM_PROMPT + "\n\n" + SPOTLIGHTING_SYSTEM_INSTRUCTION
+            if defense == "spotlighting" else SYSTEM_PROMPT
+        )
+
         for corpus_name in corpus_names:
+            output_filter_log_path = None
+            if defense == "output_filter":
+                output_filter_log_path = RESULTS_DIR / f"output_filter_log_poison_{model_key}_{corpus_name}.jsonl"
+
             for poison_config in poison_configs:
                 contexts = contexts_by_corpus[(corpus_name, poison_config)]
-                print(f"--- {model_key} x {corpus_name} x {poison_config} ---")
+                print(f"--- {model_key} x {corpus_name} x {poison_config} (defense={defense}) ---")
                 raw_path, summary_path = poison_result_file_paths(
-                    RESULTS_DIR, model_key, corpus_name, poison_config, "hf"
+                    RESULTS_DIR, model_key, corpus_name, poison_config, "hf", defense
                 )
 
                 rows = []
@@ -286,13 +361,19 @@ def _run_hf_poison_sweep(model_keys, corpus_names, poison_configs, contexts_by_c
                 with _atomic_open(raw_path) as raw_f:
                     for i, ctx in enumerate(contexts):
                         user_prompt = f"Context:\n{ctx['context']}\n\nQuestion: {ctx['question']}"
-                        prompt = build_chat_prompt(model_key, tokenizer, SYSTEM_PROMPT, user_prompt)
+                        prompt = build_chat_prompt(model_key, tokenizer, system_prompt, user_prompt)
                         inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
                         with torch.no_grad():
                             output_ids = model.generate(**inputs, max_new_tokens=256, do_sample=False)
                         generated = tokenizer.decode(
                             output_ids[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True
                         ).strip()
+                        if defense == "output_filter":
+                            generated = run_output_filter(
+                                generated, output_filter_log_path,
+                                {"model": model_key, "corpus": corpus_name,
+                                 "poison_config": poison_config, "question": ctx["question"]},
+                            )
                         generated_clean = clean_generation(generated)
 
                         scores = score_poison_success(
@@ -322,7 +403,7 @@ def _run_hf_poison_sweep(model_keys, corpus_names, poison_configs, contexts_by_c
     return summary_rows
 
 
-def _run_vllm_poison_sweep(model_keys, corpus_names, poison_configs, contexts_by_corpus):
+def _run_vllm_poison_sweep(model_keys, corpus_names, poison_configs, contexts_by_corpus, defense="none"):
     """vLLM control flow: mirrors evaluation.run_attack_injection.
     _run_vllm_attack_sweep -- one batched generate_batch() call per
     (model, corpus, poison_config), all prompts already pre-rendered by
@@ -342,12 +423,21 @@ def _run_vllm_poison_sweep(model_keys, corpus_names, poison_configs, contexts_by
         print(f"\n=== Loading {model_key} (vLLM) ===")
         llm = load_vllm_model(model_key, max_model_len=max_model_len)
 
+        system_prompt = (
+            SYSTEM_PROMPT + "\n\n" + SPOTLIGHTING_SYSTEM_INSTRUCTION
+            if defense == "spotlighting" else SYSTEM_PROMPT
+        )
+
         for corpus_name in corpus_names:
+            output_filter_log_path = None
+            if defense == "output_filter":
+                output_filter_log_path = RESULTS_DIR / f"output_filter_log_poison_{model_key}_{corpus_name}.jsonl"
+
             for poison_config in poison_configs:
                 contexts = contexts_by_corpus[(corpus_name, poison_config)]
-                print(f"--- {model_key} x {corpus_name} x {poison_config} (vLLM, batched) ---")
+                print(f"--- {model_key} x {corpus_name} x {poison_config} (vLLM, batched, defense={defense}) ---")
                 raw_path, summary_path = poison_result_file_paths(
-                    RESULTS_DIR, model_key, corpus_name, poison_config, "vllm"
+                    RESULTS_DIR, model_key, corpus_name, poison_config, "vllm", defense
                 )
 
                 user_prompts = [
@@ -355,13 +445,19 @@ def _run_vllm_poison_sweep(model_keys, corpus_names, poison_configs, contexts_by
                 ]
                 start = time.time()
                 print(f"  sending {len(user_prompts)} prompts in one batch")
-                outputs = generate_batch(llm, model_key, SYSTEM_PROMPT, user_prompts)
+                outputs = generate_batch(llm, model_key, system_prompt, user_prompts)
                 print(f"  batch generated in {time.time() - start:.0f}s")
 
                 rows = []
                 with _atomic_open(raw_path) as raw_f:
                     for ctx, generated in zip(contexts, outputs):
                         generated = generated.strip()
+                        if defense == "output_filter":
+                            generated = run_output_filter(
+                                generated, output_filter_log_path,
+                                {"model": model_key, "corpus": corpus_name,
+                                 "poison_config": poison_config, "question": ctx["question"]},
+                            )
                         generated_clean = clean_generation(generated)
                         scores = score_poison_success(
                             generated, generated_clean, ctx["target_answer"], ctx["gold_answers"]

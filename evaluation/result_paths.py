@@ -35,6 +35,32 @@ from config import CORPORA, MODELS
 # explicit RAG_CORPORA doesn't silently include it.
 ATTACK_ELIGIBLE_CORPORA = [c for c in CORPORA if c != "nq_open"]
 
+# ---------------------------------------------------------------------------
+# Phase 3 defense axis -- opt-in per sweep run via RAG_DEFENSE, shared by all
+# three attack-sweep result-path families below (attack/poison/crescendo).
+# "none" is the default and produces the EXACT undefended filename (no
+# suffix) so this axis is purely additive: nothing already on disk (Phase
+# 1/2 baselines, existing undefended attack/poison/crescendo results) can
+# collide with or be silently overwritten by a defended run.
+# ---------------------------------------------------------------------------
+DEFENSE_OPTIONS = ("none", "instruction_detection", "spotlighting", "output_filter")
+
+
+def _defense_suffix(defense: str) -> str:
+    if defense not in DEFENSE_OPTIONS:
+        raise ValueError(f"Unknown defense '{defense}'. Options: {list(DEFENSE_OPTIONS)}")
+    return f"_defense-{defense}" if defense != "none" else ""
+
+
+def resolve_defense():
+    """Which Phase 3 defense (if any) a sweep run applies, read from
+    RAG_DEFENSE (default "none" = undefended baseline). Kept here, next to
+    resolve_*_sweep_selection, so every runner resolves this identically."""
+    defense = os.environ.get("RAG_DEFENSE", "none")
+    if defense not in DEFENSE_OPTIONS:
+        raise ValueError(f"RAG_DEFENSE must be one of {list(DEFENSE_OPTIONS)}, got '{defense}'")
+    return defense
+
 
 def resolve_sweep_selection():
     """
@@ -129,40 +155,46 @@ def resolve_attack_sweep_selection():
 
 
 def attack_result_file_paths(results_dir, model_key: str, corpus_name: str,
-                              injection_template: str, engine: str):
+                              injection_template: str, engine: str, defense: str = "none"):
     """
     The (raw_jsonl, summary_csv) paths one (model, corpus, injection_template,
-    engine) cell writes. Extends result_file_paths' naming with the
+    engine, defense) cell writes. Extends result_file_paths' naming with the
     injection_template axis, same atomic-write pattern as the baseline
     sweep (evaluation/run_baseline.py's _atomic_open) -- no exceptions.
+    defense="none" (the default) produces the exact pre-Phase-3 filename;
+    see DEFENSE_OPTIONS/_defense_suffix above for why.
     """
     results_dir = Path(results_dir)
+    suffix = _defense_suffix(defense)
     raw_path = (
         results_dir
-        / f"attack_raw_{model_key}_{corpus_name}_{injection_template}_{engine}.jsonl"
+        / f"attack_raw_{model_key}_{corpus_name}_{injection_template}_{engine}{suffix}.jsonl"
     )
     summary_path = (
         results_dir
-        / f"attack_summary_{model_key}_{corpus_name}_{injection_template}_{engine}.csv"
+        / f"attack_summary_{model_key}_{corpus_name}_{injection_template}_{engine}{suffix}.csv"
     )
     return raw_path, summary_path
 
 
-def expected_attack_result_files(results_dir):
+def expected_attack_result_files(results_dir, defense: str = None):
     """
     Every (raw, summary) path this process's env-var configuration will
     produce for the attack sweep -- same role as expected_result_files(),
     for a future scripts/run_and_terminate.py extension to verify an attack
-    sweep's completeness before terminating a paid pod.
+    sweep's completeness before terminating a paid pod. defense defaults to
+    resolve_defense() (RAG_DEFENSE, "none" if unset) when not given.
     """
     model_keys, corpus_names, injection_templates, engine = resolve_attack_sweep_selection()
+    if defense is None:
+        defense = resolve_defense()
     paths = []
     for model_key in model_keys:
         for corpus_name in corpus_names:
             for injection_template in injection_templates:
                 paths.extend(
                     attack_result_file_paths(
-                        results_dir, model_key, corpus_name, injection_template, engine
+                        results_dir, model_key, corpus_name, injection_template, engine, defense
                     )
                 )
     return paths
@@ -215,38 +247,42 @@ def resolve_poison_sweep_selection():
 
 
 def poison_result_file_paths(results_dir, model_key: str, corpus_name: str,
-                              poison_config: str, engine: str):
+                              poison_config: str, engine: str, defense: str = "none"):
     """
     The (raw_jsonl, summary_csv) paths one (model, corpus, poison_config,
-    engine) cell writes. Same atomic-write pattern as the other two sweeps
-    (evaluation/run_baseline.py's _atomic_open) -- no exceptions.
+    engine, defense) cell writes. Same atomic-write pattern as the other two
+    sweeps (evaluation/run_baseline.py's _atomic_open) -- no exceptions.
+    defense="none" (the default) produces the exact pre-Phase-3 filename.
     """
     results_dir = Path(results_dir)
+    suffix = _defense_suffix(defense)
     raw_path = (
         results_dir
-        / f"poison_raw_{model_key}_{corpus_name}_{poison_config}_{engine}.jsonl"
+        / f"poison_raw_{model_key}_{corpus_name}_{poison_config}_{engine}{suffix}.jsonl"
     )
     summary_path = (
         results_dir
-        / f"poison_summary_{model_key}_{corpus_name}_{poison_config}_{engine}.csv"
+        / f"poison_summary_{model_key}_{corpus_name}_{poison_config}_{engine}{suffix}.csv"
     )
     return raw_path, summary_path
 
 
-def expected_poison_result_files(results_dir):
+def expected_poison_result_files(results_dir, defense: str = None):
     """
     Every (raw, summary) path this process's env-var configuration will
     produce for the PoisonedRAG sweep -- same role as
     expected_attack_result_files().
     """
     model_keys, corpus_names, poison_configs, engine = resolve_poison_sweep_selection()
+    if defense is None:
+        defense = resolve_defense()
     paths = []
     for model_key in model_keys:
         for corpus_name in corpus_names:
             for poison_config in poison_configs:
                 paths.extend(
                     poison_result_file_paths(
-                        results_dir, model_key, corpus_name, poison_config, engine
+                        results_dir, model_key, corpus_name, poison_config, engine, defense
                     )
                 )
     return paths
@@ -285,26 +321,33 @@ def resolve_crescendo_sweep_selection():
     return model_keys, max_turns, engine
 
 
-def crescendo_result_file_paths(results_dir, model_key: str, max_turns: int, engine: str):
+def crescendo_result_file_paths(results_dir, model_key: str, max_turns: int, engine: str,
+                                 defense: str = "none"):
     """
-    The (raw_jsonl, summary_csv) paths one (model, max_turns, engine) cell
-    writes. Same atomic-write pattern as the other two sweeps
-    (evaluation/run_baseline.py's _atomic_open) -- no exceptions.
+    The (raw_jsonl, summary_csv) paths one (model, max_turns, engine, defense)
+    cell writes. Same atomic-write pattern as the other two sweeps
+    (evaluation/run_baseline.py's _atomic_open) -- no exceptions. defense
+    is "none" or "output_filter" for Crescendo -- instruction_detection and
+    spotlighting don't apply here (no retrieved/injected content to filter).
+    defense="none" (the default) produces the exact pre-Phase-3 filename.
     """
     results_dir = Path(results_dir)
-    raw_path = results_dir / f"crescendo_raw_{model_key}_{max_turns}turn_{engine}.jsonl"
-    summary_path = results_dir / f"crescendo_summary_{model_key}_{max_turns}turn_{engine}.csv"
+    suffix = _defense_suffix(defense)
+    raw_path = results_dir / f"crescendo_raw_{model_key}_{max_turns}turn_{engine}{suffix}.jsonl"
+    summary_path = results_dir / f"crescendo_summary_{model_key}_{max_turns}turn_{engine}{suffix}.csv"
     return raw_path, summary_path
 
 
-def expected_crescendo_result_files(results_dir):
+def expected_crescendo_result_files(results_dir, defense: str = None):
     """
     Every (raw, summary) path this process's env-var configuration will
     produce for the Crescendo sweep -- same role as
     expected_poison_result_files().
     """
     model_keys, max_turns, engine = resolve_crescendo_sweep_selection()
+    if defense is None:
+        defense = resolve_defense()
     paths = []
     for model_key in model_keys:
-        paths.extend(crescendo_result_file_paths(results_dir, model_key, max_turns, engine))
+        paths.extend(crescendo_result_file_paths(results_dir, model_key, max_turns, engine, defense))
     return paths

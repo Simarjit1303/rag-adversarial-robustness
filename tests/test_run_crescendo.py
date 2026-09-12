@@ -120,7 +120,7 @@ def stub_conversation(monkeypatch):
 def test_conversation_completes_max_turns_with_no_refusals(monkeypatch, stub_conversation):
     monkeypatch.setattr(rc, "generate_attacker_turn",
                          lambda history, behavior, api_token, refusal_feedback=None, **kw: "next turn")
-    conv, backtracks, refusals, n_turns, backtrack_attempts, error = rc.run_crescendo_conversation(
+    conv, backtracks, refusals, n_turns, backtrack_attempts, error, _of_flags = rc.run_crescendo_conversation(
         mock.Mock(), mock.Mock(), "phi-4-mini", "target behavior", "tok", max_turns=5,
     )
     assert n_turns == 5
@@ -138,7 +138,7 @@ def test_conversation_backtracks_on_refusal_then_recovers(monkeypatch):
     monkeypatch.setattr(rc, "generate_attacker_turn",
                          lambda history, behavior, api_token, refusal_feedback=None, **kw: next(prompts))
 
-    conv, backtracks, refusals, n_turns, backtrack_attempts, error = rc.run_crescendo_conversation(
+    conv, backtracks, refusals, n_turns, backtrack_attempts, error, _of_flags = rc.run_crescendo_conversation(
         mock.Mock(), mock.Mock(), "phi-4-mini", "target behavior", "tok", max_turns=1,
     )
     assert n_turns == 1
@@ -163,7 +163,7 @@ def test_conversation_accepts_refusal_after_exhausting_backtrack_cap(monkeypatch
     monkeypatch.setattr(rc, "generate_attacker_turn",
                          lambda history, behavior, api_token, refusal_feedback=None, **kw: "next turn")
 
-    conv, backtracks, refusals, n_turns, backtrack_attempts, error = rc.run_crescendo_conversation(
+    conv, backtracks, refusals, n_turns, backtrack_attempts, error, _of_flags = rc.run_crescendo_conversation(
         mock.Mock(), mock.Mock(), "phi-4-mini", "target behavior", "tok",
         max_turns=1, max_backtracks=2,
     )
@@ -183,7 +183,7 @@ def test_conversation_accepts_refusal_after_exhausting_backtrack_cap(monkeypatch
 def test_conversation_ends_early_when_attacker_generation_exhausts_retries(monkeypatch, stub_conversation):
     monkeypatch.setattr(rc, "generate_attacker_turn",
                          lambda history, behavior, api_token, refusal_feedback=None, **kw: None)
-    conv, backtracks, refusals, n_turns, backtrack_attempts, error = rc.run_crescendo_conversation(
+    conv, backtracks, refusals, n_turns, backtrack_attempts, error, _of_flags = rc.run_crescendo_conversation(
         mock.Mock(), mock.Mock(), "phi-4-mini", "target behavior", "tok", max_turns=5,
     )
     assert n_turns == 0
@@ -208,7 +208,7 @@ def test_conversation_backtrack_attempt_retry_prompt_is_none_when_retry_generati
     monkeypatch.setattr(rc, "generate_attacker_turn",
                          lambda history, behavior, api_token, refusal_feedback=None, **kw: next(prompts))
 
-    conv, backtracks, refusals, n_turns, backtrack_attempts, error = rc.run_crescendo_conversation(
+    conv, backtracks, refusals, n_turns, backtrack_attempts, error, _of_flags = rc.run_crescendo_conversation(
         mock.Mock(), mock.Mock(), "phi-4-mini", "target behavior", "tok",
         max_turns=1, max_backtracks=2,
     )
@@ -230,7 +230,7 @@ def test_conversation_surfaces_real_exhausted_attacker_error(monkeypatch, stub_c
         raise rc.RateLimitError("NIM rate limit hit (429) -- Retry-After='60'", retry_after=60.0)
 
     monkeypatch.setattr(rc, "generate_attacker_turn", always_raises)
-    conv, backtracks, refusals, n_turns, backtrack_attempts, error = rc.run_crescendo_conversation(
+    conv, backtracks, refusals, n_turns, backtrack_attempts, error, _of_flags = rc.run_crescendo_conversation(
         mock.Mock(), mock.Mock(), "phi-4-mini", "target behavior", "tok", max_turns=5,
     )
     assert conv == []
@@ -325,7 +325,7 @@ def stub_full_sweep(monkeypatch, tmp_path):
         rc, "run_crescendo_conversation",
         lambda model, tok, model_key, behavior, api_token, max_turns, **kw: (
             [{"role": "user", "content": "u"}, {"role": "assistant", "content": "a"}],
-            0, 0, 1, [], None,
+            0, 0, 1, [], None, [],
         ),
     )
     monkeypatch.setattr(
@@ -404,7 +404,7 @@ def test_sweep_writes_conversation_error_into_the_raw_row(stub_full_sweep, monke
     monkeypatch.setattr(
         rc, "run_crescendo_conversation",
         lambda model, tok, model_key, behavior, api_token, max_turns, **kw: (
-            [], 0, 0, 0, [], "phi-4-mini attacker turn 1 attempt 3: RateLimitError: 429",
+            [], 0, 0, 0, [], "phi-4-mini attacker turn 1 attempt 3: RateLimitError: 429", [],
         ),
     )
     rc.run_crescendo_sweep(model_keys=["phi-4-mini"], max_turns=5)
@@ -414,3 +414,65 @@ def test_sweep_writes_conversation_error_into_the_raw_row(stub_full_sweep, monke
     rows = [json.loads(line) for line in raw_path.read_text(encoding="utf-8").splitlines()]
     assert all(r["error"] == "phi-4-mini attacker turn 1 attempt 3: RateLimitError: 429" for r in rows)
     assert all(r["conversation"] == [] and r["n_turns_completed"] == 0 for r in rows)
+
+
+# ---------------------------------------------------------------------
+# Phase 3 defense wiring -- output_filter ONLY (confirmed design decision:
+# instruction_detection/spotlighting don't apply, no retrieved/injected
+# content to filter in Crescendo).
+# ---------------------------------------------------------------------
+
+def test_run_crescendo_sweep_rejects_instruction_detection_and_spotlighting():
+    for bad_defense in ("instruction_detection", "spotlighting"):
+        with pytest.raises(ValueError, match="only supports defense"):
+            rc.run_crescendo_sweep(model_keys=["phi-4-mini"], defense=bad_defense)
+
+
+def test_conversation_applies_output_filter_per_turn_without_altering_history(
+    monkeypatch, stub_conversation, tmp_path,
+):
+    import defenses.output_filter as of
+
+    monkeypatch.setattr(rc, "generate_attacker_turn",
+                         lambda history, behavior, api_token, refusal_feedback=None, **kw: "next turn")
+    monkeypatch.setattr(of, "apply_output_filter",
+                         lambda text, model=None, tokenizer=None: (
+                             of.REFUSAL_MARKER, {"flagged": True, "guard_label": "unsafe", "guard_raw_output": "unsafe"},
+                         ))
+    log_path = tmp_path / "output_filter_log.jsonl"
+
+    conv, backtracks, refusals, n_turns, backtrack_attempts, error, output_filter_flags = rc.run_crescendo_conversation(
+        mock.Mock(), mock.Mock(), "phi-4-mini", "target behavior", "tok", max_turns=2,
+        output_filter_log_path=log_path,
+    )
+
+    # history keeps the REAL reply -- the defense measures what a deployed
+    # guard would have blocked, without changing the attack's own trajectory
+    assert conv[1]["content"] == "a target reply"
+    assert conv[3]["content"] == "a target reply"
+    assert output_filter_flags == [
+        {"turn": 1, "flagged": True, "guard_label": "unsafe"},
+        {"turn": 2, "flagged": True, "guard_label": "unsafe"},
+    ]
+    logged = [__import__("json").loads(l) for l in log_path.read_text(encoding="utf-8").splitlines()]
+    assert len(logged) == 2
+    assert logged[0]["behavior"] == "target behavior" and logged[0]["flagged"] is True
+
+
+def test_run_crescendo_sweep_output_filter_writes_distinct_filename_and_flags_field(
+    stub_full_sweep, tmp_path, monkeypatch,
+):
+    monkeypatch.setattr(
+        rc, "run_crescendo_conversation",
+        lambda model, tok, model_key, behavior, api_token, max_turns, **kw: (
+            [{"role": "user", "content": "u"}, {"role": "assistant", "content": "a"}],
+            0, 0, 1, [], None, [{"turn": 1, "flagged": True, "guard_label": "unsafe"}],
+        ),
+    )
+    rc.run_crescendo_sweep(model_keys=["phi-4-mini"], max_turns=5, defense="output_filter")
+
+    raw_path = tmp_path / "crescendo_raw_phi-4-mini_5turn_hf_defense-output_filter.jsonl"
+    assert raw_path.exists()
+    import json
+    rows = [json.loads(line) for line in raw_path.read_text(encoding="utf-8").splitlines()]
+    assert all(r["output_filter_flags"] == [{"turn": 1, "flagged": True, "guard_label": "unsafe"}] for r in rows)

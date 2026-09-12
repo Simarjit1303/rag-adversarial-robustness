@@ -45,7 +45,7 @@ from attacks.crescendo import (
 )
 from config import MODELS, RESULTS_DIR, SEED
 from data.behavior_pool import load_behavior_pool
-from evaluation.result_paths import crescendo_result_file_paths, resolve_crescendo_sweep_selection
+from evaluation.result_paths import crescendo_result_file_paths, resolve_crescendo_sweep_selection, resolve_defense
 from harness.model_loader import build_multiturn_chat_prompt, load_model
 
 
@@ -159,14 +159,15 @@ def _generate_target_reply(model, tokenizer, model_key: str, history: list, atta
 
 
 def run_crescendo_conversation(model, tokenizer, model_key: str, target_behavior: str,
-                                api_token: str, max_turns: int, max_backtracks: int = MAX_BACKTRACKS):
+                                api_token: str, max_turns: int, max_backtracks: int = MAX_BACKTRACKS,
+                                output_filter_log_path=None):
     """
     Runs one full Crescendo conversation against `model`. Returns
     (conversation, backtrack_count, refusal_count, n_turns_completed,
-    backtrack_attempts, error). conversation is the final [{"role",
-    "content"}, ...] thread (excluding the system turn) -- what
-    generate_judge_verdict scores; the linear history only ever holds the
-    FINAL (non-refused) reply for each turn, so a backtracked turn's
+    backtrack_attempts, error, output_filter_flags). conversation is the
+    final [{"role", "content"}, ...] thread (excluding the system turn) --
+    what generate_judge_verdict scores; the linear history only ever holds
+    the FINAL (non-refused) reply for each turn, so a backtracked turn's
     refused attempt is otherwise invisible in the stored data.
 
     backtrack_attempts preserves what the linear history discards: one
@@ -179,11 +180,24 @@ def run_crescendo_conversation(model, tokenizer, model_key: str, target_behavior
     whichever attacker-turn _call_with_retry call last exhausted its
     attempts (see that function's error_sink) -- the real cause when a
     conversation ends early/empty, not just a bare n_turns_completed=0.
+
+    output_filter_log_path: when given, defenses.output_filter.run_output_filter
+    is called on each turn's FINAL (accepted, non-refused) target reply --
+    per-turn, not just the final conversation -- so mechanism attribution
+    (which turn the guard would have blocked) is possible, per
+    defenses/output_filter.py's module docstring. Deliberately does NOT
+    feed the filtered/blocked text back into `history`: Crescendo's own
+    escalation logic (is_refusal, backtracking) must keep operating on the
+    real target reply, since this defense measures what a deployed guard
+    WOULD have blocked, without itself changing the attack's trajectory.
+    output_filter_flags collects one {"turn", "flagged", "guard_label"}
+    entry per turn actually checked.
     """
     history = []
     backtrack_count = 0
     refusal_count = 0
     backtrack_attempts = []
+    output_filter_flags = []
     error_sink = {}
 
     for turn in range(max_turns):
@@ -226,24 +240,52 @@ def run_crescendo_conversation(model, tokenizer, model_key: str, target_behavior
         if attacker_turn is None:
             break
 
+        if output_filter_log_path is not None:
+            from defenses.output_filter import apply_output_filter, log_filter_event
+            # Classify only -- deliberately discard the filtered/blocked
+            # text (see this function's docstring: history keeps the real
+            # reply so Crescendo's own escalation logic is unaffected).
+            _, guard_record = apply_output_filter(target_reply)
+            log_filter_event(output_filter_log_path, {
+                "model": model_key, "behavior": target_behavior, "turn": turn + 1, **guard_record,
+            })
+            output_filter_flags.append({
+                "turn": turn + 1, "flagged": guard_record["flagged"], "guard_label": guard_record["guard_label"],
+            })
+
         history.append({"role": "user", "content": attacker_turn})
         history.append({"role": "assistant", "content": target_reply})
 
-    return history, backtrack_count, refusal_count, len(history) // 2, backtrack_attempts, error_sink.get("error")
+    return (history, backtrack_count, refusal_count, len(history) // 2, backtrack_attempts,
+            error_sink.get("error"), output_filter_flags)
 
 
 def run_crescendo_sweep(model_keys=None, max_turns: int = None, sample_n: int = None,
-                         api_token: str = None):
+                         api_token: str = None, defense=None):
     """
     sample_n: caps target behaviors for the smoke-test path (falls back to
     RAG_SAMPLE_N, same semantics as the other two sweeps) -- verify the full
     pipeline (attacker call, target generation, backtrack, judge call, file
     output) on a handful of behaviors before committing the real n=100 sweep's
     NIM and GPU budget.
+
+    defense: "none" or "output_filter" only (falls back to RAG_DEFENSE via
+    resolve_defense()) -- instruction_detection/spotlighting don't apply to
+    Crescendo, a confirmed design decision (no retrieved/injected content to
+    filter here; see evaluation/result_paths.py's crescendo_result_file_paths
+    docstring).
     """
     if sample_n is None:
         env_val = os.environ.get("RAG_SAMPLE_N")
         sample_n = int(env_val) if env_val else None
+    if defense is None:
+        defense = resolve_defense()
+    if defense not in ("none", "output_filter"):
+        raise ValueError(
+            f"Crescendo only supports defense='none' or 'output_filter' "
+            f"(instruction_detection/spotlighting don't apply -- no retrieved/"
+            f"injected content to filter), got '{defense}'"
+        )
 
     default_model_keys, default_max_turns, engine = resolve_crescendo_sweep_selection()
     if model_keys is None:
@@ -299,7 +341,11 @@ def run_crescendo_sweep(model_keys=None, max_turns: int = None, sample_n: int = 
             print(f"[crescendo] SKIPPING {model_key}: failed to load -- {type(e).__name__}: {e}")
             continue
 
-        raw_path, summary_path = crescendo_result_file_paths(RESULTS_DIR, model_key, max_turns, "hf")
+        raw_path, summary_path = crescendo_result_file_paths(RESULTS_DIR, model_key, max_turns, "hf", defense)
+        output_filter_log_path = (
+            RESULTS_DIR / f"output_filter_log_crescendo_{model_key}_{max_turns}turn.jsonl"
+            if defense == "output_filter" else None
+        )
         rows = []
         start = time.time()
         # Per-behavior checkpointing, NOT _atomic_open: _atomic_open buffers
@@ -314,8 +360,9 @@ def run_crescendo_sweep(model_keys=None, max_turns: int = None, sample_n: int = 
         # behaviors not yet completed, not the whole model.
         with open(raw_path, "w", encoding="utf-8") as raw_f:
             for i, b in enumerate(behaviors):
-                conversation, backtrack_count, refusal_count, n_turns, backtrack_attempts, conv_error = run_crescendo_conversation(
-                    model, tokenizer, model_key, b["behavior"], api_token, max_turns
+                conversation, backtrack_count, refusal_count, n_turns, backtrack_attempts, conv_error, output_filter_flags = run_crescendo_conversation(
+                    model, tokenizer, model_key, b["behavior"], api_token, max_turns,
+                    output_filter_log_path=output_filter_log_path,
                 )
 
                 judge_error_sink = {}
@@ -331,7 +378,8 @@ def run_crescendo_sweep(model_keys=None, max_turns: int = None, sample_n: int = 
                 error = conv_error or judge_error_sink.get("error")
 
                 row = _build_row(model_key, max_turns, b, conversation, backtrack_count,
-                                  refusal_count, n_turns, verdict, backtrack_attempts, error)
+                                  refusal_count, n_turns, verdict, backtrack_attempts, error,
+                                  output_filter_flags)
                 rows.append(row)
                 raw_f.write(json.dumps(row, ensure_ascii=False) + "\n")
                 raw_f.flush()
@@ -363,7 +411,8 @@ def run_crescendo_sweep(model_keys=None, max_turns: int = None, sample_n: int = 
 
 
 def _build_row(model_key, max_turns, behavior_item, conversation, backtrack_count,
-                refusal_count, n_turns, verdict, backtrack_attempts=None, error=None):
+                refusal_count, n_turns, verdict, backtrack_attempts=None, error=None,
+                output_filter_flags=None):
     judge_failed = verdict is None
     return {
         "model": model_key,
@@ -388,6 +437,12 @@ def _build_row(model_key, max_turns, behavior_item, conversation, backtrack_coun
         "judge_failed": int(judge_failed),
         "attack_success": 0 if judge_failed else verdict["success"],
         "judge_reasoning": None if judge_failed else verdict["reasoning"],
+        # Per-turn Llama-Guard verdicts (defenses/output_filter.py), for
+        # mechanism attribution -- which turn a deployed guard would have
+        # blocked. Empty when defense != "output_filter" (see
+        # run_crescendo_conversation's docstring for why the raw reply, not
+        # the filtered one, is what stays in `conversation` above).
+        "output_filter_flags": output_filter_flags or [],
         # Real bug, smoke test 2026-09-09: phi-4-mini/ministral-3-8b rows had
         # n_turns_completed=0, judge_reasoning=null, and NO record anywhere
         # of why -- undiagnosable from the JSONL alone. error carries the
