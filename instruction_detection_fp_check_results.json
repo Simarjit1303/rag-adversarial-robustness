@@ -12,6 +12,12 @@
     "flag_rate": 0.03333333333333333
   },
   {
+    "label": "XSTest (safe prompts)",
+    "n": 150,
+    "flagged": 0,
+    "flag_rate": 0.0
+  },
+  {
     "label": "OR-Bench-Hard-1K (hard-but-safe prompts)",
     "n": 150,
     "flagged": 4,

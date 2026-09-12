@@ -37,7 +37,10 @@ GUARD_MODEL_ID = "meta-llama/Llama-Guard-4-12B"
 # before scripts/fetch_corpus_revisions.py records the real sha. Fill in
 # before the real Phase 3 sweep, not before this module's unit tests
 # (which never touch the network or load real weights).
-GUARD_MODEL_REVISION = None
+# Pinned 2026-09-12 via HfApi().model_info(GUARD_MODEL_ID).sha -- a metadata-
+# only Hub API call, no weight download -- same method as
+# scripts/fetch_corpus_revisions.py uses for config.CORPORA entries.
+GUARD_MODEL_REVISION = "87acb4b94e930c3d679e6e7ee9d57e2feab9ea71"
 
 # Fixed, NOT generated -- the point is that downstream scoring can tell
 # "the defense fired" apart from "the model refused on its own" by an
