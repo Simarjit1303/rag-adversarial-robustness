@@ -202,6 +202,18 @@ def classify_response(response_text: str, model=None, tokenizer=None, max_new_to
     generate_kwargs = {"max_new_tokens": max_new_tokens, "pad_token_id": tokenizer.eos_token_id}
     if past_key_values is not None:
         generate_kwargs["past_key_values"] = past_key_values
+        # Llama-Guard-4-12B's own generation_config.json bakes in
+        # cache_implementation="static" (confirmed via its published config).
+        # generate()'s _prepare_generation_config() seeds generation_config
+        # from that model default BEFORE applying our kwargs, so without this
+        # line the model's "static" default survives into the conflict check
+        # in _prepare_cache_for_generation() and raises "Passing both
+        # cache_implementation ... and past_key_values ... is unsupported" --
+        # confirmed on the real pod. Explicitly passing None here is what
+        # actually clears it: GenerationConfig.update(**kwargs) applies
+        # explicit kwargs unconditionally (unlike the model-default merge
+        # step, which only fills in still-None fields).
+        generate_kwargs["cache_implementation"] = None
 
     with torch.no_grad():
         output = model.generate(**inputs, **generate_kwargs)

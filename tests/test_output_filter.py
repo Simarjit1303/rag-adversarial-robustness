@@ -451,7 +451,12 @@ def test_classify_response_builds_patched_dynamic_cache_for_llama4_config():
     model carrying the REAL guard's Llama4TextConfig shape (via .config),
     asserting model.generate() receives a past_key_values that is a
     DynamicCache built from a config with every layer relabeled
-    "full_attention", and receives no cache_implementation kwarg at all.
+    "full_attention", and receives cache_implementation=None explicitly
+    (not omitted -- see the real-pod ValueError this guards against: the
+    model's own generation_config.json bakes in cache_implementation=
+    "static", which generate() merges in as a default BEFORE our kwargs
+    are applied, so an explicit None is what's actually needed to clear
+    it, not just leaving the key out).
     """
     from transformers.models.llama4 import Llama4TextConfig
 
@@ -481,11 +486,12 @@ def test_classify_response_builds_patched_dynamic_cache_for_llama4_config():
         device = "cpu"
         config = _ConfigBearingConfig()
 
-        def generate(self, input_ids, attention_mask, max_new_tokens, pad_token_id, past_key_values=None):
+        def generate(
+            self, input_ids, attention_mask, max_new_tokens, pad_token_id,
+            past_key_values=None, cache_implementation="unset",
+        ):
             calls["past_key_values"] = past_key_values
-            calls["kwargs_seen"] = {"max_new_tokens", "pad_token_id"} | (
-                {"past_key_values"} if past_key_values is not None else set()
-            )
+            calls["cache_implementation"] = cache_implementation
             return torch.cat([input_ids, torch.zeros((1, 1), dtype=torch.long)], dim=1)
 
     tokenizer = _StubTokenizer("safe")
@@ -499,9 +505,15 @@ def test_classify_response_builds_patched_dynamic_cache_for_llama4_config():
     # proving a copy was patched, not the live model config.
     assert text_config.layer_types[0] == "chunked_attention"
     assert len(cache.layers) == 4
-    # No cache_implementation kwarg anywhere -- the whole point of this fix
-    # over the previous two attempts is that no such string is passed at all.
-    assert "cache_implementation" not in calls
+    # Real-pod regression (confirmed 2026-09-13): the guard's own
+    # generation_config.json defaults cache_implementation="static", and
+    # generate() merges that model default in BEFORE our kwargs, so leaving
+    # cache_implementation out entirely (the previous version of this
+    # assertion) does NOT clear it -- generate() raised "Passing both
+    # cache_implementation ... and past_key_values ... is unsupported" on
+    # real hardware. classify_response() must pass cache_implementation=
+    # None EXPLICITLY alongside past_key_values to actually override it.
+    assert calls["cache_implementation"] is None
 
 
 def _load_real_guard_tokenizer():
