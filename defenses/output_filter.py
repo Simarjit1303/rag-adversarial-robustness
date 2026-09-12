@@ -111,16 +111,28 @@ def classify_response(response_text: str, model=None, tokenizer=None, max_new_to
     # example (classifying one piece of text with no other conversation
     # turns available to this attack-agnostic filter).
     conversation = [{"role": "user", "content": [{"type": "text", "text": response_text}]}]
-    input_ids = tokenizer.apply_chat_template(
-        conversation, return_tensors="pt", add_generation_prompt=True,
+    # return_dict=True is explicit here, not left to the default: transformers'
+    # apply_chat_template flipped that default from False to True at some
+    # point (confirmed 2026-09-12 against a live tokenizer, transformers
+    # 5.7.0's PreTrainedTokenizerBase.apply_chat_template source), so
+    # tokenize=True + return_tensors="pt" alone now returns a BatchEncoding
+    # (dict-like, {"input_ids", "attention_mask"}), not a bare tensor. The
+    # old code passed that dict straight into generate() as a single
+    # input_ids= kwarg, which crashed on real hardware with AttributeError
+    # ('shape') inside generate()'s internals -- the stub tokenizers in
+    # tests/test_output_filter.py returned a bare tensor and never
+    # exercised this path. Unpacking via **inputs gives generate() both
+    # input_ids and attention_mask correctly instead.
+    inputs = tokenizer.apply_chat_template(
+        conversation, return_tensors="pt", add_generation_prompt=True, return_dict=True,
     )
-    input_ids = input_ids.to(model.device) if hasattr(input_ids, "to") else input_ids
+    inputs = inputs.to(model.device) if hasattr(inputs, "to") else inputs
 
     with torch.no_grad():
         output = model.generate(
-            input_ids=input_ids, max_new_tokens=max_new_tokens, pad_token_id=tokenizer.eos_token_id,
+            **inputs, max_new_tokens=max_new_tokens, pad_token_id=tokenizer.eos_token_id,
         )
-    generated_ids = output[0][input_ids.shape[-1]:]
+    generated_ids = output[0][inputs["input_ids"].shape[-1]:]
     raw_output = tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
 
     match = _SAFE_UNSAFE_RE.match(raw_output)

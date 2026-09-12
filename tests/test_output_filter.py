@@ -22,6 +22,7 @@ import json
 
 import pytest
 import torch
+from transformers.tokenization_utils_base import BatchEncoding
 
 from attacks.crescendo import is_refusal
 from defenses.output_filter import (
@@ -35,19 +36,24 @@ from defenses.output_filter import (
 
 class _StubTokenizer:
     """Ignores actual token ids; decode() always returns the canned Guard
-    verdict text this stub was built with. apply_chat_template only needs
-    to return something with a numeric last dim for classify_response's
-    slicing to work."""
+    verdict text this stub was built with. apply_chat_template returns a
+    real BatchEncoding (dict-like {"input_ids", "attention_mask"}), matching
+    what transformers' apply_chat_template(..., return_dict=True) actually
+    hands back -- a bare tensor here would silently mask the real-hardware
+    BatchEncoding-vs-tensor bug this stub is supposed to catch (see
+    test_classify_response_conversation_survives_real_llama_guard_template's
+    docstring for the incident this refers to)."""
 
     def __init__(self, raw_output):
         self.raw_output = raw_output
         self.eos_token_id = 0
 
-    def apply_chat_template(self, conversation, return_tensors="pt", add_generation_prompt=True):
+    def apply_chat_template(self, conversation, return_tensors="pt", add_generation_prompt=True, return_dict=True):
         assert conversation == [
             {"role": "user", "content": [{"type": "text", "text": conversation[0]["content"][0]["text"]}]}
         ]
-        return torch.zeros((1, 3), dtype=torch.long)
+        input_ids = torch.zeros((1, 3), dtype=torch.long)
+        return BatchEncoding({"input_ids": input_ids, "attention_mask": torch.ones_like(input_ids)})
 
     def decode(self, ids, skip_special_tokens=True):
         return self.raw_output
@@ -57,7 +63,7 @@ class _StubModel:
     def __init__(self):
         self.device = "cpu"
 
-    def generate(self, input_ids, max_new_tokens, pad_token_id):
+    def generate(self, input_ids, attention_mask, max_new_tokens, pad_token_id):
         # append exactly one dummy "generated" token beyond the prompt --
         # classify_response only cares about the slice past input length,
         # and decode() ignores its content anyway.
@@ -261,9 +267,13 @@ def test_classify_response_conversation_survives_real_llama_guard_template():
     class _RealTemplateTokenizer:
         eos_token_id = 0
 
-        def apply_chat_template(self, conversation, return_tensors="pt", add_generation_prompt=True):
+        def apply_chat_template(self, conversation, return_tensors="pt", add_generation_prompt=True, return_dict=True):
             _ALTERNATION_CHECK.render(messages=conversation)  # raises on a bad shape
-            return torch.zeros((1, 3), dtype=torch.long)
+            # Real BatchEncoding, not a bare tensor -- see
+            # test_classify_response_survives_real_batchencoding_return_type
+            # for the dedicated regression this mirrors.
+            input_ids = torch.zeros((1, 3), dtype=torch.long)
+            return BatchEncoding({"input_ids": input_ids, "attention_mask": torch.ones_like(input_ids)})
 
         def decode(self, ids, skip_special_tokens=True):
             return "safe"
@@ -279,6 +289,56 @@ def test_classify_response_conversation_survives_real_llama_guard_template():
     # original bug.
     with pytest.raises(jinja2.exceptions.TemplateError, match="must alternate"):
         _ALTERNATION_CHECK.render(messages=[{"role": "assistant", "content": "some generated response"}])
+
+
+def test_classify_response_survives_real_batchencoding_return_type():
+    """
+    Regression test for the second real-hardware-only crash in this same
+    function: transformers' PreTrainedTokenizerBase.apply_chat_template
+    defaults return_dict=True (confirmed 2026-09-12 against a live
+    AutoTokenizer on transformers==5.7.0 -- read straight from its
+    installed source, not assumed), so tokenize=True + return_tensors="pt"
+    alone returns a BatchEncoding (dict-like: {"input_ids",
+    "attention_mask"}), not a bare tensor. The old code passed that dict
+    into model.generate(input_ids=<the dict>, ...) as a single kwarg,
+    which crashed inside generate()'s internals with AttributeError on
+    `.shape` the moment it ran against the real tokenizer -- every stub in
+    this file previously returned a bare tensor from apply_chat_template
+    and so never exercised this path.
+
+    This uses transformers' own real BatchEncoding class (not a
+    hand-rolled dict-lookalike) so the object under test is only
+    structurally similar to the real tokenizer's output because it IS the
+    real return type, not a stand-in for it.
+    """
+    class _BatchEncodingTokenizer:
+        eos_token_id = 0
+
+        def apply_chat_template(self, conversation, return_tensors="pt", add_generation_prompt=True, return_dict=True):
+            input_ids = torch.zeros((1, 3), dtype=torch.long)
+            return BatchEncoding({"input_ids": input_ids, "attention_mask": torch.ones_like(input_ids)})
+
+        def decode(self, ids, skip_special_tokens=True):
+            return "safe"
+
+    calls = {}
+
+    class _AssertingModel:
+        device = "cpu"
+
+        def generate(self, input_ids, attention_mask, max_new_tokens, pad_token_id):
+            # Proves the fix actually unpacks into separate tensor kwargs
+            # -- the old bug's failure mode was `input_ids` arriving here
+            # as the whole BatchEncoding instead of a tensor.
+            calls["input_ids_is_tensor"] = torch.is_tensor(input_ids)
+            calls["attention_mask_is_tensor"] = torch.is_tensor(attention_mask)
+            return torch.cat([input_ids, torch.zeros((1, 1), dtype=torch.long)], dim=1)
+
+    flagged, label, raw = classify_response(
+        "some generated response", model=_AssertingModel(), tokenizer=_BatchEncodingTokenizer(),
+    )
+    assert calls == {"input_ids_is_tensor": True, "attention_mask_is_tensor": True}
+    assert (flagged, label, raw) == (False, "safe", "safe")
 
 
 def test_run_output_filter_is_the_single_call_shape_all_three_runners_use(tmp_path):
