@@ -29,10 +29,12 @@ match diverge -- this is the whole reason this defense doesn't build on
 is_refusal() (see module docstring and PHASE2_CRESCENDO_INSIGHTS.md).
 """
 
+import copy
 import json
 
 import pytest
 import torch
+from transformers import DynamicCache
 from transformers.tokenization_utils_base import BatchEncoding
 
 from attacks.crescendo import is_refusal
@@ -73,8 +75,13 @@ class _StubTokenizer:
 class _StubModel:
     def __init__(self):
         self.device = "cpu"
+        # No .config -- classify_response()'s DynamicCache-construction path
+        # is conditional on hasattr(model, "config"), so these CASES-driven
+        # tests (which don't care about the Llama4 cache bug) never exercise
+        # it; see test_classify_response_builds_patched_dynamic_cache_for_
+        # llama4_config for the stub that does carry a real config.
 
-    def generate(self, input_ids, attention_mask, max_new_tokens, pad_token_id, cache_implementation=None):
+    def generate(self, input_ids, attention_mask, max_new_tokens, pad_token_id, past_key_values=None):
         # append exactly one dummy "generated" token beyond the prompt --
         # classify_response only cares about the slice past input length,
         # and decode() ignores its content anyway.
@@ -336,8 +343,12 @@ def test_classify_response_survives_real_batchencoding_return_type():
 
     class _AssertingModel:
         device = "cpu"
+        # No .config -- this test is about the BatchEncoding-unpacking bug,
+        # not the Llama4 cache bug, so it doesn't exercise the DynamicCache
+        # path (see test_classify_response_builds_patched_dynamic_cache_for_
+        # llama4_config for that).
 
-        def generate(self, input_ids, attention_mask, max_new_tokens, pad_token_id, cache_implementation=None):
+        def generate(self, input_ids, attention_mask, max_new_tokens, pad_token_id, past_key_values=None):
             # Proves the fix actually unpacks into separate tensor kwargs
             # -- the old bug's failure mode was `input_ids` arriving here
             # as the whole BatchEncoding instead of a tensor.
@@ -352,7 +363,7 @@ def test_classify_response_survives_real_batchencoding_return_type():
     assert (flagged, label, raw) == (False, "safe", "safe")
 
 
-def test_llama4_guard_config_crashes_default_static_cache_but_not_dynamic_full():
+def test_llama4_guard_config_crashes_default_caches_but_layer_types_patch_fixes_it():
     """
     Regression test for the third real-hardware-only crash in this same
     function: model.generate() itself crashed inside transformers, not in
@@ -363,7 +374,10 @@ def test_llama4_guard_config_crashes_default_static_cache_but_not_dynamic_full()
     Root cause (confirmed 2026-09-12 against the real Llama4TextConfig
     class -- Cache construction needs only a config object, no weights, so
     this reproduces the crash with zero network/GPU): Llama-Guard-4-12B's
-    published config.json sets text_config.attention_chunk_size=None, but
+    published config.json sets text_config.attention_chunk_size=None -- a
+    deliberate choice (Llama4's "Scout" iRoPE long-context design,
+    max_position_embeddings=10,485,760 -- confirmed via the real published
+    config.json), not a Meta oversight -- but
     Llama4TextConfig.__post_init__ computes layer_types=["chunked_attention",
     ...] for every layer purely from no_rope_layers, independent of
     attention_chunk_size. transformers' generation_config.json for this
@@ -377,19 +391,23 @@ def test_llama4_guard_config_crashes_default_static_cache_but_not_dynamic_full()
     different call site, `first_cache_position >= attention_chunk_size`,
     in an older transformers version -- same root config mismatch).
 
-    cache_implementation="dynamic" does NOT fix it: DynamicCache is built
-    with the same config, computes the same all-"chunked_attention"
-    layer_types, and crashes differently instantiating
-    DynamicSlidingWindowLayer(sliding_window=None) (TypeError converting
-    None to a tensor). Only "dynamic_full" -- transformers' documented
-    shortcut for skipping per-layer config inference entirely (see
-    generation/utils.py _prepare_cache_for_generation) -- avoids building
-    any sliding/chunked layer for this config, confirmed here by
-    constructing a DynamicCache with no config at all (what
-    cache_implementation="dynamic_full" causes generate() to do
-    internally).
+    Two earlier attempts both tried to route around this with a
+    cache_implementation string ("dynamic", then "dynamic_full" in commit
+    31081cf) instead of fixing the actual mismatch -- both failed, because
+    no cache_implementation string is stable across the transformers
+    versions requirements.txt's floating `>=5.13` floor can resolve to
+    (confirmed 2026-09-13: "dynamic_full" existed in the dev machine's
+    local 5.7.0 but not in PyPI's current latest, 5.17.0, where it crashed
+    on the real pod with a ValueError naming a different accepted set
+    entirely). This test instead pins the actual fix: transformers'
+    Cache.__init__ reads config.layer_types AS-IS when the attribute is
+    present (confirmed the same in both 5.7.0 and current main-branch
+    source) -- relabeling "chunked_attention" as "full_attention" whenever
+    attention_chunk_size is None (the same semantics masking_utils.py
+    already uses for that value) avoids the crash without naming any
+    cache_implementation at all.
     """
-    from transformers import DynamicCache, StaticCache
+    from transformers import StaticCache
     from transformers.models.llama4 import Llama4TextConfig
 
     # Same shape as the real guard's text_config: no_rope_layers all 1
@@ -412,10 +430,78 @@ def test_llama4_guard_config_crashes_default_static_cache_but_not_dynamic_full()
     with pytest.raises(TypeError):
         DynamicCache(config=text_config)  # cache_implementation="dynamic" -- also broken
 
-    # cache_implementation="dynamic_full" -- what the fix in
-    # classify_response() now passes -- never gives the cache a config, so
-    # it never hits this layer-type inference at all.
-    DynamicCache()  # must not raise
+    # The actual fix classify_response() now applies: relabel every
+    # "chunked_attention" layer as "full_attention" when attention_chunk_size
+    # is None, then build the cache from the patched config -- must not raise.
+    patched_config = copy.deepcopy(text_config)
+    patched_config.layer_types = [
+        "full_attention" if lt == "chunked_attention" else lt for lt in patched_config.layer_types
+    ]
+    patched_cache = DynamicCache(config=patched_config)
+    assert all(lt == "full_attention" for lt in patched_config.layer_types)
+    assert len(patched_cache.layers) == 48
+
+
+def test_classify_response_builds_patched_dynamic_cache_for_llama4_config():
+    """
+    Integration-level counterpart to
+    test_llama4_guard_config_crashes_default_caches_but_layer_types_patch_fixes_it:
+    that test proves the layer_types-patch mechanism works in isolation;
+    this one proves classify_response() actually wires it up -- a stub
+    model carrying the REAL guard's Llama4TextConfig shape (via .config),
+    asserting model.generate() receives a past_key_values that is a
+    DynamicCache built from a config with every layer relabeled
+    "full_attention", and receives no cache_implementation kwarg at all.
+    """
+    from transformers.models.llama4 import Llama4TextConfig
+
+    text_config = Llama4TextConfig(
+        attention_chunk_size=None,
+        no_rope_layers=[1] * 4,
+        num_hidden_layers=4,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=8,
+        hidden_size=16,
+    )
+    assert text_config.layer_types[0] == "chunked_attention"  # the real guard's broken shape
+
+    class _ConfigBearingConfig:
+        """Mimics Llama4ForConditionalGeneration's top-level config: a
+        composite whose get_text_config(decoder=True) returns the nested
+        text config -- same as what classify_response() calls on the real
+        model.config."""
+
+        def get_text_config(self, decoder=None, encoder=None):
+            return text_config
+
+    calls = {}
+
+    class _ConfigBearingModel:
+        device = "cpu"
+        config = _ConfigBearingConfig()
+
+        def generate(self, input_ids, attention_mask, max_new_tokens, pad_token_id, past_key_values=None):
+            calls["past_key_values"] = past_key_values
+            calls["kwargs_seen"] = {"max_new_tokens", "pad_token_id"} | (
+                {"past_key_values"} if past_key_values is not None else set()
+            )
+            return torch.cat([input_ids, torch.zeros((1, 1), dtype=torch.long)], dim=1)
+
+    tokenizer = _StubTokenizer("safe")
+    classify_response("some generated response", model=_ConfigBearingModel(), tokenizer=tokenizer)
+
+    cache = calls["past_key_values"]
+    assert isinstance(cache, DynamicCache)
+    # The whole point: classify_response() patched the config it read
+    # layer_types from before handing it to DynamicCache -- the ORIGINAL
+    # text_config object (still all "chunked_attention") must be untouched,
+    # proving a copy was patched, not the live model config.
+    assert text_config.layer_types[0] == "chunked_attention"
+    assert len(cache.layers) == 4
+    # No cache_implementation kwarg anywhere -- the whole point of this fix
+    # over the previous two attempts is that no such string is passed at all.
+    assert "cache_implementation" not in calls
 
 
 def _load_real_guard_tokenizer():
@@ -468,34 +554,30 @@ def test_classify_response_real_tokenizer_batchencoding_matches_generate_call():
 
     class _AssertingModel:
         device = "cpu"
+        # No .config -- this test is about the real tokenizer's chat-template/
+        # BatchEncoding shape, not the Llama4 cache bug (see
+        # test_classify_response_builds_patched_dynamic_cache_for_llama4_config
+        # and test_llama4_guard_config_crashes_default_caches_but_layer_types_
+        # patch_fixes_it for that -- pinning the cache fix here too would
+        # require this stub to also carry the real guard's Llama4TextConfig,
+        # duplicating those tests for no added coverage).
 
-        def generate(self, input_ids, attention_mask, max_new_tokens, pad_token_id, cache_implementation=None):
+        def generate(self, input_ids, attention_mask, max_new_tokens, pad_token_id, past_key_values=None):
             calls["input_ids"] = input_ids
             calls["attention_mask"] = attention_mask
             calls["max_new_tokens"] = max_new_tokens
             calls["pad_token_id"] = pad_token_id
-            calls["cache_implementation"] = cache_implementation
             return torch.cat([input_ids, torch.zeros((1, 1), dtype=torch.long)], dim=1)
 
     classify_response("some generated response", model=_AssertingModel(), tokenizer=tokenizer)
 
-    assert set(calls.keys()) == {
-        "input_ids", "attention_mask", "max_new_tokens", "pad_token_id", "cache_implementation",
-    }
+    assert set(calls.keys()) == {"input_ids", "attention_mask", "max_new_tokens", "pad_token_id"}
     assert torch.is_tensor(calls["input_ids"]) and torch.is_tensor(calls["attention_mask"])
     assert calls["input_ids"].dtype == torch.long
     assert calls["attention_mask"].dtype == torch.long
     assert calls["input_ids"].shape == calls["attention_mask"].shape
     assert calls["max_new_tokens"] == 20
     assert calls["pad_token_id"] == tokenizer.eos_token_id
-    # Pins the cache_utils.py fix (see output_filter.py's comment at the
-    # generate() call): the guard's own generation_config.json default of
-    # cache_implementation="static" crashes on real hardware for this
-    # model (StaticSlidingWindowLayer(sliding_window=None) -> min() on
-    # None), confirmed 2026-09-12 by reproducing the crash offline against
-    # the real Llama4TextConfig (no weights needed for Cache construction).
-    # "dynamic_full" is the explicit override that avoids it.
-    assert calls["cache_implementation"] == "dynamic_full"
 
 
 def test_run_output_filter_is_the_single_call_shape_all_three_runners_use(tmp_path):

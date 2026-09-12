@@ -20,12 +20,13 @@ is to be a clean, independent signal a downstream analysis can compare
 AGAINST is_refusal() -- it must not import or call it.
 """
 
+import copy
 import json
 import os
 import re
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, DynamicCache
 
 # Not yet registered in config.MODELS -- Llama-Guard-4-12B is a judge, not
 # a target model under evaluation (it never generates a RAG answer), so it
@@ -41,6 +42,19 @@ GUARD_MODEL_ID = "meta-llama/Llama-Guard-4-12B"
 # only Hub API call, no weight download -- same method as
 # scripts/fetch_corpus_revisions.py uses for config.CORPORA entries.
 GUARD_MODEL_REVISION = "87acb4b94e930c3d679e6e7ee9d57e2feab9ea71"
+
+# FOLLOW-UP, not addressed here: requirements.txt:33 pins transformers only
+# as a floor (>=5.13, no ceiling), so the Docker build installs whatever's
+# newest at build time -- confirmed 2026-09-13 this is why the
+# cache_implementation="dynamic_full" fix (commit 31081cf) worked against the
+# dev machine's local 5.7.0 but failed on the real pod, which resolved a
+# different, newer version where that string doesn't exist. The generate()
+# fix below no longer depends on any cache_implementation string, so this
+# floating pin no longer threatens THIS bug -- but it's still a real
+# reproducibility risk for anything else version-sensitive across the other
+# three target models and the injection classifier. Deliberately not pinning
+# a ceiling in this commit: that's a separate decision, to be made after this
+# fix is confirmed working on the pod, not bundled into a still-unverified fix.
 
 # Fixed, NOT generated -- the point is that downstream scoring can tell
 # "the defense fired" apart from "the model refused on its own" by an
@@ -128,33 +142,69 @@ def classify_response(response_text: str, model=None, tokenizer=None, max_new_to
     )
     inputs = inputs.to(model.device) if hasattr(inputs, "to") else inputs
 
-    # cache_implementation="dynamic_full" is explicit here, not left to
-    # Llama-Guard-4-12B's own generation_config.json default of
-    # cache_implementation="static". That default crashes on real hardware
-    # (confirmed 2026-09-12, reproduced offline against the real
-    # Llama4TextConfig with no weights needed -- Cache construction is
-    # config-only): the guard's config.json sets text_config.
-    # attention_chunk_size=None while every layer's computed layer_types
-    # is "chunked_attention" (from no_rope_layers), so transformers'
-    # StaticCache tries StaticSlidingWindowLayer(sliding_window=None) and
-    # crashes in min(sliding_window, max_cache_len) -- a real
-    # transformers/Llama4-config mismatch (also reported independently at
-    # https://huggingface.co/meta-llama/Llama-Guard-4-12B/discussions/14),
-    # not a bug in this module. cache_implementation="dynamic" does NOT
-    # fix it -- it still passes the same config into DynamicCache and
-    # crashes differently (TypeError converting None to a tensor);
-    # "dynamic_full" is the one documented shortcut (see transformers'
-    # generation/utils.py _prepare_cache_for_generation) that skips
-    # passing config to the cache entirely, avoiding this layer-type
-    # inference altogether -- verified via the same offline Llama4TextConfig
-    # reproduction, not yet against the real 12B model's actual generation.
+    # We build the Cache ourselves instead of naming a cache_implementation
+    # string, because no string survives a transformers version bump here.
+    #
+    # Root cause (confirmed 2026-09-12/13, reproduced offline against the
+    # real Llama4TextConfig class -- Cache construction is config-only, no
+    # weights needed): Llama-Guard-4-12B's published config.json sets
+    # text_config.attention_chunk_size=None -- a deliberate choice, not a
+    # Meta oversight (this is the Llama4 "Scout" iRoPE long-context design:
+    # max_position_embeddings=10,485,760, and transformers' own
+    # masking_utils.py already treats a None chunk size as "no chunking
+    # bound", falling back to a plain causal mask). But every layer's
+    # computed layer_types is "chunked_attention" regardless (driven only by
+    # no_rope_layers), and Cache.__init__ never got that same None-means-
+    # unbounded fallback: it reads config.layer_types AS-IS when present, and
+    # unconditionally maps "chunked_attention" to a *SlidingWindowLayer that
+    # requires a real sliding_window value. StaticCache crashes in
+    # min(sliding_window, max_cache_len); DynamicCache crashes converting
+    # None to a tensor -- both confirmed by direct reproduction, independent
+    # of which cache_implementation string selects them. (Also reported,
+    # different call site, same root config mismatch, at
+    # https://huggingface.co/meta-llama/Llama-Guard-4-12B/discussions/14.)
+    #
+    # Attempt 1 (cache_implementation="dynamic") and attempt 2
+    # (cache_implementation="dynamic_full", commit 31081cf) both relied on
+    # one specific string being valid in whatever transformers version is
+    # actually installed. "dynamic_full" was valid in the dev machine's
+    # local 5.7.0 but crashed on the real pod build with a ValueError
+    # listing a completely different accepted set -- requirements.txt:33
+    # pins only a floor (transformers>=5.13, no ceiling), so the Docker
+    # build installs whatever's newest (PyPI's latest is 5.17.0 as of
+    # 2026-09-13), where "dynamic_full" no longer exists at all, and
+    # "hybrid"/"hybrid_chunked" are deprecated STATIC-cache aliases that
+    # still risk the identical per-layer inference. No cache_implementation
+    # value is stable across the versions this floating pin can resolve to.
+    #
+    # This fix instead patches the actual mechanism transformers reads
+    # (config.layer_types, confirmed present and behaving the same way in
+    # both the local 5.7.0 and the current main-branch source): copy the
+    # guard's real text config, relabel every "chunked_attention" layer as
+    # "full_attention" when attention_chunk_size is None (matching
+    # masking_utils.py's own semantics for that value), and build a
+    # DynamicCache from the patched config ourselves so generate() never
+    # infers per-layer types from the broken original. Verified offline
+    # against the real Llama4TextConfig: the patched config builds a
+    # DynamicCache cleanly where the unpatched one crashes -- not yet
+    # verified against the real 12B model's actual generate() call on GPU.
+    past_key_values = None
+    config = getattr(model, "config", None)
+    if config is not None:
+        text_config = copy.deepcopy(config.get_text_config(decoder=True))
+        layer_types = getattr(text_config, "layer_types", None)
+        if getattr(text_config, "attention_chunk_size", None) is None and layer_types:
+            text_config.layer_types = [
+                "full_attention" if lt == "chunked_attention" else lt for lt in layer_types
+            ]
+        past_key_values = DynamicCache(config=text_config)
+
+    generate_kwargs = {"max_new_tokens": max_new_tokens, "pad_token_id": tokenizer.eos_token_id}
+    if past_key_values is not None:
+        generate_kwargs["past_key_values"] = past_key_values
+
     with torch.no_grad():
-        output = model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            pad_token_id=tokenizer.eos_token_id,
-            cache_implementation="dynamic_full",
-        )
+        output = model.generate(**inputs, **generate_kwargs)
     generated_ids = output[0][inputs["input_ids"].shape[-1]:]
     raw_output = tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
 
