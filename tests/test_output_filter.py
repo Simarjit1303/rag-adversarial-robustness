@@ -74,7 +74,7 @@ class _StubModel:
     def __init__(self):
         self.device = "cpu"
 
-    def generate(self, input_ids, attention_mask, max_new_tokens, pad_token_id):
+    def generate(self, input_ids, attention_mask, max_new_tokens, pad_token_id, cache_implementation=None):
         # append exactly one dummy "generated" token beyond the prompt --
         # classify_response only cares about the slice past input length,
         # and decode() ignores its content anyway.
@@ -337,7 +337,7 @@ def test_classify_response_survives_real_batchencoding_return_type():
     class _AssertingModel:
         device = "cpu"
 
-        def generate(self, input_ids, attention_mask, max_new_tokens, pad_token_id):
+        def generate(self, input_ids, attention_mask, max_new_tokens, pad_token_id, cache_implementation=None):
             # Proves the fix actually unpacks into separate tensor kwargs
             # -- the old bug's failure mode was `input_ids` arriving here
             # as the whole BatchEncoding instead of a tensor.
@@ -350,6 +350,72 @@ def test_classify_response_survives_real_batchencoding_return_type():
     )
     assert calls == {"input_ids_is_tensor": True, "attention_mask_is_tensor": True}
     assert (flagged, label, raw) == (False, "safe", "safe")
+
+
+def test_llama4_guard_config_crashes_default_static_cache_but_not_dynamic_full():
+    """
+    Regression test for the third real-hardware-only crash in this same
+    function: model.generate() itself crashed inside transformers, not in
+    our code, with `TypeError: '<' not supported between instances of
+    'int' and 'NoneType'` in cache_utils.py's
+    StaticSlidingWindowLayer.__init__ (`min(sliding_window, max_cache_len)`).
+
+    Root cause (confirmed 2026-09-12 against the real Llama4TextConfig
+    class -- Cache construction needs only a config object, no weights, so
+    this reproduces the crash with zero network/GPU): Llama-Guard-4-12B's
+    published config.json sets text_config.attention_chunk_size=None, but
+    Llama4TextConfig.__post_init__ computes layer_types=["chunked_attention",
+    ...] for every layer purely from no_rope_layers, independent of
+    attention_chunk_size. transformers' generation_config.json for this
+    model also defaults cache_implementation="static", so an unmodified
+    model.generate() call builds a StaticCache, which for a
+    "chunked_attention" layer does
+    StaticSlidingWindowLayer(sliding_window=config.attention_chunk_size)
+    i.e. sliding_window=None, then crashes on min(None, max_cache_len).
+    Also independently reported at
+    https://huggingface.co/meta-llama/Llama-Guard-4-12B/discussions/14 (a
+    different call site, `first_cache_position >= attention_chunk_size`,
+    in an older transformers version -- same root config mismatch).
+
+    cache_implementation="dynamic" does NOT fix it: DynamicCache is built
+    with the same config, computes the same all-"chunked_attention"
+    layer_types, and crashes differently instantiating
+    DynamicSlidingWindowLayer(sliding_window=None) (TypeError converting
+    None to a tensor). Only "dynamic_full" -- transformers' documented
+    shortcut for skipping per-layer config inference entirely (see
+    generation/utils.py _prepare_cache_for_generation) -- avoids building
+    any sliding/chunked layer for this config, confirmed here by
+    constructing a DynamicCache with no config at all (what
+    cache_implementation="dynamic_full" causes generate() to do
+    internally).
+    """
+    from transformers import DynamicCache, StaticCache
+    from transformers.models.llama4 import Llama4TextConfig
+
+    # Same shape as the real guard's text_config: no_rope_layers all 1
+    # (every layer wants chunked attention) but attention_chunk_size
+    # explicitly None, as published in the real model's config.json.
+    text_config = Llama4TextConfig(
+        attention_chunk_size=None,
+        no_rope_layers=[1] * 48,
+        num_hidden_layers=48,
+        num_attention_heads=40,
+        num_key_value_heads=8,
+        head_dim=128,
+        hidden_size=5120,
+    )
+    assert text_config.layer_types[0] == "chunked_attention"
+
+    with pytest.raises(TypeError):
+        StaticCache(config=text_config, max_cache_len=64)  # the reported crash
+
+    with pytest.raises(TypeError):
+        DynamicCache(config=text_config)  # cache_implementation="dynamic" -- also broken
+
+    # cache_implementation="dynamic_full" -- what the fix in
+    # classify_response() now passes -- never gives the cache a config, so
+    # it never hits this layer-type inference at all.
+    DynamicCache()  # must not raise
 
 
 def _load_real_guard_tokenizer():
@@ -403,22 +469,33 @@ def test_classify_response_real_tokenizer_batchencoding_matches_generate_call():
     class _AssertingModel:
         device = "cpu"
 
-        def generate(self, input_ids, attention_mask, max_new_tokens, pad_token_id):
+        def generate(self, input_ids, attention_mask, max_new_tokens, pad_token_id, cache_implementation=None):
             calls["input_ids"] = input_ids
             calls["attention_mask"] = attention_mask
             calls["max_new_tokens"] = max_new_tokens
             calls["pad_token_id"] = pad_token_id
+            calls["cache_implementation"] = cache_implementation
             return torch.cat([input_ids, torch.zeros((1, 1), dtype=torch.long)], dim=1)
 
     classify_response("some generated response", model=_AssertingModel(), tokenizer=tokenizer)
 
-    assert set(calls.keys()) == {"input_ids", "attention_mask", "max_new_tokens", "pad_token_id"}
+    assert set(calls.keys()) == {
+        "input_ids", "attention_mask", "max_new_tokens", "pad_token_id", "cache_implementation",
+    }
     assert torch.is_tensor(calls["input_ids"]) and torch.is_tensor(calls["attention_mask"])
     assert calls["input_ids"].dtype == torch.long
     assert calls["attention_mask"].dtype == torch.long
     assert calls["input_ids"].shape == calls["attention_mask"].shape
     assert calls["max_new_tokens"] == 20
     assert calls["pad_token_id"] == tokenizer.eos_token_id
+    # Pins the cache_utils.py fix (see output_filter.py's comment at the
+    # generate() call): the guard's own generation_config.json default of
+    # cache_implementation="static" crashes on real hardware for this
+    # model (StaticSlidingWindowLayer(sliding_window=None) -> min() on
+    # None), confirmed 2026-09-12 by reproducing the crash offline against
+    # the real Llama4TextConfig (no weights needed for Cache construction).
+    # "dynamic_full" is the explicit override that avoids it.
+    assert calls["cache_implementation"] == "dynamic_full"
 
 
 def test_run_output_filter_is_the_single_call_shape_all_three_runners_use(tmp_path):

@@ -128,9 +128,32 @@ def classify_response(response_text: str, model=None, tokenizer=None, max_new_to
     )
     inputs = inputs.to(model.device) if hasattr(inputs, "to") else inputs
 
+    # cache_implementation="dynamic_full" is explicit here, not left to
+    # Llama-Guard-4-12B's own generation_config.json default of
+    # cache_implementation="static". That default crashes on real hardware
+    # (confirmed 2026-09-12, reproduced offline against the real
+    # Llama4TextConfig with no weights needed -- Cache construction is
+    # config-only): the guard's config.json sets text_config.
+    # attention_chunk_size=None while every layer's computed layer_types
+    # is "chunked_attention" (from no_rope_layers), so transformers'
+    # StaticCache tries StaticSlidingWindowLayer(sliding_window=None) and
+    # crashes in min(sliding_window, max_cache_len) -- a real
+    # transformers/Llama4-config mismatch (also reported independently at
+    # https://huggingface.co/meta-llama/Llama-Guard-4-12B/discussions/14),
+    # not a bug in this module. cache_implementation="dynamic" does NOT
+    # fix it -- it still passes the same config into DynamicCache and
+    # crashes differently (TypeError converting None to a tensor);
+    # "dynamic_full" is the one documented shortcut (see transformers'
+    # generation/utils.py _prepare_cache_for_generation) that skips
+    # passing config to the cache entirely, avoiding this layer-type
+    # inference altogether -- verified via the same offline Llama4TextConfig
+    # reproduction, not yet against the real 12B model's actual generation.
     with torch.no_grad():
         output = model.generate(
-            **inputs, max_new_tokens=max_new_tokens, pad_token_id=tokenizer.eos_token_id,
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            pad_token_id=tokenizer.eos_token_id,
+            cache_implementation="dynamic_full",
         )
     generated_ids = output[0][inputs["input_ids"].shape[-1]:]
     raw_output = tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
