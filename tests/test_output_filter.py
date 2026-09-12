@@ -20,6 +20,7 @@ is_refusal() (see module docstring and PHASE2_CRESCENDO_INSIGHTS.md).
 
 import json
 
+import pytest
 import torch
 
 from attacks.crescendo import is_refusal
@@ -43,7 +44,9 @@ class _StubTokenizer:
         self.eos_token_id = 0
 
     def apply_chat_template(self, conversation, return_tensors="pt", add_generation_prompt=True):
-        assert conversation == [{"role": "assistant", "content": conversation[0]["content"]}]
+        assert conversation == [
+            {"role": "user", "content": [{"type": "text", "text": conversation[0]["content"][0]["text"]}]}
+        ]
         return torch.zeros((1, 3), dtype=torch.long)
 
     def decode(self, ids, skip_special_tokens=True):
@@ -214,6 +217,68 @@ def test_log_filter_event_appends_and_is_durable_across_calls(tmp_path):
     assert row1["flagged"] is False
     assert row2["flagged"] is True
     assert row2["guard_raw_output"] == "unsafe\nS9"
+
+
+def test_classify_response_conversation_survives_real_llama_guard_template():
+    """
+    Regression test for the real-hardware crash: Llama-Guard-4-12B's own
+    chat_template.jinja (github: meta-llama/Llama-Guard-4-12B, fetched
+    2026-09-12) raises jinja2.exceptions.TemplateError("Conversation roles
+    must alternate user/assistant/user/assistant/...") unless messages[0]'s
+    role is "user", and expects content as a list of {"type": "text", ...}
+    dicts, not a bare string.
+
+    The stub tokenizer used by every other test in this file just echoes
+    the conversation back (see _StubTokenizer.apply_chat_template's
+    assert) -- it never actually runs Jinja, so it could not have caught
+    the original bug (a lone {"role": "assistant", "content": <str>} turn).
+    This test instead renders the real alternation/content-shape check
+    (the exact snippet from that template) via a real jinja2.Environment,
+    so a future regression to the old shape fails here, not on the pod.
+    """
+    import jinja2
+
+    # Verbatim alternation + content-shape logic from Llama-Guard-4-12B's
+    # own chat_template.jinja -- not a paraphrase. raise_exception is a
+    # global transformers itself injects when rendering a real chat
+    # template (jinja2 has no such builtin), so it's registered here too.
+    def _raise_exception(message):
+        raise jinja2.exceptions.TemplateError(message)
+
+    _env = jinja2.Environment()
+    _env.globals["raise_exception"] = _raise_exception
+    _ALTERNATION_CHECK = _env.from_string(
+        "{%- for message in messages -%}"
+        "{%- if (message['role'] == 'user') != (loop.index0 % 2 == 0) -%}"
+        "{{ raise_exception('Conversation roles must alternate user/assistant/user/assistant/...') }}"
+        "{%- endif -%}"
+        "{%- for txt in message.content | selectattr('type', 'equalto', 'text') -%}"
+        "{{ txt.text }}"
+        "{%- endfor -%}"
+        "{%- endfor -%}"
+    )
+
+    class _RealTemplateTokenizer:
+        eos_token_id = 0
+
+        def apply_chat_template(self, conversation, return_tensors="pt", add_generation_prompt=True):
+            _ALTERNATION_CHECK.render(messages=conversation)  # raises on a bad shape
+            return torch.zeros((1, 3), dtype=torch.long)
+
+        def decode(self, ids, skip_special_tokens=True):
+            return "safe"
+
+    model = _StubModel()
+    tokenizer = _RealTemplateTokenizer()
+
+    # The current (fixed) shape must NOT raise.
+    classify_response("some generated response", model=model, tokenizer=tokenizer)
+
+    # The OLD, broken shape -- a lone assistant-role turn with bare-string
+    # content -- must still raise, proving this test would have caught the
+    # original bug.
+    with pytest.raises(jinja2.exceptions.TemplateError, match="must alternate"):
+        _ALTERNATION_CHECK.render(messages=[{"role": "assistant", "content": "some generated response"}])
 
 
 def test_run_output_filter_is_the_single_call_shape_all_three_runners_use(tmp_path):

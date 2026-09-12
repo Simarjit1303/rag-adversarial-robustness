@@ -99,7 +99,18 @@ def classify_response(response_text: str, model=None, tokenizer=None, max_new_to
     if model is None or tokenizer is None:
         model, tokenizer = load_guard_model()
 
-    conversation = [{"role": "assistant", "content": response_text}]
+    # Llama-Guard-4-12B's own chat_template.jinja (fetched 2026-09-12 from the
+    # model repo, not guessed) raises "Conversation roles must alternate
+    # user/assistant/..." unless messages[0]["role"] == "user" -- a lone
+    # {"role": "assistant", ...} turn (the old code here) fails that check on
+    # every call, not just this one; the previous unit tests never caught it
+    # because their stub tokenizer echoed the conversation back instead of
+    # running real Jinja alternation logic. The same template also requires
+    # content as a list of typed dicts, not a bare string. This single-turn,
+    # role="user" shape matches the model card's own "Getting Started"
+    # example (classifying one piece of text with no other conversation
+    # turns available to this attack-agnostic filter).
+    conversation = [{"role": "user", "content": [{"type": "text", "text": response_text}]}]
     input_ids = tokenizer.apply_chat_template(
         conversation, return_tensors="pt", add_generation_prompt=True,
     )
