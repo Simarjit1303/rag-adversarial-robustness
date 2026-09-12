@@ -12,6 +12,17 @@ real weights before the Phase 3 sweep, same "verify on real
 infrastructure before committing budget" discipline already used
 throughout this repo's own sweep smoke tests.
 
+One deliberate exception:
+test_classify_response_real_tokenizer_batchencoding_matches_generate_call
+opts INTO a real (tokenizer-only, no weights) download of the pinned Guard
+tokenizer, because two consecutive real-hardware crashes in this same
+function (role alternation, then BatchEncoding-vs-tensor) both slipped
+past every hand-rolled stub here. It self-skips wherever that download
+isn't possible (no network, no HF_TOKEN, license not accepted for the
+gated repo -- confirmed 2026-09-12 on this dev machine: GatedRepoError,
+no HF_TOKEN set), so it stays a no-op here and in CI and only actually
+runs on a machine that has real Guard access, such as the pod.
+
 The core claim under test: on the SAME input text, output_filter's
 Guard-based judgment and attacks.crescendo.is_refusal()'s naive substring
 match diverge -- this is the whole reason this defense doesn't build on
@@ -339,6 +350,75 @@ def test_classify_response_survives_real_batchencoding_return_type():
     )
     assert calls == {"input_ids_is_tensor": True, "attention_mask_is_tensor": True}
     assert (flagged, label, raw) == (False, "safe", "safe")
+
+
+def _load_real_guard_tokenizer():
+    """Best-effort load of the real, pinned Guard tokenizer (small -- no
+    .safetensors, no full-model weights). Returns None on ANY failure
+    (no network, no HF_TOKEN, gated-repo access not granted) so callers can
+    turn that into a clean skip instead of a spurious CI failure. Cached at
+    module scope so the download is attempted once, not once per skipif
+    check plus once per test body."""
+    try:
+        from transformers import AutoTokenizer
+
+        from defenses.output_filter import GUARD_MODEL_ID, GUARD_MODEL_REVISION
+
+        return AutoTokenizer.from_pretrained(GUARD_MODEL_ID, revision=GUARD_MODEL_REVISION)
+    except Exception:
+        return None
+
+
+_REAL_GUARD_TOKENIZER = _load_real_guard_tokenizer()
+
+
+@pytest.mark.skipif(
+    _REAL_GUARD_TOKENIZER is None,
+    reason="needs network + an HF_TOKEN with the Llama-Guard-4-12B license accepted",
+)
+def test_classify_response_real_tokenizer_batchencoding_matches_generate_call():
+    """
+    The strongest test in this file: drives classify_response()'s real
+    conversation-building logic through the REAL pinned Llama-Guard-4-12B
+    tokenizer -- its real apply_chat_template, real chat_template.jinja,
+    real BatchEncoding -- with zero mocking upstream of model.generate().
+    Only that final call is stubbed (a real model needs GPU + gated
+    weights this machine doesn't have), and the stub asserts the exact
+    kwargs classify_response's `**inputs` unpacking hands it.
+
+    Confirmed manually 2026-09-12 (network access unavailable on this dev
+    machine to run this test live -- see module docstring): against the
+    real chat_template.jinja fetched straight from the model repo, the
+    real apply_chat_template(..., return_dict=True) call returns a
+    BatchEncoding with exactly {"input_ids", "attention_mask"}, both real
+    int64 tensors, no dtype surprises and no extra/missing keys generate()
+    would need -- i.e. classify_response's current **inputs unpacking is
+    exactly right for what the real tokenizer hands back. This test pins
+    that finding permanently for whichever machine has real access (e.g.
+    the pod), rather than trusting it never regresses.
+    """
+    tokenizer = _REAL_GUARD_TOKENIZER
+    calls = {}
+
+    class _AssertingModel:
+        device = "cpu"
+
+        def generate(self, input_ids, attention_mask, max_new_tokens, pad_token_id):
+            calls["input_ids"] = input_ids
+            calls["attention_mask"] = attention_mask
+            calls["max_new_tokens"] = max_new_tokens
+            calls["pad_token_id"] = pad_token_id
+            return torch.cat([input_ids, torch.zeros((1, 1), dtype=torch.long)], dim=1)
+
+    classify_response("some generated response", model=_AssertingModel(), tokenizer=tokenizer)
+
+    assert set(calls.keys()) == {"input_ids", "attention_mask", "max_new_tokens", "pad_token_id"}
+    assert torch.is_tensor(calls["input_ids"]) and torch.is_tensor(calls["attention_mask"])
+    assert calls["input_ids"].dtype == torch.long
+    assert calls["attention_mask"].dtype == torch.long
+    assert calls["input_ids"].shape == calls["attention_mask"].shape
+    assert calls["max_new_tokens"] == 20
+    assert calls["pad_token_id"] == tokenizer.eos_token_id
 
 
 def test_run_output_filter_is_the_single_call_shape_all_three_runners_use(tmp_path):
