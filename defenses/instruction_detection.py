@@ -89,7 +89,27 @@ def detect_injection(
     protectai DeBERTa pipeline described in this module's docstring.
     """
     clf = classifier or _load_default_classifier()
-    result = clf(text, truncation=True)[0]
+    # max_length=512 is explicit, not left for truncation=True to infer from
+    # the tokenizer's own model_max_length: protectai/deberta-v3-base-prompt-
+    # injection-v2's published tokenizer_config.json sets model_max_length to
+    # the "no limit configured" HF sentinel (~1e30, transformers'
+    # VERY_LARGE_INTEGER), and transformers' own tokenization_utils_base.py
+    # (_get_padding_truncation_strategies) silently downgrades truncation=True
+    # to DO_NOT_TRUNCATE whenever max_length is omitted and model_max_length
+    # exceeds LARGE_INTEGER -- confirmed by reading that exact source path.
+    # So truncation=True alone was a silent no-op here: any passage longer
+    # than the model's real trained context ran through DeBERTa's O(n^2)
+    # self-attention at FULL, uncapped length on CPU. hotpot_qa's
+    # extract_passage_text (data/normalize.py) concatenates the ENTIRE
+    # distractor-config context -- all ~10 documents' sentences -- into one
+    # string per passage, unlike this module's own short smoke-test
+    # fixtures, so real sweep passages are routinely far longer than
+    # anything the test suite exercises. This is almost certainly the real
+    # pod's apparent hang at n=1000 (CPU pinned at 100%, state R -- genuinely
+    # computing one pathologically long forward pass, not an infinite loop):
+    # confirmed offline via the real published config.json, max_position_
+    # embeddings=512 is the model's actual trained/supported length.
+    result = clf(text, truncation=True, max_length=512)[0]
     label = result["label"]
     score = float(result["score"])
     flagged = label.upper() == _FLAG_LABEL and score >= threshold

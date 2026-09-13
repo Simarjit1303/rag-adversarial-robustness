@@ -321,8 +321,21 @@ def run_attack_sweep(model_keys=None, corpus_names=None, injection_templates=Non
                         n_processed += 1
 
                         if (i + 1) % 50 == 0:
+                            # flush=True: stdout is fully block-buffered (not
+                            # line-buffered) once redirected to a file, e.g.
+                            # `nohup ... > log.txt` -- Python's default 8KB
+                            # buffer would otherwise hold this line (and every
+                            # other print in this loop) until either that
+                            # buffer fills or the process exits, so a `tail`
+                            # on the log during a long run can show zero
+                            # output even while real progress is happening.
+                            # Confirmed 2026-09-13: at sample_n=1000/cadence
+                            # 50, this loop alone only ever emits ~20 short
+                            # lines (~1KB total) before completing, nowhere
+                            # near the 8KB auto-flush threshold, so it would
+                            # never self-flush mid-run without this.
                             print(f"  {i + 1}/{len(records)} done "
-                                  f"({time.time() - start:.0f}s elapsed)")
+                                  f"({time.time() - start:.0f}s elapsed)", flush=True)
 
                 summary_row = _summarize(
                     model_key, corpus_name, injection_template,

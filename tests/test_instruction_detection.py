@@ -87,6 +87,37 @@ def test_detect_injection_label_case_insensitive():
     assert result.flagged
 
 
+def test_detect_injection_passes_explicit_max_length():
+    """
+    Regression test for the real-pod near-hang at n=1000 (2026-09-13):
+    detect_injection() used to call the classifier with truncation=True
+    and no max_length. protectai/deberta-v3-base-prompt-injection-v2's
+    published tokenizer_config.json sets model_max_length to HF's "no
+    limit configured" sentinel (~1e30) -- and transformers' own
+    tokenization_utils_base.py silently downgrades truncation=True to
+    DO_NOT_TRUNCATE whenever max_length is omitted and model_max_length
+    exceeds that sentinel threshold (confirmed by reading that exact
+    source path). So truncation=True alone was a no-op: any passage
+    longer than the model's real 512-token trained context (config.json:
+    max_position_embeddings=512) ran through DeBERTa's O(n^2) self-
+    attention at FULL length on CPU -- hotpot_qa's extract_passage_text
+    concatenates an entire ~10-document distractor context into one
+    passage string, so this was routinely hit at real sweep scale despite
+    never showing up in this file's short smoke-test fixtures. Pins the
+    fix: max_length must be passed explicitly so truncation actually
+    applies regardless of the tokenizer's own (broken) metadata.
+    """
+    captured_kwargs = {}
+
+    def _recording_classifier(text, **kw):
+        captured_kwargs.update(kw)
+        return [{"label": "SAFE", "score": 0.02}]
+
+    detect_injection("anything", classifier=_recording_classifier)
+    assert captured_kwargs.get("truncation") is True
+    assert captured_kwargs.get("max_length") == 512
+
+
 def test_filter_retrieved_passages_drops_flagged_and_keeps_clean(monkeypatch):
     """Matches build_rag_user_prompt's (doc, score) retrieved shape and
     extract_passage_text contract via a minimal corpus fixture, and
