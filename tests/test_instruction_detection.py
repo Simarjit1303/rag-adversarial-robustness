@@ -118,6 +118,55 @@ def test_detect_injection_passes_explicit_max_length():
     assert captured_kwargs.get("max_length") == 512
 
 
+def test_load_default_classifier_caps_torch_threads(monkeypatch):
+    """
+    Regression test for the real-pod ~12.6x user/real CPU-time ratio at
+    RAG_SAMPLE_N=1 (2026-09-13, follow-up to the max_length=512 fix in
+    commit 9fff0c2 -- which was confirmed present and correct on the pod,
+    ruling out the truncation bug recurring). Call-count and model-reuse
+    were both confirmed correct (TOP_K=5 -> exactly 5 detect_injection
+    calls for one question, classifier loaded once via the _pipeline
+    singleton, never reloaded per call) -- cProfile on a real hotpot_qa-
+    shaped passage through the real model confirmed 100% of the time is
+    genuine DeBERTa forward-pass compute, not a stray loop. The actual
+    cause: torch.set_num_threads() was never capped, so PyTorch's CPU
+    intra-op thread pool defaults to the host's full (possibly very high,
+    or cgroup-quota-mismatched) core count -- oversized thread-pool
+    overhead for a single small forward pass, burning far more aggregate
+    CPU-time than the compute itself needs. Pins the fix: loading the
+    real classifier must cap torch to 1 thread first.
+    """
+    import defenses.instruction_detection as idmod
+    monkeypatch.setattr(idmod, "_pipeline", None)
+
+    captured = {}
+
+    class _FakePipeline:
+        def __call__(self, *a, **kw):
+            return [{"label": "SAFE", "score": 0.01}]
+
+    def _fake_set_num_threads(n):
+        captured["n"] = n
+
+    def _fake_pipeline_factory(*a, **kw):
+        # torch.set_num_threads must already have been called by the
+        # time the real HF pipeline is constructed -- capture order.
+        captured["threads_capped_before_pipeline_load"] = "n" in captured
+        return _FakePipeline()
+
+    monkeypatch.setattr("torch.set_num_threads", _fake_set_num_threads)
+    # transformers.pipeline is a _LazyModule re-export -- patching the
+    # top-level attribute doesn't stick (it re-resolves from the real
+    # transformers.pipelines submodule on every `from transformers import
+    # pipeline`, confirmed by direct experiment), so patch it there.
+    monkeypatch.setattr("transformers.pipelines.pipeline", _fake_pipeline_factory)
+
+    idmod._load_default_classifier()
+
+    assert captured.get("n") == 1
+    assert captured.get("threads_capped_before_pipeline_load") is True
+
+
 def test_filter_retrieved_passages_drops_flagged_and_keeps_clean(monkeypatch):
     """Matches build_rag_user_prompt's (doc, score) retrieved shape and
     extract_passage_text contract via a minimal corpus fixture, and

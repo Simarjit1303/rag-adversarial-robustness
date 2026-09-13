@@ -55,7 +55,32 @@ def _load_default_classifier():
     """
     global _pipeline
     if _pipeline is None:
+        import torch
         from transformers import pipeline
+        # Cap PyTorch's CPU intra-op thread pool BEFORE loading the
+        # pipeline. Real-pod measurement (2026-09-13): a single
+        # RAG_SAMPLE_N=1 item (5 passages at TOP_K=5, one detect_injection
+        # call per passage -- confirmed correct, not a loop bug) took
+        # real 4m27s but user 56m5s CPU-time -- a ~12.6x ratio, meaning
+        # far more CPU-thread-seconds were burned than one classification
+        # pass needs. cProfile confirmed every one of those seconds is
+        # spent inside DeBERTa's real forward pass (nn.Linear/attention),
+        # not a stray loop or reinit -- so the cost is genuine compute,
+        # multiplied by thread-pool overhead: torch.set_num_threads()
+        # defaults to the CPU count PyTorch detects, uncapped, and this
+        # module never overrode it. A single 512-token forward pass on a
+        # ~184M-param model is too small a matmul to benefit from wide
+        # intra-op parallelism -- on a RunPod GPU rental's high-vCPU-count
+        # (or cgroup-quota-mismatched-container) host, spawning/
+        # synchronizing dozens of threads for that little compute burns
+        # far more aggregate CPU-time than it saves in wall-clock, and can
+        # even slow the wall-clock itself down via contention. Capping to
+        # 1 thread removes this scaling risk entirely regardless of the
+        # host's reported core count -- confirmed offline this is not a
+        # meaningful latency regression (single real-model call on a
+        # real-length hotpot_qa-shaped passage stayed in the low single
+        # digits of seconds at 1 thread vs default).
+        torch.set_num_threads(1)
         # device=-1: CPU-only. No GPU code path exists in this module by
         # design -- the model is small enough (~184M params) that a
         # per-passage classifier call is cheap on CPU even on the pod,
