@@ -241,8 +241,12 @@ def build_poisoned_contexts(corpus_name: str, split: str = "dev", sample_n: int 
         })
 
         if (i + 1) % 10 == 0:
+            # flush=True: same overnight-unattended-sweep buffering gap fixed in
+            # run_attack_injection.py (2026-09-13) -- stdout redirected via
+            # nohup > log is fully block-buffered, not line-buffered, so this
+            # print can sit unseen in the log for the whole run otherwise.
             print(f"  [poison] {i + 1}/{len(target_records)} target questions processed "
-                  f"({corpus_name})")
+                  f"({corpus_name})", flush=True)
 
     if use_cache:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -385,7 +389,8 @@ def _run_hf_poison_sweep(model_keys, corpus_names, poison_configs, contexts_by_c
                         raw_f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
                         if (i + 1) % 20 == 0:
-                            print(f"  {i + 1}/{len(contexts)} done ({time.time() - start:.0f}s elapsed)")
+                            # flush=True: same buffering fix as above.
+                            print(f"  {i + 1}/{len(contexts)} done ({time.time() - start:.0f}s elapsed)", flush=True)
 
                 summary_row = _summarize(model_key, corpus_name, poison_config, rows)
                 summary_rows.append(summary_row)

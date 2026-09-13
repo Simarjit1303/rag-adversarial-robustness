@@ -386,7 +386,11 @@ def run_crescendo_sweep(model_keys=None, max_turns: int = None, sample_n: int = 
                 os.fsync(raw_f.fileno())
 
                 if (i + 1) % 10 == 0:
-                    print(f"  {i + 1}/{len(behaviors)} done ({time.time() - start:.0f}s elapsed)")
+                    # flush=True: same overnight-unattended-sweep buffering gap fixed
+                    # in run_attack_injection.py (2026-09-13) -- stdout redirected via
+                    # nohup > log is fully block-buffered, not line-buffered, so this
+                    # print can sit unseen in the log for the whole run otherwise.
+                    print(f"  {i + 1}/{len(behaviors)} done ({time.time() - start:.0f}s elapsed)", flush=True)
 
         summary_row = _summarize(model_key, max_turns, rows)
         summary_rows.append(summary_row)
