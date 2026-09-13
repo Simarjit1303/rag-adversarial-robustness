@@ -20,7 +20,6 @@ is to be a clean, independent signal a downstream analysis can compare
 AGAINST is_refusal() -- it must not import or call it.
 """
 
-import copy
 import json
 import os
 import re
@@ -67,6 +66,75 @@ _SAFE_UNSAFE_RE = re.compile(r"^\s*(safe|unsafe)", re.IGNORECASE)
 _guard_cache = {}  # lazy singleton -- {"model": ..., "tokenizer": ...} once loaded
 
 
+def _disable_llama4_chunked_attention(model_config):
+    """
+    Mutates the guard's OWN live text config IN PLACE, once, so every layer
+    of Llama4TextModel.forward() runs as "full_attention" instead of the
+    "chunked_attention" it's labeled by default.
+
+    This is the 6th real-pod crash traced to the same root config mismatch
+    (Llama-Guard-4-12B's config.json sets attention_chunk_size=None -- a
+    deliberate Llama4 "Scout" iRoPE choice, not an oversight -- while
+    layer_types still computes "chunked_attention" for every layer,
+    independent of attention_chunk_size). Confirmed by reading the
+    installed transformers source directly (modeling_llama4.py,
+    masking_utils.py -- no GPU needed, config/mask construction is pure
+    Python):
+
+    1. Llama4TextModel.forward() reads `self.config.layer_types[i]` per
+       layer (modeling_llama4.py) -- `self.config` is the SAME object
+       passed into every submodule's __init__ (`self.config = config` in
+       PreTrainedModel.__init__, a reference, never copied), so patching
+       it once, right after load, fixes every subsequent forward() call
+       against this loaded model instance. No per-call patching needed.
+
+    2. This supersedes 9c610e0's fix, which only patched a COPY of the
+       config used to build classify_response()'s own DynamicCache --
+       that copy was never seen by the model's own forward() pass, which
+       independently reads model.config.layer_types on every call. That
+       fix was necessary (for the Cache constructor crash) but not
+       sufficient (this crash).
+
+    3. Relabeling layer_types alone is STILL not sufficient by itself:
+       modeling_llama4.py's forward() builds BOTH the "full_attention" and
+       "chunked_attention" masks unconditionally on every call, via
+       `create_chunked_causal_mask(**mask_kwargs)`
+       (modeling_llama4.py:563) -- regardless of whether any layer's type
+       actually equals "chunked_attention". That function unconditionally
+       raises ValueError("Could not find an `attention_chunk_size`
+       argument...") whenever config.attention_chunk_size is None
+       (masking_utils.py:1343-1345), BEFORE layer_types is ever consulted
+       for mask selection (modeling_llama4.py:574). So attention_chunk_size
+       must also be set to a real int, or every single forward() call
+       crashes here regardless of layer_types. Reproduced and confirmed
+       fixed offline (2026-09-13) by calling
+       transformers.masking_utils.create_chunked_causal_mask directly
+       against a Llama4TextConfig shaped like the real guard's -- raises
+       with attention_chunk_size=None, does not raise once set.
+
+    Since every layer is relabeled away from "chunked_attention" here, the
+    "chunked_attention" mask create_chunked_causal_mask still eagerly
+    builds is provably never indexed into (modeling_llama4.py:574 only
+    ever looks up "full_attention" after this patch) -- so the actual
+    attention_chunk_size value set below is a dummy that only needs to be a
+    valid int, not a value with real semantic meaning. max_position_embeddings
+    is used because it matches masking_utils.py's own "None means unbounded"
+    reading of this field elsewhere.
+
+    Not yet verified against the real 12B model's actual generate() call on
+    GPU -- verified here by reading the exact source lines that raised on
+    the pod and confirming this patch clears the exact condition each one
+    checks.
+    """
+    text_config = model_config.get_text_config(decoder=True)
+    layer_types = getattr(text_config, "layer_types", None)
+    if getattr(text_config, "attention_chunk_size", None) is None and layer_types:
+        text_config.layer_types = [
+            "full_attention" if lt == "chunked_attention" else lt for lt in layer_types
+        ]
+        text_config.attention_chunk_size = text_config.max_position_embeddings
+
+
 def load_guard_model(device_map="auto", dtype=torch.bfloat16):
     """
     Lazily loads and caches Llama-Guard-4-12B. Kept separate from
@@ -80,6 +148,9 @@ def load_guard_model(device_map="auto", dtype=torch.bfloat16):
             GUARD_MODEL_ID, revision=GUARD_MODEL_REVISION, device_map=device_map, dtype=dtype,
         )
         model.eval()
+        # Once per loaded model instance, not per classify_response() call --
+        # see _disable_llama4_chunked_attention's docstring.
+        _disable_llama4_chunked_attention(model.config)
         _guard_cache["model"] = model
         _guard_cache["tokenizer"] = tokenizer
     return _guard_cache["model"], _guard_cache["tokenizer"]
@@ -143,61 +214,32 @@ def classify_response(response_text: str, model=None, tokenizer=None, max_new_to
     inputs = inputs.to(model.device) if hasattr(inputs, "to") else inputs
 
     # We build the Cache ourselves instead of naming a cache_implementation
-    # string, because no string survives a transformers version bump here.
+    # string, because no string survives a transformers version bump here
+    # (see attempts 1/2, cache_implementation="dynamic" then "dynamic_full"
+    # in commit 31081cf -- both broke on transformers version differences).
     #
-    # Root cause (confirmed 2026-09-12/13, reproduced offline against the
-    # real Llama4TextConfig class -- Cache construction is config-only, no
-    # weights needed): Llama-Guard-4-12B's published config.json sets
-    # text_config.attention_chunk_size=None -- a deliberate choice, not a
-    # Meta oversight (this is the Llama4 "Scout" iRoPE long-context design:
-    # max_position_embeddings=10,485,760, and transformers' own
-    # masking_utils.py already treats a None chunk size as "no chunking
-    # bound", falling back to a plain causal mask). But every layer's
-    # computed layer_types is "chunked_attention" regardless (driven only by
-    # no_rope_layers), and Cache.__init__ never got that same None-means-
-    # unbounded fallback: it reads config.layer_types AS-IS when present, and
-    # unconditionally maps "chunked_attention" to a *SlidingWindowLayer that
-    # requires a real sliding_window value. StaticCache crashes in
-    # min(sliding_window, max_cache_len); DynamicCache crashes converting
-    # None to a tensor -- both confirmed by direct reproduction, independent
-    # of which cache_implementation string selects them. (Also reported,
-    # different call site, same root config mismatch, at
+    # Root cause: Llama-Guard-4-12B's published config.json sets
+    # attention_chunk_size=None (deliberate Llama4 "Scout" iRoPE design) but
+    # every layer's computed layer_types is "chunked_attention" regardless.
+    # transformers' Cache.__init__ reads config.layer_types AS-IS and maps
+    # "chunked_attention" to a *SlidingWindowLayer needing a real
+    # sliding_window value -- crashes on the None. (Also independently
+    # reported at
     # https://huggingface.co/meta-llama/Llama-Guard-4-12B/discussions/14.)
     #
-    # Attempt 1 (cache_implementation="dynamic") and attempt 2
-    # (cache_implementation="dynamic_full", commit 31081cf) both relied on
-    # one specific string being valid in whatever transformers version is
-    # actually installed. "dynamic_full" was valid in the dev machine's
-    # local 5.7.0 but crashed on the real pod build with a ValueError
-    # listing a completely different accepted set -- requirements.txt:33
-    # pins only a floor (transformers>=5.13, no ceiling), so the Docker
-    # build installs whatever's newest (PyPI's latest is 5.17.0 as of
-    # 2026-09-13), where "dynamic_full" no longer exists at all, and
-    # "hybrid"/"hybrid_chunked" are deprecated STATIC-cache aliases that
-    # still risk the identical per-layer inference. No cache_implementation
-    # value is stable across the versions this floating pin can resolve to.
-    #
-    # This fix instead patches the actual mechanism transformers reads
-    # (config.layer_types, confirmed present and behaving the same way in
-    # both the local 5.7.0 and the current main-branch source): copy the
-    # guard's real text config, relabel every "chunked_attention" layer as
-    # "full_attention" when attention_chunk_size is None (matching
-    # masking_utils.py's own semantics for that value), and build a
-    # DynamicCache from the patched config ourselves so generate() never
-    # infers per-layer types from the broken original. Verified offline
-    # against the real Llama4TextConfig: the patched config builds a
-    # DynamicCache cleanly where the unpatched one crashes -- not yet
-    # verified against the real 12B model's actual generate() call on GPU.
+    # load_guard_model() now relabels model.config's layer_types (and sets
+    # a dummy attention_chunk_size) to "full_attention" ONCE, right after
+    # load -- see _disable_llama4_chunked_attention's docstring for why that
+    # has to happen on the model's own live config (not a copy here) and why
+    # a copy-and-patch step here would be redundant: config.get_text_config()
+    # returns that same already-patched object for a real loaded model, so
+    # DynamicCache(config=...) picks up the fix automatically. Test stubs
+    # that inject their own model/config must pre-patch it the same way
+    # load_guard_model() does, to match real production behavior.
     past_key_values = None
     config = getattr(model, "config", None)
     if config is not None:
-        text_config = copy.deepcopy(config.get_text_config(decoder=True))
-        layer_types = getattr(text_config, "layer_types", None)
-        if getattr(text_config, "attention_chunk_size", None) is None and layer_types:
-            text_config.layer_types = [
-                "full_attention" if lt == "chunked_attention" else lt for lt in layer_types
-            ]
-        past_key_values = DynamicCache(config=text_config)
+        past_key_values = DynamicCache(config=config.get_text_config(decoder=True))
 
     generate_kwargs = {"max_new_tokens": max_new_tokens, "pad_token_id": tokenizer.eos_token_id}
     if past_key_values is not None:

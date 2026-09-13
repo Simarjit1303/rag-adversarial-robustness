@@ -40,8 +40,10 @@ from transformers.tokenization_utils_base import BatchEncoding
 from attacks.crescendo import is_refusal
 from defenses.output_filter import (
     REFUSAL_MARKER,
+    _disable_llama4_chunked_attention,
     apply_output_filter,
     classify_response,
+    load_guard_model,
     log_filter_event,
     run_output_filter,
 )
@@ -430,33 +432,94 @@ def test_llama4_guard_config_crashes_default_caches_but_layer_types_patch_fixes_
     with pytest.raises(TypeError):
         DynamicCache(config=text_config)  # cache_implementation="dynamic" -- also broken
 
-    # The actual fix classify_response() now applies: relabel every
-    # "chunked_attention" layer as "full_attention" when attention_chunk_size
-    # is None, then build the cache from the patched config -- must not raise.
+    # The actual fix (now applied once, at load time, by
+    # _disable_llama4_chunked_attention -- see that test below): relabel
+    # every "chunked_attention" layer as "full_attention" when
+    # attention_chunk_size is None, then build the cache from the patched
+    # config -- must not raise.
     patched_config = copy.deepcopy(text_config)
-    patched_config.layer_types = [
-        "full_attention" if lt == "chunked_attention" else lt for lt in patched_config.layer_types
-    ]
+    _disable_llama4_chunked_attention(patched_config)
     patched_cache = DynamicCache(config=patched_config)
     assert all(lt == "full_attention" for lt in patched_config.layer_types)
     assert len(patched_cache.layers) == 48
 
 
-def test_classify_response_builds_patched_dynamic_cache_for_llama4_config():
+def test_disable_llama4_chunked_attention_also_fixes_create_chunked_causal_mask():
+    """
+    Regression test for the SIXTH real-pod crash on this same architectural
+    issue: `ValueError: Could not find an \\`attention_chunk_size\\`
+    argument in the config, or it is not set`, this time raised from
+    INSIDE the model's own forward() pass (modeling_llama4.py:563,
+    `create_chunked_causal_mask(**mask_kwargs)`), not from Cache
+    construction (the 9c610e0/previous-test crash).
+
+    Confirmed by reading modeling_llama4.py + masking_utils.py directly:
+    Llama4TextModel.forward() builds BOTH the "full_attention" and
+    "chunked_attention" masks EAGERLY on every call, regardless of whether
+    any layer's type is actually "chunked_attention" --
+    create_chunked_causal_mask unconditionally raises the above ValueError
+    whenever config.attention_chunk_size is None (masking_utils.py:1343-
+    1345), before layer_types is ever consulted for mask *selection*
+    (modeling_llama4.py:574). So relabeling layer_types alone (the previous
+    test's fix, and 9c610e0's cache-side fix) does NOT stop this crash --
+    attention_chunk_size must also be set to a real int.
+
+    Reproduced and confirmed fixed here (2026-09-13) by calling the real
+    transformers.masking_utils.create_chunked_causal_mask function
+    directly against a Llama4TextConfig shaped like the real guard's, with
+    attn_implementation="sdpa" set explicitly (a bare Llama4TextConfig()
+    defaults _attn_implementation to None, which hits an unrelated early
+    exit in masking_utils.py and never reaches the check this test is
+    pinning -- a real model loaded via from_pretrained always has a real
+    attn_implementation, so this matches production, not the offline
+    default): raises with attention_chunk_size=None, does not raise once
+    _disable_llama4_chunked_attention has run.
+    """
+    from transformers.masking_utils import create_chunked_causal_mask
+    from transformers.models.llama4 import Llama4TextConfig
+
+    text_config = Llama4TextConfig(
+        attention_chunk_size=None,
+        no_rope_layers=[1] * 4,
+        num_hidden_layers=4,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=8,
+        hidden_size=16,
+        attn_implementation="sdpa",
+    )
+    mask_kwargs = dict(
+        config=text_config,
+        inputs_embeds=torch.zeros((1, 3, 16)),
+        attention_mask=None,
+        past_key_values=None,
+        position_ids=None,
+    )
+    with pytest.raises(ValueError, match="attention_chunk_size"):
+        create_chunked_causal_mask(**mask_kwargs)  # the real-pod crash, reproduced offline
+
+    _disable_llama4_chunked_attention(text_config)
+    assert text_config.attention_chunk_size is not None
+    assert all(lt == "full_attention" for lt in text_config.layer_types)
+    create_chunked_causal_mask(**mask_kwargs)  # must not raise once patched
+
+
+def test_classify_response_builds_dynamic_cache_from_already_patched_config():
     """
     Integration-level counterpart to
-    test_llama4_guard_config_crashes_default_caches_but_layer_types_patch_fixes_it:
-    that test proves the layer_types-patch mechanism works in isolation;
-    this one proves classify_response() actually wires it up -- a stub
-    model carrying the REAL guard's Llama4TextConfig shape (via .config),
-    asserting model.generate() receives a past_key_values that is a
-    DynamicCache built from a config with every layer relabeled
-    "full_attention", and receives cache_implementation=None explicitly
-    (not omitted -- see the real-pod ValueError this guards against: the
-    model's own generation_config.json bakes in cache_implementation=
-    "static", which generate() merges in as a default BEFORE our kwargs
-    are applied, so an explicit None is what's actually needed to clear
-    it, not just leaving the key out).
+    test_llama4_guard_config_crashes_default_caches_but_layer_types_patch_fixes_it
+    and test_disable_llama4_chunked_attention_also_fixes_create_chunked_causal_mask:
+    those prove the patch mechanism works in isolation; this one proves
+    classify_response() actually wires the RESULT of that patch into
+    model.generate().
+
+    As of this fix, the patch runs ONCE in load_guard_model() (see
+    test_load_guard_model_disables_chunked_attention_once_after_loading),
+    not per-call inside classify_response() -- classify_response() now
+    trusts model.config to already be correct and just builds a
+    DynamicCache directly from it. This stub simulates a model whose
+    config load_guard_model() has already processed: layer_types
+    pre-relabeled to "full_attention", matching real production shape.
     """
     from transformers.models.llama4 import Llama4TextConfig
 
@@ -470,6 +533,9 @@ def test_classify_response_builds_patched_dynamic_cache_for_llama4_config():
         hidden_size=16,
     )
     assert text_config.layer_types[0] == "chunked_attention"  # the real guard's broken shape
+    _disable_llama4_chunked_attention(text_config)  # what load_guard_model() does at load time
+    assert text_config.layer_types[0] == "full_attention"
+    assert text_config.attention_chunk_size is not None
 
     class _ConfigBearingConfig:
         """Mimics Llama4ForConditionalGeneration's top-level config: a
@@ -499,21 +565,66 @@ def test_classify_response_builds_patched_dynamic_cache_for_llama4_config():
 
     cache = calls["past_key_values"]
     assert isinstance(cache, DynamicCache)
-    # The whole point: classify_response() patched the config it read
-    # layer_types from before handing it to DynamicCache -- the ORIGINAL
-    # text_config object (still all "chunked_attention") must be untouched,
-    # proving a copy was patched, not the live model config.
-    assert text_config.layer_types[0] == "chunked_attention"
     assert len(cache.layers) == 4
     # Real-pod regression (confirmed 2026-09-13): the guard's own
     # generation_config.json defaults cache_implementation="static", and
     # generate() merges that model default in BEFORE our kwargs, so leaving
-    # cache_implementation out entirely (the previous version of this
-    # assertion) does NOT clear it -- generate() raised "Passing both
-    # cache_implementation ... and past_key_values ... is unsupported" on
-    # real hardware. classify_response() must pass cache_implementation=
-    # None EXPLICITLY alongside past_key_values to actually override it.
+    # cache_implementation out entirely does NOT clear it -- generate()
+    # raised "Passing both cache_implementation ... and past_key_values
+    # ... is unsupported" on real hardware. classify_response() must pass
+    # cache_implementation=None EXPLICITLY alongside past_key_values.
     assert calls["cache_implementation"] is None
+
+
+def test_load_guard_model_disables_chunked_attention_once_after_loading(monkeypatch):
+    """
+    Wiring test for Task 3: load_guard_model() must call
+    _disable_llama4_chunked_attention on the freshly-loaded model's config
+    exactly once, before caching it -- not per classify_response() call.
+    Mocks AutoModelForCausalLM/AutoTokenizer.from_pretrained (no network,
+    no weights) to isolate load_guard_model()'s own wiring from the real
+    download.
+    """
+    import defenses.output_filter as output_filter_module
+    from transformers.models.llama4 import Llama4TextConfig
+
+    text_config = Llama4TextConfig(
+        attention_chunk_size=None,
+        no_rope_layers=[1] * 4,
+        num_hidden_layers=4,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=8,
+        hidden_size=16,
+    )
+
+    class _StubLoadedModel:
+        config = text_config
+
+        def eval(self):
+            return self
+
+    monkeypatch.setattr(
+        output_filter_module.AutoModelForCausalLM, "from_pretrained",
+        lambda *a, **k: _StubLoadedModel(),
+    )
+    monkeypatch.setattr(
+        output_filter_module.AutoTokenizer, "from_pretrained", lambda *a, **k: object(),
+    )
+    output_filter_module._guard_cache.clear()  # this test's own concern, not a shared-state leak
+    try:
+        assert text_config.layer_types[0] == "chunked_attention"  # not yet patched
+        model, _tokenizer = load_guard_model()
+        assert model.config.layer_types[0] == "full_attention"  # patched once, at load
+        assert model.config.attention_chunk_size is not None
+
+        # Second call must hit the cache, not re-patch (already-cached
+        # config stays exactly as load_guard_model() left it -- no
+        # per-call re-patching, per Task 3).
+        model_again, _ = load_guard_model()
+        assert model_again is model
+    finally:
+        output_filter_module._guard_cache.clear()
 
 
 def _load_real_guard_tokenizer():
@@ -567,12 +678,13 @@ def test_classify_response_real_tokenizer_batchencoding_matches_generate_call():
     class _AssertingModel:
         device = "cpu"
         # No .config -- this test is about the real tokenizer's chat-template/
-        # BatchEncoding shape, not the Llama4 cache bug (see
-        # test_classify_response_builds_patched_dynamic_cache_for_llama4_config
-        # and test_llama4_guard_config_crashes_default_caches_but_layer_types_
-        # patch_fixes_it for that -- pinning the cache fix here too would
-        # require this stub to also carry the real guard's Llama4TextConfig,
-        # duplicating those tests for no added coverage).
+        # BatchEncoding shape, not the Llama4 cache/attention bug (see
+        # test_classify_response_builds_dynamic_cache_from_already_patched_config,
+        # test_llama4_guard_config_crashes_default_caches_but_layer_types_
+        # patch_fixes_it, and test_disable_llama4_chunked_attention_also_
+        # fixes_create_chunked_causal_mask for that -- pinning those fixes
+        # here too would require this stub to also carry the real guard's
+        # Llama4TextConfig, duplicating those tests for no added coverage).
 
         def generate(self, input_ids, attention_mask, max_new_tokens, pad_token_id, past_key_values=None):
             calls["input_ids"] = input_ids
