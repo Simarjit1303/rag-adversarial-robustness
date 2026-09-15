@@ -40,6 +40,32 @@ defended_measurement_valid=False so callers don't mistake "no ASR change"
 for "the defense didn't work" when no defense was actually applied to the
 scored transcript.
 
+Backend-confound isolation (discover_backend_confound_cells): for the 35
+output_filter/spotlighting cells, a matched 3-way comparison -- vllm
+baseline, a backend-matched hf no-defense baseline (attack_raw_*_hf.jsonl,
+RAG_DEFENSE=none, same item selection verified by
+scripts/verify_phase3_backend_baseline_items.py), and the hf-defended run
+-- isolates how much of each cell's ASR reduction is the hf/vllm backend
+switch versus the defense itself. Uses pairwise McNemar (3 comparisons per
+cell: vllm-vs-nodef, nodef-vs-def, vllm-vs-def) with Holm-Bonferroni
+correction WITHIN each cell's own 3-comparison family, not Cochran's Q:
+the question this analysis needs answered is "which pair differs" (to
+attribute the reduction to backend vs defense), not merely "do the three
+conditions differ somewhere" -- Cochran's Q gives only the latter and
+would still require a post-hoc pairwise test to attribute the effect, so
+pairwise McNemar is the more direct fit here, not just the cheaper one to
+reuse from the existing McNemar/Holm helpers already used everywhere else
+in this file.
+
+instruction_detection's mechanism attribution (mechanism_instruction_
+detection) was a genuine gap in the original analysis -- the runner
+computed each passage's DetectionResult inline and discarded it, so no
+per-passage flagged/not-flagged log existed. This session's rerun (see
+PHASE3_DEFENSE_INSIGHTS.md's Task C) persists that log to
+instruction_detection_log_attack_{model}_{corpus}.jsonl; this function now
+answers the original question directly instead of reporting it as
+unanswerable.
+
 Run: python -m scripts.analyze_phase3_defense_stats
 """
 
@@ -179,6 +205,145 @@ def discover_injection_cells():
                         sum(f1_def) / len(f1_def) if f1_def else float("nan")
                     )
     return cells, excluded_fragments
+
+
+# ---------------------------------------------------------------------------
+# Backend-confound isolation: vllm-baseline vs hf-no-defense-baseline vs
+# hf-defended, per matched cell, for output_filter and spotlighting.
+# ---------------------------------------------------------------------------
+
+BACKEND_CONFOUND_DEFENSES = ("output_filter", "spotlighting")
+PAIR_LABELS = ("vllm_vs_hf_nodef", "hf_nodef_vs_hf_def", "vllm_vs_hf_def")
+
+
+def _three_way_verdict(sig, vllm_asr, nodef_asr, def_asr):
+    """Classify a cell's three-condition pattern using the Holm-corrected
+    significance of its 3 pairwise McNemar tests (see PAIR_LABELS order).
+
+    - defense_works: vllm and hf-no-defense agree (backend switch alone
+      changes nothing), but the defended condition is significantly lower
+      than both -- the defense is the real driver.
+    - backend_confound: hf-no-defense and hf-defended agree (the defense
+      adds nothing beyond the backend switch), but vllm is significantly
+      higher than both -- the backend switch is the real driver.
+    - partial_split: vllm-vs-nodef AND nodef-vs-def are both significant --
+      both the backend switch and the defense independently move the ASR;
+      quantified separately via backend_fraction below.
+    - inconclusive: no pairwise comparison reached significance (usually a
+      near-zero-ASR cell with too little room for any effect to show)."""
+    sig_vllm_nodef, sig_nodef_def, sig_vllm_def = sig
+    if not sig_vllm_nodef and sig_nodef_def:
+        return "defense_works"
+    if sig_vllm_nodef and not sig_nodef_def:
+        return "backend_confound"
+    if sig_vllm_nodef and sig_nodef_def:
+        return "partial_split"
+    return "inconclusive"
+
+
+def discover_backend_confound_cells():
+    """Per (defense, model, corpus, template) cell with all three of
+    {vllm baseline, hf no-defense baseline, hf defended} present: matched
+    3-way ASR comparison via 3 pairwise McNemar tests (Holm-corrected
+    within the cell's own 3-comparison family, per the task's own choice
+    of pairwise-McNemar-with-Holm over Cochran's Q -- justified in the
+    module docstring's Task 2 note) plus a backend-vs-defense attribution
+    split of the total baseline-to-defended reduction."""
+    cells = {}
+    for defense in BACKEND_CONFOUND_DEFENSES:
+        expected_n = INJECTION_EXPECTED_N[defense]
+        for model in MODEL_KEYS:
+            for corpus in CORPORA:
+                for template in INJECTION_TEMPLATES:
+                    def_path = P3_DIR / f"attack_raw_{model}_{corpus}_{template}_hf_defense-{defense}.jsonl"
+                    nodef_path = P3_DIR / f"attack_raw_{model}_{corpus}_{template}_hf.jsonl"
+                    vllm_path = P2_INJECTION_DIR / f"attack_raw_{model}_{corpus}_{template}_vllm.jsonl"
+                    if not (def_path.exists() and nodef_path.exists() and vllm_path.exists()):
+                        continue
+                    defended = _load_jsonl_by_key(def_path, "question")
+                    if len(defended) < expected_n * MIN_LEGIT_N_FRACTION:
+                        continue  # smoke-test fragment, same exclusion rule as discover_injection_cells
+                    nodef = _load_jsonl_by_key(nodef_path, "question")
+                    vllm = _load_jsonl_by_key(vllm_path, "question")
+
+                    common = [q for q in defended if q in nodef and q in vllm]
+                    if not common:
+                        continue
+                    vllm_asr_arr = [vllm[q]["attack_success"] for q in common]
+                    nodef_asr_arr = [nodef[q]["attack_success"] for q in common]
+                    def_asr_arr = [defended[q]["attack_success"] for q in common]
+
+                    pairs = {
+                        "vllm_vs_hf_nodef": (vllm_asr_arr, nodef_asr_arr),
+                        "hf_nodef_vs_hf_def": (nodef_asr_arr, def_asr_arr),
+                        "vllm_vs_hf_def": (vllm_asr_arr, def_asr_arr),
+                    }
+                    pair_stats = {}
+                    p_values = []
+                    for label in PAIR_LABELS:
+                        a, b = pairs[label]
+                        m = mcnemar_exact(a, b)
+                        pair_stats[label] = {"p_raw": m["p_value"], "b": m["b"], "c": m["c"]}
+                        p_values.append(m["p_value"])
+                    holm = _holm_adjusted_pvalues(p_values)
+                    sig = []
+                    for label, p_holm in zip(PAIR_LABELS, holm):
+                        pair_stats[label]["p_holm"] = p_holm
+                        is_sig = p_holm < 0.05
+                        pair_stats[label]["significant_holm"] = is_sig
+                        sig.append(is_sig)
+
+                    vllm_asr = sum(vllm_asr_arr) / len(vllm_asr_arr)
+                    nodef_asr = sum(nodef_asr_arr) / len(nodef_asr_arr)
+                    def_asr = sum(def_asr_arr) / len(def_asr_arr)
+                    total_reduction = vllm_asr - def_asr
+                    backend_component = vllm_asr - nodef_asr
+                    defense_component = nodef_asr - def_asr
+                    backend_fraction = (
+                        backend_component / total_reduction if total_reduction != 0 else float("nan")
+                    )
+
+                    cells[(defense, model, corpus, template)] = {
+                        "n": len(common),
+                        "vllm_asr": vllm_asr,
+                        "hf_nodef_asr": nodef_asr,
+                        "hf_def_asr": def_asr,
+                        "total_reduction": total_reduction,
+                        "backend_component": backend_component,
+                        "defense_component": defense_component,
+                        "backend_fraction_of_reduction": backend_fraction,
+                        "pairs": pair_stats,
+                        "verdict": _three_way_verdict(sig, vllm_asr, nodef_asr, def_asr),
+                        # raw paired arrays, kept for corrected_backend_isolated_table's
+                        # bootstrap CI (paired_bootstrap_ci needs the full arrays, not
+                        # just the aggregated ASR/discordant-pair counts above)
+                        "_nodef_asr_arr": nodef_asr_arr,
+                        "_def_asr_arr": def_asr_arr,
+                    }
+    return cells
+
+
+def corrected_backend_isolated_table(confound_cells):
+    """The master-ASR-reduction-table-equivalent for output_filter and
+    spotlighting/injection, using the backend-matched hf no-defense
+    baseline (Task 2) as the comparator instead of the original vllm
+    baseline. This is the corrected reporting the task asks for once the
+    backend confound is confirmed for output_filter (see headline finding
+    2's resolution) -- reusing vllm as "baseline" for those cells would
+    keep reporting a reduction that's mostly the backend switch, not the
+    defense. Holm-Bonferroni is re-applied here in two fresh families (19
+    output_filter cells, 16 spotlighting cells) -- distinct from the
+    per-cell 3-pairwise-comparison Holm family used for confound
+    attribution above, which answers a different question (which pair
+    differs) than this one (is the backend-isolated defense effect
+    significant, across the family of cells for that defense)."""
+    by_defense = {"output_filter": {}, "spotlighting": {}}
+    for (defense, model, corpus, template), v in confound_cells.items():
+        stats = _mcnemar_and_effect(v["_nodef_asr_arr"], v["_def_asr_arr"])
+        by_defense[defense][(model, corpus, template)] = stats
+    for defense_cells in by_defense.values():
+        apply_holm_family(defense_cells)
+    return by_defense
 
 
 # ---------------------------------------------------------------------------
@@ -367,16 +532,79 @@ def mechanism_output_filter_poisonedrag():
 
 
 def mechanism_instruction_detection():
-    """Confirmed via code read (defenses/instruction_detection.py,
-    evaluation/run_attack_injection.py:108-112): the per-passage
-    DetectionResult is computed inline and immediately discarded --
-    filter_retrieved_passages's log-returning API
-    (defenses/instruction_detection.py:151-183) is never actually called
-    by the runner, so no per-passage flagged log was ever persisted for
-    this defense, in the raw JSONL or as a separate file. This mechanism
-    question is therefore NOT ANSWERABLE from available data -- reported
-    as such rather than fabricated."""
-    return None
+    """Per (model, corpus, template) cell: of items blocked by
+    instruction_detection (vllm Phase2 baseline succeeded, defended run
+    failed -- same "blocked" definition as mechanism_output_filter_*),
+    what fraction had >=1 retrieved passage actually flagged=True by the
+    classifier (context was actually stripped pre-generation) vs. zero
+    passages flagged (the model resisted the attack on its own, the
+    classifier never fired for that item).
+
+    Now answerable: defenses/instruction_detection.py's
+    log_passage_detection_event and evaluation/run_attack_injection.py's
+    _build_defended_attack_prompt call sites (this session's earlier fix)
+    persist a per-passage {"flagged": bool, "score": float, "label": str}
+    list to instruction_detection_log_attack_{model}_{corpus}.jsonl,
+    keyed by (injection_template, question) -- the same log-file grain
+    the Task C rerun produced. Previously this returned None (see the
+    original gap notice this function replaces): the runner computed
+    DetectionResult inline and discarded it without persisting anything."""
+    results = {}
+    for model in MODEL_KEYS:
+        for corpus in CORPORA:
+            log_path = P3_DIR / f"instruction_detection_log_attack_{model}_{corpus}.jsonl"
+            if not log_path.exists():
+                continue
+            log_rows = {}
+            with log_path.open(encoding="utf-8") as f:
+                for line in f:
+                    r = json.loads(line)
+                    log_rows[(r["injection_template"], r["question"])] = [
+                        p["flagged"] for p in r["passages"]
+                    ]
+            for template in INJECTION_TEMPLATES:
+                def_path = P3_DIR / f"attack_raw_{model}_{corpus}_{template}_hf_defense-instruction_detection.jsonl"
+                if not def_path.exists():
+                    continue
+                defended = _load_jsonl_by_key(def_path, "question")
+                if len(defended) < INJECTION_EXPECTED_N["instruction_detection"] * MIN_LEGIT_N_FRACTION:
+                    continue  # smoke-test fragment
+                baseline = _load_jsonl_by_key(
+                    P2_INJECTION_DIR / f"attack_raw_{model}_{corpus}_{template}_vllm.jsonl", "question"
+                )
+                blocked = [
+                    q for q in defended
+                    if q in baseline and baseline[q]["attack_success"] == 1
+                    and defended[q]["attack_success"] == 0
+                ]
+                any_flagged = [
+                    any(log_rows[(template, q)]) for q in blocked if (template, q) in log_rows
+                ]
+                n_any_flagged = sum(1 for v in any_flagged if v)
+                results[(model, corpus, template)] = {
+                    "n_blocked": len(blocked),
+                    "n_any_flagged": n_any_flagged,
+                    "frac_any_passage_flagged": (n_any_flagged / len(any_flagged)) if any_flagged else float("nan"),
+                    "frac_model_resisted_alone": (1 - n_any_flagged / len(any_flagged)) if any_flagged else float("nan"),
+                }
+    return results
+
+
+def mechanism_instruction_detection_by_model_corpus(per_cell):
+    """Roll-up of mechanism_instruction_detection()'s per-template rows to
+    per (model, corpus) -- the log file's own grain (both templates share
+    one log file) and the granularity Task 3 explicitly asked for."""
+    rollup = {}
+    for (model, corpus, template), v in per_cell.items():
+        key = (model, corpus)
+        agg = rollup.setdefault(key, {"n_blocked": 0, "n_any_flagged": 0})
+        agg["n_blocked"] += v["n_blocked"]
+        agg["n_any_flagged"] += v["n_any_flagged"]
+    for key, agg in rollup.items():
+        agg["frac_any_passage_flagged"] = (
+            agg["n_any_flagged"] / agg["n_blocked"] if agg["n_blocked"] else float("nan")
+        )
+    return rollup
 
 
 def mechanism_crescendo_output_filter():
@@ -500,10 +728,42 @@ def main():
         print(f"  {k}: cell_flag_rate={v['cell_flag_rate']:.4f} (n={v['cell_n_responses']}) "
               f"n_blocked={v['n_blocked']} frac_guard_caught={v['frac_guard_caught']:.3f}")
 
-    print("\n-- instruction_detection / injection: mechanism attribution --")
-    print(f"  {mechanism_instruction_detection()!r} -- NOT MEASURABLE, see docstring "
-          f"(defenses/instruction_detection.py + run_attack_injection.py:108-112: "
-          f"per-passage log computed then discarded, never persisted)")
+    mech_id = mechanism_instruction_detection()
+    mech_id_rollup = mechanism_instruction_detection_by_model_corpus(mech_id)
+    print("\n-- instruction_detection / injection: mechanism attribution (per model/corpus) --")
+    for (model, corpus), v in mech_id_rollup.items():
+        print(f"  {model}/{corpus}: n_blocked={v['n_blocked']} n_any_flagged={v['n_any_flagged']} "
+              f"frac_any_passage_flagged={v['frac_any_passage_flagged']:.3f}")
+    print("  -- per (model, corpus, template) --")
+    for k, v in mech_id.items():
+        print(f"  {k}: n_blocked={v['n_blocked']} frac_any_passage_flagged={v['frac_any_passage_flagged']:.3f}")
+
+    print("\n=== Task 2: backend-confound isolation (vllm baseline vs hf-no-defense vs hf-defended) ===")
+    confound_cells = discover_backend_confound_cells()
+    print(f"  {len(confound_cells)} 3-way matched cells (output_filter + spotlighting)")
+    header = (f"{'cell':<60}{'n':>5}{'vllm':>7}{'nodef':>7}{'def':>7}{'tot_red':>8}"
+              f"{'bknd_frac':>10}{'verdict':>18}")
+    print(header)
+    for key, s in confound_cells.items():
+        label = f"{key[0]}/{key[1]}/{key[2]}/{key[3]}"
+        bf = f"{s['backend_fraction_of_reduction']:.3f}" if s['backend_fraction_of_reduction'] == s['backend_fraction_of_reduction'] else "n/a"
+        print(f"{label:<60}{s['n']:>5}{s['vllm_asr']:>7.3f}{s['hf_nodef_asr']:>7.3f}"
+              f"{s['hf_def_asr']:>7.3f}{s['total_reduction']:>8.3f}{bf:>10}{s['verdict']:>18}")
+    verdict_counts = {}
+    for s in confound_cells.values():
+        verdict_counts[s["verdict"]] = verdict_counts.get(s["verdict"], 0) + 1
+    print(f"  Verdict counts: {verdict_counts}")
+
+    print("\n=== Task 2 (corrected table): backend-isolated defense effect "
+          "(hf-no-defense baseline vs hf-defended, NOT vllm) ===")
+    corrected = corrected_backend_isolated_table(confound_cells)
+    for defense, cells in corrected.items():
+        print(f"\n-- {defense}: corrected master-table rows (family of {len(cells)}) --")
+        for (model, corpus, template), s in cells.items():
+            sig = "SIG" if s["significant_holm"] else "ns"
+            print(f"  {model}/{corpus}/{template}: n={s['n']} nodef_baseline={s['baseline_asr']:.3f} "
+                  f"defended={s['defended_asr']:.3f} reduction={s['reduction']:.3f} "
+                  f"p_holm={s['p_holm']:.4g} {sig}")
 
     mech_cres = mechanism_crescendo_output_filter()
     print("\n-- crescendo / output_filter: guard-would-have-intervened fraction of successful attacks --")
@@ -531,6 +791,15 @@ def main():
             "mechanism_output_filter_poisonedrag_overall_flag_rate": overall_flag_rate,
             "mechanism_output_filter_poisonedrag_n_all": n_all,
             "mechanism_crescendo": mech_cres,
+            "mechanism_instruction_detection": _stringify_keys(mech_id),
+            "mechanism_instruction_detection_by_model_corpus": _stringify_keys(mech_id_rollup),
+            "backend_confound_cells": _stringify_keys(
+                {k: {kk: vv for kk, vv in v.items() if not kk.startswith("_")} for k, v in confound_cells.items()}
+            ),
+            "backend_confound_verdict_counts": verdict_counts,
+            "corrected_backend_isolated_table": {
+                defense: _stringify_keys(cells) for defense, cells in corrected.items()
+            },
             "utility_rows": util_rows,
         }
         out_path = sys.argv[sys.argv.index("--dump-json") + 1]
@@ -546,6 +815,10 @@ def main():
         "mechanism_output_filter_injection": mech_inj,
         "mechanism_output_filter_poisonedrag": (mech_poison, overall_flag_rate, n_all),
         "mechanism_crescendo": mech_cres,
+        "mechanism_instruction_detection": mech_id,
+        "mechanism_instruction_detection_by_model_corpus": mech_id_rollup,
+        "backend_confound_cells": confound_cells,
+        "corrected_backend_isolated_table": corrected,
         "utility_rows": util_rows,
     }
 
