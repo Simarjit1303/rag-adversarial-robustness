@@ -1,0 +1,2 @@
+model,corpus,poison_config,n,attack_success_rate,f1_target,contains_target_diagnostic,poison_echoed_not_adopted_rate,exact_match,f1_clean,retrieval_f1_at_k
+ministral-3-8b,hotpot_qa,adv5,90,0.7667,0.8153,0.8333,0.0667,0.0444,0.1273,0.9933

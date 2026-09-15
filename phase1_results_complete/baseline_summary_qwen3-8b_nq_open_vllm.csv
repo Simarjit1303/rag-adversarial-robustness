@@ -1,0 +1,2 @@
+model,corpus,n,f1_clean,exact_match,f1_raw,contains_answer_diagnostic
+qwen3-8b,nq_open,1000,0.9623,0.921,0.961,0.991

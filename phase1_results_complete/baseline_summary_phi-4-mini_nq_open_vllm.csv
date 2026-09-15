@@ -1,0 +1,2 @@
+model,corpus,n,f1_clean,exact_match,f1_raw,contains_answer_diagnostic
+phi-4-mini,nq_open,1000,0.9649,0.923,0.9449,0.984

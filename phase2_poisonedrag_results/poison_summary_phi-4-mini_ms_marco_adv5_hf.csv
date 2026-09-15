@@ -1,0 +1,2 @@
+model,corpus,poison_config,n,attack_success_rate,f1_target,contains_target_diagnostic,poison_echoed_not_adopted_rate,exact_match,f1_clean,retrieval_f1_at_k
+phi-4-mini,ms_marco,adv5,96,0.1875,0.3802,0.2188,0.0312,0.0208,0.1573,0.8896
