@@ -476,7 +476,16 @@ def main():
 
     _print_family("Injection", injection_cells, lambda k: f"{k[0]}/{k[1]}/{k[2]}/{k[3]}")
     _print_family("PoisonedRAG", poison_cells, lambda k: f"{k[0]}/{k[1]}/{k[2]}")
-    _print_family("Crescendo", crescendo_cells, lambda k: f"{k[0]}/output_filter")
+
+    print("\n=== Crescendo/output_filter: RAW diagnostic numbers only -- "
+          "NOT a master-ASR-reduction-table family ===")
+    print("run_crescendo.py:184-257 discards the filtered text and scores the "
+          "real, unfiltered conversation, so this is not a defended condition; "
+          "these McNemar/CI numbers exist for completeness, not as a significance "
+          "claim about the defense. See the Mechanism attribution section for the "
+          "actually meaningful number (guard-would-have-intervened fraction).")
+    _print_family("Crescendo (diagnostic only, excluded from ASR-reduction family)",
+                   crescendo_cells, lambda k: f"{k[0]}/output_filter")
 
     print("\n=== Task 4: mechanism attribution ===")
     mech_inj = mechanism_output_filter_injection()
