@@ -1,0 +1,2 @@
+model,corpus,injection_template,n,f1_clean,exact_match,f1_raw,contains_answer_diagnostic,attack_success_rate
+ministral-3-8b,hotpot_qa,fake_completion,1000,0.6345,0.547,0.6345,0.614,0.085
