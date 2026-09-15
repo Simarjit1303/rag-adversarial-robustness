@@ -21,6 +21,8 @@ shapes being classified are the project's actual attack strings, not
 synthetic stand-ins.
 """
 
+import json
+
 from attacks.injection_templates import TEMPLATES
 from defenses.instruction_detection import detect_injection, filter_retrieved_passages
 
@@ -195,3 +197,38 @@ def test_filter_retrieved_passages_drops_flagged_and_keeps_clean(monkeypatch):
     assert len(log) == 3
     assert [entry.passage_id for entry in log] == [0, 1, 2]
     assert [entry.flagged for entry in log] == [False, True, False]
+
+
+def test_log_passage_detection_event_appends_and_is_durable_across_calls(tmp_path):
+    """Same append+fsync contract as output_filter's log_filter_event (see
+    tests/test_output_filter.py's mirrored test) -- this is the write path
+    evaluation/run_attack_injection.py now uses to persist the per-passage
+    detection result that was previously computed and discarded (see
+    PHASE3_DEFENSE_INSIGHTS.md's original instruction_detection mechanism-
+    attribution gap)."""
+    from defenses.instruction_detection import log_passage_detection_event
+
+    log_path = tmp_path / "instruction_detection_log.jsonl"
+    log_passage_detection_event(log_path, {
+        "model": "qwen3-8b", "corpus": "hotpot_qa", "injection_template": "naive",
+        "question": "q1?",
+        "passages": [
+            {"passage_id": 0, "flagged": True, "score": 0.99, "label": "INJECTION"},
+            {"passage_id": 1, "flagged": False, "score": 0.02, "label": "SAFE"},
+        ],
+    })
+    log_passage_detection_event(log_path, {
+        "model": "qwen3-8b", "corpus": "hotpot_qa", "injection_template": "naive",
+        "question": "q2?",
+        "passages": [{"passage_id": 0, "flagged": False, "score": 0.01, "label": "SAFE"}],
+    })
+
+    lines = log_path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    row1 = json.loads(lines[0])
+    row2 = json.loads(lines[1])
+    assert row1["question"] == "q1?"
+    assert row1["passages"][0] == {"passage_id": 0, "flagged": True, "score": 0.99, "label": "INJECTION"}
+    assert row1["passages"][1]["flagged"] is False
+    assert row2["question"] == "q2?"
+    assert len(row2["passages"]) == 1

@@ -44,7 +44,11 @@ from attacks.injection_templates import TEMPLATES
 from config import MODELS, RESULTS_DIR, SEED, TOP_K, RAG_VLLM_MAX_MODEL_LEN
 from data.build_index import build_index, retrieve
 from data.normalize import extract_gold_answers, extract_passage_text, extract_question
-from defenses.instruction_detection import detect_injection
+from defenses.instruction_detection import (
+    PassageLog,
+    detect_injection,
+    log_passage_detection_event,
+)
 from defenses.output_filter import run_output_filter
 from defenses.spotlighting import SPOTLIGHTING_SYSTEM_INSTRUCTION, encode_passage_base64
 from evaluation.metrics import contains_answer, exact_match, f1_score
@@ -75,8 +79,13 @@ def _defended_top_k(defense: str) -> int:
 def _build_defended_attack_prompt(index, records, question: str, corpus_name: str,
                                    injection_template: str, top_k: int, defense: str):
     """
-    Builds (system_prompt, user_prompt, retrieved, target_string, hijack_type)
-    for the instruction_detection/spotlighting pre-generation defenses.
+    Builds (system_prompt, user_prompt, retrieved, target_string, hijack_type,
+    passage_log) for the instruction_detection/spotlighting pre-generation
+    defenses. passage_log is a list[PassageLog] (one entry per originally
+    retrieved passage, in rank order) when defense=="instruction_detection",
+    None otherwise -- the per-passage detection result the caller persists
+    to instruction_detection_log_attack_*.jsonl (mirrors output_filter's
+    per-response guard log).
 
     Mirrors attacks.indirect_injection.build_attack_user_prompt's retrieval +
     rank-1 injection logic exactly (kept in sync, not imported -- same
@@ -86,6 +95,16 @@ def _build_defended_attack_prompt(index, records, question: str, corpus_name: st
     (instruction_detection) or transform (spotlighting) individual passages,
     including the injected rank-1 one -- the whole point of testing a
     defense against this attack is whether it catches that injected text.
+
+    Deliberately NOT delegated to
+    defenses.instruction_detection.filter_retrieved_passages despite that
+    function's matching signature/purpose: filter_retrieved_passages runs
+    detect_injection on extract_passage_text(corpus_name, doc) directly from
+    `retrieved`, before the injection template is ever rendered onto the
+    rank-1 passage -- swapping it in here would classify the CLEAN passage
+    instead of the injected one, silently defeating the entire attack test.
+    This function's own texts (template.render() applied to texts[0] above)
+    is what must be classified instead.
     """
     if injection_template not in TEMPLATES:
         raise ValueError(
@@ -105,10 +124,16 @@ def _build_defended_attack_prompt(index, records, question: str, corpus_name: st
             text = template.render(text)
         texts.append(text)
 
+    passage_log = None
     if defense == "instruction_detection":
+        detections = [detect_injection(text) for text in texts]
         lines = [
-            f"[{i + 1}] {text}" for i, text in enumerate(texts)
-            if not detect_injection(text).flagged
+            f"[{i + 1}] {text}" for i, (text, result) in enumerate(zip(texts, detections))
+            if not result.flagged
+        ]
+        passage_log = [
+            PassageLog(passage_id=i, flagged=r.flagged, score=r.score, label=r.label)
+            for i, r in enumerate(detections)
         ]
         system_prompt = SYSTEM_PROMPT
     elif defense == "spotlighting":
@@ -119,7 +144,8 @@ def _build_defended_attack_prompt(index, records, question: str, corpus_name: st
 
     context = "\n\n".join(lines)
     user_prompt = f"Context:\n{context}\n\nQuestion: {question}"
-    return system_prompt, user_prompt, retrieved, template.target_string, template.hijack_type
+    return (system_prompt, user_prompt, retrieved, template.target_string,
+            template.hijack_type, passage_log)
 
 
 @contextmanager
@@ -227,6 +253,11 @@ def run_attack_sweep(model_keys=None, corpus_names=None, injection_templates=Non
             output_filter_log_path = None
             if defense == "output_filter":
                 output_filter_log_path = RESULTS_DIR / f"output_filter_log_attack_{model_key}_{corpus_name}.jsonl"
+            instruction_detection_log_path = None
+            if defense == "instruction_detection":
+                instruction_detection_log_path = (
+                    RESULTS_DIR / f"instruction_detection_log_attack_{model_key}_{corpus_name}.jsonl"
+                )
 
             for injection_template in injection_templates:
                 print(f"--- {model_key} x {corpus_name} x {injection_template} "
@@ -250,12 +281,24 @@ def run_attack_sweep(model_keys=None, corpus_names=None, injection_templates=Non
                             break
 
                         if defense in ("instruction_detection", "spotlighting"):
-                            system_prompt, user_prompt, retrieved, target_string, hijack_type = (
+                            system_prompt, user_prompt, retrieved, target_string, hijack_type, passage_log = (
                                 _build_defended_attack_prompt(
                                     index, records, question, corpus_name,
                                     injection_template, top_k, defense,
                                 )
                             )
+                            if defense == "instruction_detection":
+                                log_passage_detection_event(instruction_detection_log_path, {
+                                    "model": model_key,
+                                    "corpus": corpus_name,
+                                    "injection_template": injection_template,
+                                    "question": question,
+                                    "passages": [
+                                        {"passage_id": p.passage_id, "flagged": p.flagged,
+                                         "score": p.score, "label": p.label}
+                                        for p in passage_log
+                                    ],
+                                })
                             prompt = build_chat_prompt(model_key, tokenizer, system_prompt, user_prompt)
                             inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
                             with torch.no_grad():
@@ -390,6 +433,11 @@ def _run_vllm_attack_sweep(model_keys, corpus_names, injection_templates, split,
             output_filter_log_path = None
             if defense == "output_filter":
                 output_filter_log_path = RESULTS_DIR / f"output_filter_log_attack_{model_key}_{corpus_name}.jsonl"
+            instruction_detection_log_path = None
+            if defense == "instruction_detection":
+                instruction_detection_log_path = (
+                    RESULTS_DIR / f"instruction_detection_log_attack_{model_key}_{corpus_name}.jsonl"
+                )
 
             for injection_template in injection_templates:
                 print(f"--- {model_key} x {corpus_name} x {injection_template} "
@@ -399,7 +447,7 @@ def _run_vllm_attack_sweep(model_keys, corpus_names, injection_templates, split,
                 )
 
                 questions, golds, user_prompts, retrieved_ids = [], [], [], []
-                target_strings, hijack_types = [], []
+                target_strings, hijack_types, passage_logs = [], [], []
                 system_prompt = SYSTEM_PROMPT
                 for record in records:
                     question = extract_question(corpus_name, record)
@@ -408,8 +456,9 @@ def _run_vllm_attack_sweep(model_keys, corpus_names, injection_templates, split,
                         continue
                     if sample_n and len(questions) >= sample_n:
                         break
+                    passage_log = None
                     if defense in ("instruction_detection", "spotlighting"):
-                        system_prompt, user_prompt, retrieved, target_string, hijack_type = (
+                        system_prompt, user_prompt, retrieved, target_string, hijack_type, passage_log = (
                             _build_defended_attack_prompt(
                                 index, records, question, corpus_name,
                                 injection_template, top_k, defense,
@@ -425,6 +474,7 @@ def _run_vllm_attack_sweep(model_keys, corpus_names, injection_templates, split,
                     retrieved_ids.append([idx for idx, _ in enumerate(retrieved)])
                     target_strings.append(target_string)
                     hijack_types.append(hijack_type)
+                    passage_logs.append(passage_log)
 
                 start = time.time()
                 print(f"  sending {len(user_prompts)} prompts in one batch")
@@ -434,11 +484,24 @@ def _run_vllm_attack_sweep(model_keys, corpus_names, injection_templates, split,
                 em_scores, f1_clean_scores, f1_raw_scores = [], [], []
                 ca_scores, asr_scores = [], []
                 with _atomic_open(raw_path) as raw_f:
-                    for question, gold, doc_ids, generated, target_string, hijack_type in zip(
-                        questions, golds, retrieved_ids, outputs, target_strings, hijack_types
+                    for question, gold, doc_ids, generated, target_string, hijack_type, passage_log in zip(
+                        questions, golds, retrieved_ids, outputs, target_strings, hijack_types, passage_logs
                     ):
                         generated = generated.strip()
                         generated_clean = clean_generation(generated)
+
+                        if defense == "instruction_detection":
+                            log_passage_detection_event(instruction_detection_log_path, {
+                                "model": model_key,
+                                "corpus": corpus_name,
+                                "injection_template": injection_template,
+                                "question": question,
+                                "passages": [
+                                    {"passage_id": p.passage_id, "flagged": p.flagged,
+                                     "score": p.score, "label": p.label}
+                                    for p in passage_log
+                                ],
+                            })
 
                         if defense == "output_filter":
                             generated = run_output_filter(

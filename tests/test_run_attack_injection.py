@@ -126,25 +126,39 @@ def test_build_defended_attack_prompt_instruction_detection_drops_flagged_passag
 
     monkeypatch.setattr(rai, "detect_injection", fake_detect_injection)
 
-    system_prompt, user_prompt, retrieved, target_string, hijack_type = rai._build_defended_attack_prompt(
-        index=None, records=None, question="q?", corpus_name="hotpot_qa",
-        injection_template="naive", top_k=2, defense="instruction_detection",
+    system_prompt, user_prompt, retrieved, target_string, hijack_type, passage_log = (
+        rai._build_defended_attack_prompt(
+            index=None, records=None, question="q?", corpus_name="hotpot_qa",
+            injection_template="naive", top_k=2, defense="instruction_detection",
+        )
     )
 
     assert system_prompt == rai.SYSTEM_PROMPT  # unchanged for this defense
     assert "[1]" not in user_prompt  # rank-1 (injected+flagged) dropped
     assert "clean text 1" in user_prompt  # rank-2 survives
 
+    # regression coverage for the per-passage mechanism log this defense
+    # now persists (previously computed and discarded, see
+    # evaluation/run_attack_injection.py's _build_defended_attack_prompt
+    # docstring and PHASE3_DEFENSE_INSIGHTS.md's original mechanism-
+    # attribution gap for instruction_detection)
+    assert len(passage_log) == 2
+    assert passage_log[0].flagged is True and passage_log[0].label == "INJECTION"
+    assert passage_log[1].flagged is False and passage_log[1].label == "SAFE"
+
 
 def test_build_defended_attack_prompt_spotlighting_encodes_every_passage(monkeypatch):
     monkeypatch.setattr(rai, "retrieve", lambda index, records, question, k: [({"id": 0}, 0.9)])
     monkeypatch.setattr(rai, "extract_passage_text", lambda corpus_name, doc: "plain text")
 
-    system_prompt, user_prompt, retrieved, target_string, hijack_type = rai._build_defended_attack_prompt(
-        index=None, records=None, question="q?", corpus_name="hotpot_qa",
-        injection_template="naive", top_k=2, defense="spotlighting",
+    system_prompt, user_prompt, retrieved, target_string, hijack_type, passage_log = (
+        rai._build_defended_attack_prompt(
+            index=None, records=None, question="q?", corpus_name="hotpot_qa",
+            injection_template="naive", top_k=2, defense="spotlighting",
+        )
     )
 
+    assert passage_log is None  # only instruction_detection produces a passage log
     assert rai.SPOTLIGHTING_SYSTEM_INSTRUCTION in system_prompt
     assert "plain text" not in user_prompt  # base64-encoded, not plaintext
     import base64

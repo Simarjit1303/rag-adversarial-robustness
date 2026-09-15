@@ -32,6 +32,8 @@ swaps that line for
 same "[{i+1}] text" numbering for surviving passages.
 """
 
+import json
+import os
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -182,3 +184,25 @@ def filter_retrieved_passages(retrieved, corpus_name: str, classifier=None):
         lines.append(f"[{i + 1}] {text}")
     context = "\n\n".join(lines)
     return context, log
+
+
+def log_passage_detection_event(log_path, record: dict):
+    """
+    Appends one JSONL row and fsyncs immediately -- identical discipline to
+    defenses/output_filter.py's log_filter_event (same rationale: an
+    interruption mid-sweep should only cost rows not yet logged, not the
+    whole file). Kept as its own copy rather than imported from that module
+    so this module has no dependency on output_filter, same "byte-for-byte
+    in sync, not imported" precedent already used elsewhere in this repo
+    (e.g. evaluation/run_attack_injection.py's own _atomic_open).
+
+    record is expected to carry the caller's row-id keys (model/corpus/
+    injection_template/question, mirroring output_filter's row_id
+    convention) merged with a "passages" list of
+    {"passage_id", "flagged", "score", "label"} dicts, one per originally
+    retrieved passage in rank order -- see PassageLog above.
+    """
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
