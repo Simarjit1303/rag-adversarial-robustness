@@ -117,18 +117,40 @@ limitation." The `nq_open` entry itself was left registered and pinned in
 baseline stays reproducible as a documented limitation, not so it could be
 used in further comparisons.
 
-**One gap in the source material, stated rather than filled in:** the
-finding document proposes three options for how to handle `nq_open` going
-forward — (a) source real supporting passages for it from the original
-Natural Questions release, (b) drop it from the corpus set entirely, or
-(c) keep it but explicitly reframe what it measures (closed-book knowledge
-recovery, not RAG) with every conclusion caveated accordingly. The
-document does not itself record which option was chosen or by whom; the
-`config.py` comment shows option (b) — drop it from the real
-attack/defense matrix — is what was implemented, but the finding file
-does not contain an explicit decision record or rationale beyond the
-options list. That decision trail sits in `config.py`'s comment and this
-project's subsequent execution, not in `nq_open_leakage_finding.md` itself.
+**The decision record, found outside this git repo:** the finding document
+proposes three options for how to handle `nq_open` going forward — (a)
+source real supporting passages for it from the original Natural Questions
+release, (b) drop it from the corpus set entirely, or (c) keep it but
+explicitly reframe what it measures (closed-book knowledge recovery, not
+RAG) with every conclusion caveated accordingly. `nq_open_leakage_finding.md`
+itself does not record which option was chosen or by whom. That record
+exists in `Drafts/PHASE2_ROADMAP.md` (parent project folder, outside this
+git repo), under a section header dated identically to `config.py`'s own
+comment. Quoting it directly, not paraphrasing:
+
+> "## nq_open Exclusion (decided 2026-09-04)
+>
+> A context-construction bug caused gold-answer leakage into the RAG
+> context for all three corpora (see `nq_open_leakage_finding.md`,
+> committed on branch `fix-rag-context-answer-leak`). The bug is fixed
+> there for `hotpot_qa` and `ms_marco`. It **cannot** be fixed the same way
+> for `nq_open`: `nq_open` has no independent supporting passage at all, so
+> its 'passage' text is the gold answer by construction. There is no
+> non-leaking passage to fall back to.
+>
+> **Decision: `nq_open` is excluded from all real Phase 2/3 sweeps going
+> forward.** Its Phase 1 result is retained only as a documented
+> limitation, not as a valid baseline to build on. The real matrix going
+> forward is **4 models × 2 corpora (hotpot_qa, ms_marco) × 3 attacks**,
+> not 4×3×3. Every 'three corpora' reference elsewhere in this document
+> predates this decision and should be read with that correction in mind."
+
+This confirms option (b) is what was chosen, on 2026-09-04 — the same date
+`config.py`'s `CORPORA` comment records, consistent with a single decision
+made once and reflected in both places. `PHASE2_ROADMAP.md` states the
+decision itself but, like `config.py`'s comment, does not separately name
+who made it or record a supervisor sign-off — that remains the open item
+Section 6 below asks to close at the upcoming meeting.
 
 ## 4. Crescendo is corpus-independent — the scope impact is narrower than "one of three corpora lost"
 
