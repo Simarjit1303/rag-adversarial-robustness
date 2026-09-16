@@ -161,16 +161,18 @@ respectively) — a design that couldn't distinguish "attacks differ" from
 "a single attack happens to look different across conditions" would have
 missed this.
 
-**EU AI Act Article 15 framing.** Per `README.md`'s own framing (the only
-place in this repository's currently committed material that states the
-project's regulatory motivation explicitly): this is a "cross-model
-benchmark of prompt injection, knowledge poisoning, and multi-turn attacks
-under EU AI Act Article 15" — Article 15 requires high-risk AI systems to
-achieve "an appropriate level of accuracy, robustness, and cybersecurity"
-and to be resilient against attempts to exploit system vulnerabilities. No
-separate scope/overview document elaborating this framing further (a
-dedicated Article 15 mapping, specific sub-requirements addressed, etc.) was
-found in this repository as of this compilation — see Section 11.
+**EU AI Act Article 15 framing.** Per `README.md`'s own framing: this is a
+"cross-model benchmark of prompt injection, knowledge poisoning, and
+multi-turn attacks under EU AI Act Article 15" — Article 15 requires
+high-risk AI systems to achieve "an appropriate level of accuracy,
+robustness, and cybersecurity" and to be resilient against attempts to
+exploit system vulnerabilities. **A full Article 15 mapping now exists:**
+[`PHASE4_EU_AI_ACT_MAPPING.md`](PHASE4_EU_AI_ACT_MAPPING.md) — verified
+regulatory context (the AI Act is Regulation (EU) 2024/1689, not the
+Digital Omnibus amendment 2026/1744; the discrepancy between these two is
+documented there), Article 15's real requirements quoted, a full mapping
+against this project's final results, and the CEN-CENELEC standards-gap
+novelty framing. See Section 11 for status.
 
 ---
 
@@ -1234,15 +1236,24 @@ beyond what is directly stated in source material.
   `REFUSAL_MARKER` into the live conversation history, the same way
   injection's and PoisonedRAG's runners already do) is a well-motivated,
   unexplored next step, not yet started.
-- **A Phase 4 (EU AI Act Article 15 mapping) is referenced only by
-  implication** — `README.md` states the project's motivation in terms of
-  Article 15 (Section 2), but no dedicated Phase 4 planning, mapping, or
-  status document was found anywhere in this repository as of this
-  compilation. `PHASE2_ROADMAP.md`, referenced by name in multiple task
+- **Phase 4 (EU AI Act Article 15 mapping) — started, real content exists.**
+  [`PHASE4_EU_AI_ACT_MAPPING.md`](PHASE4_EU_AI_ACT_MAPPING.md) maps
+  Article 15's real requirements against this project's final Phase 1–3
+  results, verifies the regulatory context directly (correcting a
+  regulation-number error in the assumed starting context — the AI Act
+  is Regulation (EU) 2024/1689, not 2026/1744, which is the Digital
+  Omnibus amendment), and names the CEN-CENELEC standards gap as this
+  project's specific compliance-question contribution. Not yet a legal
+  compliance assessment or conformity assessment — see that document's
+  own Section 4 for what it explicitly does not claim.
+  `PHASE2_ROADMAP.md`, referenced by name in multiple task
   briefs (e.g. `phase2_poisonedrag_task.md:25`) as the source for
   poison-count/dataset-size decisions "confirmed in Meeting 3," **does not
-  exist in this repository** (confirmed via repo-wide search) — its
-  content is not recoverable from what's committed here.
+  exist in this git repository** — confirmed via repo-wide search, though
+  it does exist in the parent project folder (`Drafts/PHASE2_ROADMAP.md`,
+  outside this repo — see `NQ_OPEN_SCOPE_DECISION.md` Section 3 for a
+  direct quote from it, since its content is not recoverable from
+  anything committed to this repository itself).
 - **Supervisor meeting count — resolved.** A consolidated log now exists:
   [`SUPERVISION_MEETINGS_LOG.md`](SUPERVISION_MEETINGS_LOG.md), built from
   the real meeting-record files in the parent project folder (outside this

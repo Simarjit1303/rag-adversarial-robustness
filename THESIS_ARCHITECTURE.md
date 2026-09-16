@@ -19,7 +19,7 @@ flowchart LR
     P1["Phase 1: Baseline<br/>4 models x 3 corpora<br/>n=1000, vLLM"]
     P2["Phase 2: Attacks<br/>Injection / PoisonedRAG / Crescendo"]
     P3["Phase 3: Defenses<br/>instruction_detection / spotlighting / output_filter"]
-    P4["Phase 4: EU AI Act Art. 15 Mapping<br/>referenced only by implication in README.md,<br/>no dedicated planning doc found in repo"]
+    P4["Phase 4: EU AI Act Art. 15 Mapping<br/>PHASE4_EU_AI_ACT_MAPPING.md --<br/>regulatory context verified, full mapping built"]
     WR["Write-up / Submission"]
 
     P1 -->|"baseline F1 feeds utility-drop comparisons"| P2
@@ -29,8 +29,8 @@ flowchart LR
 
     classDef done fill:#d4edda,stroke:#28a745
     classDef open fill:#fff3cd,stroke:#ffc107
-    class P1,P2,P3 done
-    class P4,WR open
+    class P1,P2,P3,P4 done
+    class WR open
 ```
 
 Green = built and closed out with final numbers. Yellow = referenced but
@@ -368,7 +368,10 @@ rag-adversarial-robustness/
 ├── PHASE2_POISONEDRAG_INSIGHTS.md     # Attack 2 findings
 ├── PHASE2_CRESCENDO_INSIGHTS.md       # Attack 3 findings
 ├── PHASE3_DEFENSE_INSIGHTS.md         # Defense findings, final backend-corrected version
-├── nq_open_leakage_finding.md         # why nq_open is excluded project-wide
+├── nq_open_leakage_finding.md         # why nq_open is excluded project-wide (original finding)
+├── NQ_OPEN_SCOPE_DECISION.md          # formal scope-adjustment note, pending supervisor sign-off
+├── SUPERVISION_MEETINGS_LOG.md        # meeting 1-3 logged, 4 corroborated, 5-6 remain before submission
+├── PHASE4_EU_AI_ACT_MAPPING.md        # Article 15 mapping against final Phase 1-3 results
 ├── CITATIONS.md                       # real, peer-reviewed reference list --
 │                                       #   inlined in full in THESIS_MASTER_RECORD.md §12
 ├── THESIS_MASTER_RECORD.md            # full narrative record — the story
