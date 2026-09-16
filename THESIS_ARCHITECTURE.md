@@ -34,7 +34,7 @@ flowchart LR
 ```
 
 Green = built and closed out with final numbers. Yellow = referenced but
-not a committed deliverable yet — see `THESIS_MASTER_RECORD.md` Section 11.
+not a committed deliverable yet — see `THESIS_MASTER_RECORD.md` Section 12.
 
 ---
 

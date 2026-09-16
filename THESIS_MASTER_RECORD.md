@@ -15,7 +15,7 @@ explicitly rather than resolved by guessing.
 summary CSVs, every task-brief `.md` file in the repo root, this
 repository's own git history for `defenses/output_filter.py` and
 `defenses/instruction_detection.py`, and `CITATIONS.md` (the repository's
-real, peer-reviewed reference list — see Section 12). A local, tokenizer-only
+real, peer-reviewed reference list — see Section 13). A local, tokenizer-only
 diagnostic run in this update (Section 5.1) resolved the one figure this
 document previously flagged as genuinely open.
 
@@ -172,7 +172,7 @@ regulatory context (the AI Act is Regulation (EU) 2024/1689, not the
 Digital Omnibus amendment 2026/1744; the discrepancy between these two is
 documented there), Article 15's real requirements quoted, a full mapping
 against this project's final results, and the CEN-CENELEC standards-gap
-novelty framing. See Section 11 for status.
+novelty framing. See Section 12 for status.
 
 ---
 
@@ -620,7 +620,7 @@ Russinovich, Salem & Eldan, *Great, Now Write an Article About That: The
 Crescendo Multi-Turn LLM Jailbreak Attack* (USENIX Security 2025 — the
 task brief that scoped this attack cited the 2024 arXiv preprint, per
 `CITATIONS.md`'s inclusion policy the venue-published 2025 version is the
-citable one; see Section 12); reference implementation Microsoft PyRIT,
+citable one; see Section 13); reference implementation Microsoft PyRIT,
 `Azure/PyRIT`. **DeepSeek V4 Pro is the attacker and judge
 in every conversation, never a target** — this role asymmetry must be read
 into every result below: "which model resists Crescendo" describes only
@@ -1139,7 +1139,124 @@ all `spotlighting` (Section 6.5). Utility preservation: Section 6.4.
 
 ---
 
-## 10. Limitations
+## 10. Practical Implications
+
+**Scope note, read together with the rest of this document:** everything
+below describes only what this project's own evaluation directly measured —
+4 models, 2 corpora (`hotpot_qa`, `ms_marco`; `nq_open` excluded per Section
+4), 3 attacks, and 3 defenses, at the specific n's reported in Sections 5–6.
+It is written for a reader deciding what to do with these specific findings,
+not as generalized guidance about "which models/defenses are best" beyond
+this evaluation's scope. Per supervisor feedback to avoid making broader
+claims than the evaluation can demonstrate, every claim below is phrased as
+"this project's results show X for the models/attacks/defenses tested," not
+as a general recommendation ("companies should do Y") — any sentence that
+could not be traced to a number already established in Section 5, 6, or
+`PHASE4_EU_AI_ACT_MAPPING.md` was left out rather than written as an
+assumption.
+
+### 10.1 There is no single best model — "robust against what," not "which model is best"
+
+Robustness is not one property in this project's data. Each of the 4 models
+shows a different vulnerability profile depending on which attack is
+considered, and no model is uniformly stronger or weaker across all three:
+
+| Model | Injection (Section 5.1) | PoisonedRAG ASR (Section 5.2) | Crescendo ASR (Section 5.3) | Crescendo mechanism |
+|---|---|---|---|---|
+| `llama-3.1-8b` | Near-zero everywhere in this dataset (0.0–0.6%) — the most injection-robust of the four models tested here | 73.3% (`hotpot_qa`) / 17.7% (`ms_marco`) | 70.2% (highest of the four) | Refuses constantly (0.91 refusals/conversation) and backtracks often (44% of behaviors) — but in this dataset, backtracking reliably breaks through into a successful jailbreak |
+| `qwen3-8b` | Vulnerable specifically to `fake_completion` (11.7–14.1%), not `ignore` (0.3–3.2%) | 77.8% / 19.8% | 68.4% | Backtracks convert to success about as readily as `llama-3.1-8b`'s |
+| `phi-4-mini` | Vulnerable to `fake_completion` on `ms_marco` only (10.1% vs. 0.2% on `hotpot_qa`; corpus split confirmed real, p=8.18×10⁻²⁹) | 70.0% / 18.8% | 59.2% (lowest of the four) | A similar amount of resistance to `qwen3-8b`, but in this dataset it more often holds |
+| `ministral-3-8b` | Most susceptible of the four to both process-hijack templates (30.5–60.8%) — confirmed genuine, if partial, compliance with the injected print-instruction; never full task abandonment (0/607 flagged rows) | 76.7% / 19.8% | 69.5% | Almost never refuses (0.02 refusals/conversation, 2% backtrack rate) — there is barely any resistance in this dataset to begin with |
+
+For PoisonedRAG specifically, this project's own statistical tests found all
+12 model-vs-model comparisons non-significant after correction (Section
+5.2) — corpus identity, not model identity, drove the outcome in this
+dataset. The practical reading this project's data supports: a question
+like "which of these four models is most robust" needs to first specify
+against which of these three attack types, because in this evaluation the
+ranking inverts depending on the answer — `llama-3.1-8b` is this dataset's
+strongest performer against injection and its weakest against Crescendo.
+
+### 10.2 Defense scorecard
+
+Summarizing Section 6's final, backend-corrected findings at a
+decision-relevant level (full statistics in Sections 6.1–6.5, not repeated
+here):
+
+- **`spotlighting`** is the only defense in this project with a confirmed,
+  backend-isolated real effect (9 of 16 injection cells still significant
+  after backend correction; 4 of 24 PoisonedRAG cells) — but that effect is
+  more modest than the uncorrected "100% ASR reduction" headline first
+  suggested (the backend switch alone still accounts for 50–86% of the
+  originally-reported reduction in 6 of those 9 cells), and it comes at a
+  severe utility cost in this dataset (mean ΔF1 −0.283 against injection,
+  as low as −0.44 in some cells).
+- **`output_filter`** shows 0 of 19 injection cells and 0 of 24 PoisonedRAG
+  cells significant after backend correction — the original, uncorrected
+  headline reduction was almost entirely a backend-switch artifact in this
+  dataset, not guard action (only 0.8% of blocked items have a guard catch
+  behind them). Against PoisonedRAG the mismatch is structural, not a
+  matter of degree: the guard's flag rate is exactly 0.0000 across all 160
+  scored responses in this project, consistent with a safety classifier
+  having no mechanism to detect a factually wrong but safe-sounding answer.
+- **`instruction_detection`** shows 0 of 16 injection cells significant, but
+  the underlying classifier mechanism is real in this dataset, not a null
+  result dressed up as zero: every one of the 10 backend-corrected genuine
+  blocks has a flagged passage behind it (10/10). This defense's n=40 cap
+  (against the other two defenses' n=1000) means this project's own data
+  cannot rule out significance at full scale — underpowered, not disproven.
+
+### 10.3 A scope this project did not evaluate: efficiency
+
+This project measured robustness only. It did not measure inference
+latency, throughput, memory footprint, or any other speed/efficiency
+trade-off for any of the four models or three defenses. This is a real
+limitation of the evaluation as it stands: a deployer weighing this
+project's robustness findings would still need a separate efficiency
+evaluation this project did not perform — for instance, `spotlighting`'s
+base64 encoding adds per-request overhead this project never measured, and
+`instruction_detection`'s per-passage classifier cost (Section 6.1's single
+4m27s wall-clock timing is the only timing data this project collected, and
+it was collected to explain a sample-size cap, not as a throughput
+benchmark) was never characterized at production scale. Robustness-
+efficiency trade-off measurement is named here explicitly as a concrete,
+well-motivated direction for future work, not folded into this project's
+own robustness conclusions.
+
+### 10.4 Implications for practitioners, grounded in what this project found
+
+- **Don't assume one defense generalizes across attack types.** In this
+  project, `output_filter` appeared to strongly reduce injection ASR before
+  backend correction, and that apparent effect collapsed to 0/19 once the
+  confound was isolated (Section 6.3, Section 8) — the direct cautionary
+  example this project's own data provides against trusting an uncorrected
+  before/after comparison.
+- **Match the defense to the actual threat model.** `output_filter`'s
+  0.0000 flag rate against PoisonedRAG in this dataset (Section 6.3) is not
+  a tuning problem — a safety-content classifier has no mechanism to see
+  factual poisoning by construction. This project's data shows a defense
+  can be well-built and still be the wrong tool for a given attack surface.
+- **Test at realistic scale before trusting small-sample results.**
+  `instruction_detection`'s n=40 cap (Section 6.1) reflects a real compute
+  constraint this project hit, not a design choice — and its 0/16
+  significant result at that n cannot, on this project's own data, be
+  distinguished from an underpowered real effect (10/10 backend-corrected
+  blocks do have classifier fingerprints behind them).
+- **The EU AI Act Article 15 compliance-testing gap is current and
+  unresolved, and this project's Phase 4 mapping speaks to it directly.**
+  As of `PHASE4_EU_AI_ACT_MAPPING.md`'s verification, the CEN-CENELEC JTC 21
+  harmonised standards for Article 15 accuracy/robustness (`prEN 18229-2`)
+  and cybersecurity (`prEN 18282`) remain in draft status, not yet
+  published in the Official Journal — meaning no presumption-of-conformity
+  testing standard exists yet for the accuracy/robustness/cybersecurity
+  requirement this project's own evaluation methodology maps against
+  (`PHASE4_EU_AI_ACT_MAPPING.md` Sections 3–4). This project does not claim
+  to fill that standards gap; it documents, with a concrete worked example,
+  what the gap looks like from the evaluation side.
+
+---
+
+## 11. Limitations
 
 **Consolidated across all three phases — every item below is documented
 somewhere in this repository's source material, not newly asserted here.**
@@ -1224,7 +1341,7 @@ somewhere in this repository's source material, not newly asserted here.**
 
 ---
 
-## 11. Open Items / Remaining Work
+## 12. Open Items / Remaining Work
 
 Kept brief and factual, per what this repository's material actually
 documents as outstanding — this section does not speculate about anything
@@ -1267,7 +1384,7 @@ beyond what is directly stated in source material.
   the project now runs entirely on RunPod's standard Linux/POSIX pod
   filesystem, the same local-filesystem environment `os.replace()`'s
   atomicity guarantee already covers and was already verified against
-  (Section 3.4, Section 10). No SMB-specific gap remains — this item
+  (Section 3.4, Section 11). No SMB-specific gap remains — this item
   requires no further action.
 - **Write-up status.** This document is explicitly positioned, per the
   request that produced it, as thesis-chapter backbone material — the
@@ -1276,7 +1393,7 @@ beyond what is directly stated in source material.
 
 ---
 
-## 12. References
+## 13. References
 
 **`CITATIONS.md` now exists in this repository** (committed after this
 document's first version, which was written when it did not exist and
@@ -1350,7 +1467,7 @@ matching `CITATIONS.md`'s own ordering.
 **Utility / over-refusal benchmarking**
 
 - Cui, J., Chiang, W.-L., Stoica, I., & Hsieh, C.-J. (2025). *OR-Bench: An Over-Refusal Benchmark for Large Language Models*. In Proceedings of the 42nd International Conference on Machine Learning (ICML 2025). Proceedings of Machine Learning Research, Vol. 267, pp. 11515–11542. PMLR. https://proceedings.mlr.press/v267/cui25a.html
-- Röttger, P., Kirk, H. R., Vidgen, B., Attanasio, G., Bianchi, F., & Hovy, D. (2024). *XSTest: A Test Suite for Identifying Exaggerated Safety Behaviours in Large Language Models*. In Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (NAACL 2024). Association for Computational Linguistics. https://aclanthology.org/2024.naacl-long.301/ — dataset access note: the original `paul-rottger/xstest` Hub handle has been retired; the dataset is current and live under `Paul/XSTest` (the author's current handle), same 450-prompt suite (matches Section 10's own note on this migration).
+- Röttger, P., Kirk, H. R., Vidgen, B., Attanasio, G., Bianchi, F., & Hovy, D. (2024). *XSTest: A Test Suite for Identifying Exaggerated Safety Behaviours in Large Language Models*. In Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (NAACL 2024). Association for Computational Linguistics. https://aclanthology.org/2024.naacl-long.301/ — dataset access note: the original `paul-rottger/xstest` Hub handle has been retired; the dataset is current and live under `Paul/XSTest` (the author's current handle), same 450-prompt suite (matches Section 11's own note on this migration).
 
 ### Statistical methodology
 
@@ -1397,6 +1514,6 @@ re-verify any DOI links before final submission in case of link rot.*
 ---
 
 *End of master record. Every number above traces to a file cited inline;
-Section 10 and Section 11 name every place a gap or open question was
+Section 11 and Section 12 name every place a gap or open question was
 found rather than resolved by assumption. As of this update, no figure in
 this document remains flagged unresolved.*

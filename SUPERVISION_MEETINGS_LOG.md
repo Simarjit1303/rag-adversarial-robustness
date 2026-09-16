@@ -48,7 +48,7 @@ content. Full results in [Sources](#sources) below.
 
 - `git log --all --oneline | grep -i meeting` — **zero results**, no commit message references a meeting.
 - `grep -rn "Meeting [0-9]" --include="*.md" .` inside the repo — two files, both task briefs: `phase2_indirect_injection_task.md:45` ("per Meeting 4 supervisor feedback") and `phase2_poisonedrag_task.md:25,28` ("confirmed in Meeting 3... referenced in `PHASE2_ROADMAP.md`"). Both point back to the same external `PHASE2_ROADMAP.md` already used as a primary corroborating source above — the repo's own task briefs never contain meeting content directly, only references to it.
-- `THESIS_MASTER_RECORD.md` Section 11 previously stated only that "Task briefs reference 'Meeting 3' and 'Meeting 4' in passing... no consolidated meeting log... was found in this repository" — this file is the resolution of that gap, built from real records outside the repo, not a repo-only guess.
+- `THESIS_MASTER_RECORD.md` Section 12 previously stated only that "Task briefs reference 'Meeting 3' and 'Meeting 4' in passing... no consolidated meeting log... was found in this repository" — this file is the resolution of that gap, built from real records outside the repo, not a repo-only guess.
 
 **Not found anywhere in the searched tree:** any `.docx`/`.pdf`/minutes file for Meeting 4, 5, or 6.
 

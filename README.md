@@ -218,7 +218,7 @@ silently billing forever or erasing its own evidence. See
 - **Branch:** current work lives on `defense/wire-sweep-runners`, not yet
   merged to `main`.
 
-(Status pulled from `THESIS_MASTER_RECORD.md` Section 11 and this
+(Status pulled from `THESIS_MASTER_RECORD.md` Section 12 and this
 repository's own commit history — no separate status-tracking file exists
 to check against.)
 
