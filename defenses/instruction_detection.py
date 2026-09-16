@@ -32,6 +32,8 @@ swaps that line for
 same "[{i+1}] text" numbering for surviving passages.
 """
 
+import json
+import os
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -55,7 +57,32 @@ def _load_default_classifier():
     """
     global _pipeline
     if _pipeline is None:
+        import torch
         from transformers import pipeline
+        # Cap PyTorch's CPU intra-op thread pool BEFORE loading the
+        # pipeline. Real-pod measurement (2026-09-13): a single
+        # RAG_SAMPLE_N=1 item (5 passages at TOP_K=5, one detect_injection
+        # call per passage -- confirmed correct, not a loop bug) took
+        # real 4m27s but user 56m5s CPU-time -- a ~12.6x ratio, meaning
+        # far more CPU-thread-seconds were burned than one classification
+        # pass needs. cProfile confirmed every one of those seconds is
+        # spent inside DeBERTa's real forward pass (nn.Linear/attention),
+        # not a stray loop or reinit -- so the cost is genuine compute,
+        # multiplied by thread-pool overhead: torch.set_num_threads()
+        # defaults to the CPU count PyTorch detects, uncapped, and this
+        # module never overrode it. A single 512-token forward pass on a
+        # ~184M-param model is too small a matmul to benefit from wide
+        # intra-op parallelism -- on a RunPod GPU rental's high-vCPU-count
+        # (or cgroup-quota-mismatched-container) host, spawning/
+        # synchronizing dozens of threads for that little compute burns
+        # far more aggregate CPU-time than it saves in wall-clock, and can
+        # even slow the wall-clock itself down via contention. Capping to
+        # 1 thread removes this scaling risk entirely regardless of the
+        # host's reported core count -- confirmed offline this is not a
+        # meaningful latency regression (single real-model call on a
+        # real-length hotpot_qa-shaped passage stayed in the low single
+        # digits of seconds at 1 thread vs default).
+        torch.set_num_threads(1)
         # device=-1: CPU-only. No GPU code path exists in this module by
         # design -- the model is small enough (~184M params) that a
         # per-passage classifier call is cheap on CPU even on the pod,
@@ -89,7 +116,27 @@ def detect_injection(
     protectai DeBERTa pipeline described in this module's docstring.
     """
     clf = classifier or _load_default_classifier()
-    result = clf(text, truncation=True)[0]
+    # max_length=512 is explicit, not left for truncation=True to infer from
+    # the tokenizer's own model_max_length: protectai/deberta-v3-base-prompt-
+    # injection-v2's published tokenizer_config.json sets model_max_length to
+    # the "no limit configured" HF sentinel (~1e30, transformers'
+    # VERY_LARGE_INTEGER), and transformers' own tokenization_utils_base.py
+    # (_get_padding_truncation_strategies) silently downgrades truncation=True
+    # to DO_NOT_TRUNCATE whenever max_length is omitted and model_max_length
+    # exceeds LARGE_INTEGER -- confirmed by reading that exact source path.
+    # So truncation=True alone was a silent no-op here: any passage longer
+    # than the model's real trained context ran through DeBERTa's O(n^2)
+    # self-attention at FULL, uncapped length on CPU. hotpot_qa's
+    # extract_passage_text (data/normalize.py) concatenates the ENTIRE
+    # distractor-config context -- all ~10 documents' sentences -- into one
+    # string per passage, unlike this module's own short smoke-test
+    # fixtures, so real sweep passages are routinely far longer than
+    # anything the test suite exercises. This is almost certainly the real
+    # pod's apparent hang at n=1000 (CPU pinned at 100%, state R -- genuinely
+    # computing one pathologically long forward pass, not an infinite loop):
+    # confirmed offline via the real published config.json, max_position_
+    # embeddings=512 is the model's actual trained/supported length.
+    result = clf(text, truncation=True, max_length=512)[0]
     label = result["label"]
     score = float(result["score"])
     flagged = label.upper() == _FLAG_LABEL and score >= threshold
@@ -137,3 +184,25 @@ def filter_retrieved_passages(retrieved, corpus_name: str, classifier=None):
         lines.append(f"[{i + 1}] {text}")
     context = "\n\n".join(lines)
     return context, log
+
+
+def log_passage_detection_event(log_path, record: dict):
+    """
+    Appends one JSONL row and fsyncs immediately -- identical discipline to
+    defenses/output_filter.py's log_filter_event (same rationale: an
+    interruption mid-sweep should only cost rows not yet logged, not the
+    whole file). Kept as its own copy rather than imported from that module
+    so this module has no dependency on output_filter, same "byte-for-byte
+    in sync, not imported" precedent already used elsewhere in this repo
+    (e.g. evaluation/run_attack_injection.py's own _atomic_open).
+
+    record is expected to carry the caller's row-id keys (model/corpus/
+    injection_template/question, mirroring output_filter's row_id
+    convention) merged with a "passages" list of
+    {"passage_id", "flagged", "score", "label"} dicts, one per originally
+    retrieved passage in rank order -- see PassageLog above.
+    """
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        f.flush()
+        os.fsync(f.fileno())

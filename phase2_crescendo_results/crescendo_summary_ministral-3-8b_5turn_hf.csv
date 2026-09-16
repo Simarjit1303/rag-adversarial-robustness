@@ -1,0 +1,2 @@
+model,max_turns,n,n_scored,n_judge_failed,attack_success_rate,backtrack_rate,mean_backtrack_count,mean_refusal_count,mean_turns_completed
+ministral-3-8b,5,100,95,5,0.6947,0.02,0.02,0.02,5.0

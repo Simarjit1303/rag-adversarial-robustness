@@ -202,7 +202,10 @@ BEHAVIOR_DATASETS = {
 # ---------------------------------------------------------------------------
 # Utility / false-positive baseline (used from Phase 3 onward)
 # ---------------------------------------------------------------------------
-XSTEST_HF_ID = "paul-rottger/xstest"
+# paul-rottger/xstest no longer exists on the Hub -- Paul/XSTest is the
+# original author's current handle for the same 450-prompt dataset
+# (confirmed live 2026-09-12: 450 rows, prompt/type columns).
+XSTEST_HF_ID = "Paul/XSTest"
 
 # ---------------------------------------------------------------------------
 # Embedding model for FAISS indices

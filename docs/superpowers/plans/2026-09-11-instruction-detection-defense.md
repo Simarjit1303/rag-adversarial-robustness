@@ -22,8 +22,11 @@ re-deriving it, per brainstorming's purpose being already satisfied.
   this task ships the module + smoke test only, per the ask).
 - `classifier` param on both public functions is the CPU-only-test /
   swap-detector-later injection point — real pipeline lazy-loaded only
-  when not overridden, so the smoke test never needs network/GPU beyond
-  the one real download it does to validate against the real model.
+  when not overridden, so the test suite never downloads anything: every
+  test passes a `classifier` override, and the real
+  protectai/deberta-v3-base-prompt-injection-v2 pipeline only ever loads
+  when a caller (a real sweep, or this session's false-positive check)
+  omits that override.
 
 ## Task
 1. `defenses/instruction_detection.py`: `detect_injection` (per-passage)

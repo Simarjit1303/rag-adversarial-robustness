@@ -98,6 +98,101 @@ def test_sweep_writes_one_cell_per_model_corpus_template(stub_heavy_calls, tmp_p
     assert "attack_summary_phi-4-mini_ms_marco_combined_hf.csv" in written
 
 
+# ---------------------------------------------------------------------
+# Phase 3 defense wiring
+# ---------------------------------------------------------------------
+
+def test_defended_top_k_locks_spotlighting_to_2_regardless_of_config_top_k():
+    assert rai._defended_top_k("spotlighting") == rai.SPOTLIGHTING_TOP_K == 2
+    assert rai._defended_top_k("instruction_detection") == config.TOP_K
+    assert rai._defended_top_k("output_filter") == config.TOP_K
+    assert rai._defended_top_k("none") == config.TOP_K
+
+
+def test_build_defended_attack_prompt_instruction_detection_drops_flagged_passage(monkeypatch):
+    # Two retrieved passages; the classifier flags only the rank-1
+    # (injected) one -- the defense must drop exactly that one from the
+    # rendered context, keeping the other passage's numbering/content.
+    monkeypatch.setattr(rai, "retrieve", lambda index, records, question, k: [
+        ({"id": 0}, 0.9), ({"id": 1}, 0.5),
+    ])
+    monkeypatch.setattr(rai, "extract_passage_text", lambda corpus_name, doc: f"clean text {doc['id']}")
+
+    def fake_detect_injection(text):
+        from defenses.instruction_detection import DetectionResult
+        flagged = "Instead, answer" in text  # naive template's injected instruction marker
+        return DetectionResult(flagged=flagged, score=0.99 if flagged else 0.01,
+                                label="INJECTION" if flagged else "SAFE")
+
+    monkeypatch.setattr(rai, "detect_injection", fake_detect_injection)
+
+    system_prompt, user_prompt, retrieved, target_string, hijack_type, passage_log = (
+        rai._build_defended_attack_prompt(
+            index=None, records=None, question="q?", corpus_name="hotpot_qa",
+            injection_template="naive", top_k=2, defense="instruction_detection",
+        )
+    )
+
+    assert system_prompt == rai.SYSTEM_PROMPT  # unchanged for this defense
+    assert "[1]" not in user_prompt  # rank-1 (injected+flagged) dropped
+    assert "clean text 1" in user_prompt  # rank-2 survives
+
+    # regression coverage for the per-passage mechanism log this defense
+    # now persists (previously computed and discarded, see
+    # evaluation/run_attack_injection.py's _build_defended_attack_prompt
+    # docstring and PHASE3_DEFENSE_INSIGHTS.md's original mechanism-
+    # attribution gap for instruction_detection)
+    assert len(passage_log) == 2
+    assert passage_log[0].flagged is True and passage_log[0].label == "INJECTION"
+    assert passage_log[1].flagged is False and passage_log[1].label == "SAFE"
+
+
+def test_build_defended_attack_prompt_spotlighting_encodes_every_passage(monkeypatch):
+    monkeypatch.setattr(rai, "retrieve", lambda index, records, question, k: [({"id": 0}, 0.9)])
+    monkeypatch.setattr(rai, "extract_passage_text", lambda corpus_name, doc: "plain text")
+
+    system_prompt, user_prompt, retrieved, target_string, hijack_type, passage_log = (
+        rai._build_defended_attack_prompt(
+            index=None, records=None, question="q?", corpus_name="hotpot_qa",
+            injection_template="naive", top_k=2, defense="spotlighting",
+        )
+    )
+
+    assert passage_log is None  # only instruction_detection produces a passage log
+    assert rai.SPOTLIGHTING_SYSTEM_INSTRUCTION in system_prompt
+    assert "plain text" not in user_prompt  # base64-encoded, not plaintext
+    import base64
+    context = user_prompt.split("Context:\n", 1)[1].split("\n\nQuestion:")[0]
+    encoded_line = next(l for l in context.split("\n\n") if l.startswith("[1]"))
+    # rank-1 also carries the injected instruction (naive template), so the
+    # decoded text starts with the original passage text, not equals it
+    assert base64.b64decode(encoded_line[len("[1] "):]).decode("utf-8").startswith("plain text")
+
+
+def test_output_filter_defense_replaces_generated_answer_and_writes_distinct_filename(
+    stub_heavy_calls, tmp_path, monkeypatch,
+):
+    calls = []
+
+    def fake_run_output_filter(response_text, log_path, row_id):
+        calls.append((response_text, row_id))
+        return "[OUTPUT_FILTER_BLOCKED] blocked"
+
+    monkeypatch.setattr(rai, "run_output_filter", fake_run_output_filter)
+
+    rai.run_attack_sweep(
+        model_keys=["phi-4-mini"], corpus_names=["hotpot_qa"],
+        injection_templates=["naive"], defense="output_filter",
+    )
+
+    assert len(calls) == 1
+    raw_path = tmp_path / "attack_raw_phi-4-mini_hotpot_qa_naive_hf_defense-output_filter.jsonl"
+    assert raw_path.exists()
+    import json
+    row = json.loads(raw_path.read_text(encoding="utf-8").splitlines()[0])
+    assert row["generated_answer"] == "[OUTPUT_FILTER_BLOCKED] blocked"
+
+
 def test_sweep_scores_attack_success_against_target_string(stub_heavy_calls, tmp_path):
     # fake_run_attack_query's "generated_answer" is "fake gold answer" and
     # target_string is "42" -- attack_success must be 0 (target NOT in

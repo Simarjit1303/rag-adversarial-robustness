@@ -12,21 +12,38 @@ real weights before the Phase 3 sweep, same "verify on real
 infrastructure before committing budget" discipline already used
 throughout this repo's own sweep smoke tests.
 
+One deliberate exception:
+test_classify_response_real_tokenizer_batchencoding_matches_generate_call
+opts INTO a real (tokenizer-only, no weights) download of the pinned Guard
+tokenizer, because two consecutive real-hardware crashes in this same
+function (role alternation, then BatchEncoding-vs-tensor) both slipped
+past every hand-rolled stub here. It self-skips wherever that download
+isn't possible (no network, no HF_TOKEN, license not accepted for the
+gated repo -- confirmed 2026-09-12 on this dev machine: GatedRepoError,
+no HF_TOKEN set), so it stays a no-op here and in CI and only actually
+runs on a machine that has real Guard access, such as the pod.
+
 The core claim under test: on the SAME input text, output_filter's
 Guard-based judgment and attacks.crescendo.is_refusal()'s naive substring
 match diverge -- this is the whole reason this defense doesn't build on
 is_refusal() (see module docstring and PHASE2_CRESCENDO_INSIGHTS.md).
 """
 
+import copy
 import json
 
+import pytest
 import torch
+from transformers import DynamicCache
+from transformers.tokenization_utils_base import BatchEncoding
 
 from attacks.crescendo import is_refusal
 from defenses.output_filter import (
     REFUSAL_MARKER,
+    _disable_llama4_chunked_attention,
     apply_output_filter,
     classify_response,
+    load_guard_model,
     log_filter_event,
     run_output_filter,
 )
@@ -34,17 +51,24 @@ from defenses.output_filter import (
 
 class _StubTokenizer:
     """Ignores actual token ids; decode() always returns the canned Guard
-    verdict text this stub was built with. apply_chat_template only needs
-    to return something with a numeric last dim for classify_response's
-    slicing to work."""
+    verdict text this stub was built with. apply_chat_template returns a
+    real BatchEncoding (dict-like {"input_ids", "attention_mask"}), matching
+    what transformers' apply_chat_template(..., return_dict=True) actually
+    hands back -- a bare tensor here would silently mask the real-hardware
+    BatchEncoding-vs-tensor bug this stub is supposed to catch (see
+    test_classify_response_conversation_survives_real_llama_guard_template's
+    docstring for the incident this refers to)."""
 
     def __init__(self, raw_output):
         self.raw_output = raw_output
         self.eos_token_id = 0
 
-    def apply_chat_template(self, conversation, return_tensors="pt", add_generation_prompt=True):
-        assert conversation == [{"role": "assistant", "content": conversation[0]["content"]}]
-        return torch.zeros((1, 3), dtype=torch.long)
+    def apply_chat_template(self, conversation, return_tensors="pt", add_generation_prompt=True, return_dict=True):
+        assert conversation == [
+            {"role": "user", "content": [{"type": "text", "text": conversation[0]["content"][0]["text"]}]}
+        ]
+        input_ids = torch.zeros((1, 3), dtype=torch.long)
+        return BatchEncoding({"input_ids": input_ids, "attention_mask": torch.ones_like(input_ids)})
 
     def decode(self, ids, skip_special_tokens=True):
         return self.raw_output
@@ -53,8 +77,13 @@ class _StubTokenizer:
 class _StubModel:
     def __init__(self):
         self.device = "cpu"
+        # No .config -- classify_response()'s DynamicCache-construction path
+        # is conditional on hasattr(model, "config"), so these CASES-driven
+        # tests (which don't care about the Llama4 cache bug) never exercise
+        # it; see test_classify_response_builds_patched_dynamic_cache_for_
+        # llama4_config for the stub that does carry a real config.
 
-    def generate(self, input_ids, max_new_tokens, pad_token_id):
+    def generate(self, input_ids, attention_mask, max_new_tokens, pad_token_id, past_key_values=None):
         # append exactly one dummy "generated" token beyond the prompt --
         # classify_response only cares about the slice past input length,
         # and decode() ignores its content anyway.
@@ -214,6 +243,465 @@ def test_log_filter_event_appends_and_is_durable_across_calls(tmp_path):
     assert row1["flagged"] is False
     assert row2["flagged"] is True
     assert row2["guard_raw_output"] == "unsafe\nS9"
+
+
+def test_classify_response_conversation_survives_real_llama_guard_template():
+    """
+    Regression test for the real-hardware crash: Llama-Guard-4-12B's own
+    chat_template.jinja (github: meta-llama/Llama-Guard-4-12B, fetched
+    2026-09-12) raises jinja2.exceptions.TemplateError("Conversation roles
+    must alternate user/assistant/user/assistant/...") unless messages[0]'s
+    role is "user", and expects content as a list of {"type": "text", ...}
+    dicts, not a bare string.
+
+    The stub tokenizer used by every other test in this file just echoes
+    the conversation back (see _StubTokenizer.apply_chat_template's
+    assert) -- it never actually runs Jinja, so it could not have caught
+    the original bug (a lone {"role": "assistant", "content": <str>} turn).
+    This test instead renders the real alternation/content-shape check
+    (the exact snippet from that template) via a real jinja2.Environment,
+    so a future regression to the old shape fails here, not on the pod.
+    """
+    import jinja2
+
+    # Verbatim alternation + content-shape logic from Llama-Guard-4-12B's
+    # own chat_template.jinja -- not a paraphrase. raise_exception is a
+    # global transformers itself injects when rendering a real chat
+    # template (jinja2 has no such builtin), so it's registered here too.
+    def _raise_exception(message):
+        raise jinja2.exceptions.TemplateError(message)
+
+    _env = jinja2.Environment()
+    _env.globals["raise_exception"] = _raise_exception
+    _ALTERNATION_CHECK = _env.from_string(
+        "{%- for message in messages -%}"
+        "{%- if (message['role'] == 'user') != (loop.index0 % 2 == 0) -%}"
+        "{{ raise_exception('Conversation roles must alternate user/assistant/user/assistant/...') }}"
+        "{%- endif -%}"
+        "{%- for txt in message.content | selectattr('type', 'equalto', 'text') -%}"
+        "{{ txt.text }}"
+        "{%- endfor -%}"
+        "{%- endfor -%}"
+    )
+
+    class _RealTemplateTokenizer:
+        eos_token_id = 0
+
+        def apply_chat_template(self, conversation, return_tensors="pt", add_generation_prompt=True, return_dict=True):
+            _ALTERNATION_CHECK.render(messages=conversation)  # raises on a bad shape
+            # Real BatchEncoding, not a bare tensor -- see
+            # test_classify_response_survives_real_batchencoding_return_type
+            # for the dedicated regression this mirrors.
+            input_ids = torch.zeros((1, 3), dtype=torch.long)
+            return BatchEncoding({"input_ids": input_ids, "attention_mask": torch.ones_like(input_ids)})
+
+        def decode(self, ids, skip_special_tokens=True):
+            return "safe"
+
+    model = _StubModel()
+    tokenizer = _RealTemplateTokenizer()
+
+    # The current (fixed) shape must NOT raise.
+    classify_response("some generated response", model=model, tokenizer=tokenizer)
+
+    # The OLD, broken shape -- a lone assistant-role turn with bare-string
+    # content -- must still raise, proving this test would have caught the
+    # original bug.
+    with pytest.raises(jinja2.exceptions.TemplateError, match="must alternate"):
+        _ALTERNATION_CHECK.render(messages=[{"role": "assistant", "content": "some generated response"}])
+
+
+def test_classify_response_survives_real_batchencoding_return_type():
+    """
+    Regression test for the second real-hardware-only crash in this same
+    function: transformers' PreTrainedTokenizerBase.apply_chat_template
+    defaults return_dict=True (confirmed 2026-09-12 against a live
+    AutoTokenizer on transformers==5.7.0 -- read straight from its
+    installed source, not assumed), so tokenize=True + return_tensors="pt"
+    alone returns a BatchEncoding (dict-like: {"input_ids",
+    "attention_mask"}), not a bare tensor. The old code passed that dict
+    into model.generate(input_ids=<the dict>, ...) as a single kwarg,
+    which crashed inside generate()'s internals with AttributeError on
+    `.shape` the moment it ran against the real tokenizer -- every stub in
+    this file previously returned a bare tensor from apply_chat_template
+    and so never exercised this path.
+
+    This uses transformers' own real BatchEncoding class (not a
+    hand-rolled dict-lookalike) so the object under test is only
+    structurally similar to the real tokenizer's output because it IS the
+    real return type, not a stand-in for it.
+    """
+    class _BatchEncodingTokenizer:
+        eos_token_id = 0
+
+        def apply_chat_template(self, conversation, return_tensors="pt", add_generation_prompt=True, return_dict=True):
+            input_ids = torch.zeros((1, 3), dtype=torch.long)
+            return BatchEncoding({"input_ids": input_ids, "attention_mask": torch.ones_like(input_ids)})
+
+        def decode(self, ids, skip_special_tokens=True):
+            return "safe"
+
+    calls = {}
+
+    class _AssertingModel:
+        device = "cpu"
+        # No .config -- this test is about the BatchEncoding-unpacking bug,
+        # not the Llama4 cache bug, so it doesn't exercise the DynamicCache
+        # path (see test_classify_response_builds_patched_dynamic_cache_for_
+        # llama4_config for that).
+
+        def generate(self, input_ids, attention_mask, max_new_tokens, pad_token_id, past_key_values=None):
+            # Proves the fix actually unpacks into separate tensor kwargs
+            # -- the old bug's failure mode was `input_ids` arriving here
+            # as the whole BatchEncoding instead of a tensor.
+            calls["input_ids_is_tensor"] = torch.is_tensor(input_ids)
+            calls["attention_mask_is_tensor"] = torch.is_tensor(attention_mask)
+            return torch.cat([input_ids, torch.zeros((1, 1), dtype=torch.long)], dim=1)
+
+    flagged, label, raw = classify_response(
+        "some generated response", model=_AssertingModel(), tokenizer=_BatchEncodingTokenizer(),
+    )
+    assert calls == {"input_ids_is_tensor": True, "attention_mask_is_tensor": True}
+    assert (flagged, label, raw) == (False, "safe", "safe")
+
+
+def test_llama4_guard_config_crashes_default_caches_but_layer_types_patch_fixes_it():
+    """
+    Regression test for the third real-hardware-only crash in this same
+    function: model.generate() itself crashed inside transformers, not in
+    our code, with `TypeError: '<' not supported between instances of
+    'int' and 'NoneType'` in cache_utils.py's
+    StaticSlidingWindowLayer.__init__ (`min(sliding_window, max_cache_len)`).
+
+    Root cause (confirmed 2026-09-12 against the real Llama4TextConfig
+    class -- Cache construction needs only a config object, no weights, so
+    this reproduces the crash with zero network/GPU): Llama-Guard-4-12B's
+    published config.json sets text_config.attention_chunk_size=None -- a
+    deliberate choice (Llama4's "Scout" iRoPE long-context design,
+    max_position_embeddings=10,485,760 -- confirmed via the real published
+    config.json), not a Meta oversight -- but
+    Llama4TextConfig.__post_init__ computes layer_types=["chunked_attention",
+    ...] for every layer purely from no_rope_layers, independent of
+    attention_chunk_size. transformers' generation_config.json for this
+    model also defaults cache_implementation="static", so an unmodified
+    model.generate() call builds a StaticCache, which for a
+    "chunked_attention" layer does
+    StaticSlidingWindowLayer(sliding_window=config.attention_chunk_size)
+    i.e. sliding_window=None, then crashes on min(None, max_cache_len).
+    Also independently reported at
+    https://huggingface.co/meta-llama/Llama-Guard-4-12B/discussions/14 (a
+    different call site, `first_cache_position >= attention_chunk_size`,
+    in an older transformers version -- same root config mismatch).
+
+    Two earlier attempts both tried to route around this with a
+    cache_implementation string ("dynamic", then "dynamic_full" in commit
+    31081cf) instead of fixing the actual mismatch -- both failed, because
+    no cache_implementation string is stable across the transformers
+    versions requirements.txt's floating `>=5.13` floor can resolve to
+    (confirmed 2026-09-13: "dynamic_full" existed in the dev machine's
+    local 5.7.0 but not in PyPI's current latest, 5.17.0, where it crashed
+    on the real pod with a ValueError naming a different accepted set
+    entirely). This test instead pins the actual fix: transformers'
+    Cache.__init__ reads config.layer_types AS-IS when the attribute is
+    present (confirmed the same in both 5.7.0 and current main-branch
+    source) -- relabeling "chunked_attention" as "full_attention" whenever
+    attention_chunk_size is None (the same semantics masking_utils.py
+    already uses for that value) avoids the crash without naming any
+    cache_implementation at all.
+    """
+    from transformers import StaticCache
+    from transformers.models.llama4 import Llama4TextConfig
+
+    # Same shape as the real guard's text_config: no_rope_layers all 1
+    # (every layer wants chunked attention) but attention_chunk_size
+    # explicitly None, as published in the real model's config.json.
+    text_config = Llama4TextConfig(
+        attention_chunk_size=None,
+        no_rope_layers=[1] * 48,
+        num_hidden_layers=48,
+        num_attention_heads=40,
+        num_key_value_heads=8,
+        head_dim=128,
+        hidden_size=5120,
+    )
+    assert text_config.layer_types[0] == "chunked_attention"
+
+    with pytest.raises(TypeError):
+        StaticCache(config=text_config, max_cache_len=64)  # the reported crash
+
+    with pytest.raises(TypeError):
+        DynamicCache(config=text_config)  # cache_implementation="dynamic" -- also broken
+
+    # The actual fix (now applied once, at load time, by
+    # _disable_llama4_chunked_attention -- see that test below): relabel
+    # every "chunked_attention" layer as "full_attention" when
+    # attention_chunk_size is None, then build the cache from the patched
+    # config -- must not raise.
+    patched_config = copy.deepcopy(text_config)
+    _disable_llama4_chunked_attention(patched_config)
+    patched_cache = DynamicCache(config=patched_config)
+    assert all(lt == "full_attention" for lt in patched_config.layer_types)
+    assert len(patched_cache.layers) == 48
+
+
+def test_disable_llama4_chunked_attention_also_fixes_create_chunked_causal_mask():
+    """
+    Regression test for the SIXTH real-pod crash on this same architectural
+    issue: `ValueError: Could not find an \\`attention_chunk_size\\`
+    argument in the config, or it is not set`, this time raised from
+    INSIDE the model's own forward() pass (modeling_llama4.py:563,
+    `create_chunked_causal_mask(**mask_kwargs)`), not from Cache
+    construction (the 9c610e0/previous-test crash).
+
+    Confirmed by reading modeling_llama4.py + masking_utils.py directly:
+    Llama4TextModel.forward() builds BOTH the "full_attention" and
+    "chunked_attention" masks EAGERLY on every call, regardless of whether
+    any layer's type is actually "chunked_attention" --
+    create_chunked_causal_mask unconditionally raises the above ValueError
+    whenever config.attention_chunk_size is None (masking_utils.py:1343-
+    1345), before layer_types is ever consulted for mask *selection*
+    (modeling_llama4.py:574). So relabeling layer_types alone (the previous
+    test's fix, and 9c610e0's cache-side fix) does NOT stop this crash --
+    attention_chunk_size must also be set to a real int.
+
+    Reproduced and confirmed fixed here (2026-09-13) by calling the real
+    transformers.masking_utils.create_chunked_causal_mask function
+    directly against a Llama4TextConfig shaped like the real guard's, with
+    attn_implementation="sdpa" set explicitly (a bare Llama4TextConfig()
+    defaults _attn_implementation to None, which hits an unrelated early
+    exit in masking_utils.py and never reaches the check this test is
+    pinning -- a real model loaded via from_pretrained always has a real
+    attn_implementation, so this matches production, not the offline
+    default): raises with attention_chunk_size=None, does not raise once
+    _disable_llama4_chunked_attention has run.
+    """
+    from transformers.masking_utils import create_chunked_causal_mask
+    from transformers.models.llama4 import Llama4TextConfig
+
+    text_config = Llama4TextConfig(
+        attention_chunk_size=None,
+        no_rope_layers=[1] * 4,
+        num_hidden_layers=4,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=8,
+        hidden_size=16,
+        attn_implementation="sdpa",
+    )
+    mask_kwargs = dict(
+        config=text_config,
+        inputs_embeds=torch.zeros((1, 3, 16)),
+        attention_mask=None,
+        past_key_values=None,
+        position_ids=None,
+    )
+    with pytest.raises(ValueError, match="attention_chunk_size"):
+        create_chunked_causal_mask(**mask_kwargs)  # the real-pod crash, reproduced offline
+
+    _disable_llama4_chunked_attention(text_config)
+    assert text_config.attention_chunk_size is not None
+    assert all(lt == "full_attention" for lt in text_config.layer_types)
+    create_chunked_causal_mask(**mask_kwargs)  # must not raise once patched
+
+
+def test_classify_response_builds_dynamic_cache_from_already_patched_config():
+    """
+    Integration-level counterpart to
+    test_llama4_guard_config_crashes_default_caches_but_layer_types_patch_fixes_it
+    and test_disable_llama4_chunked_attention_also_fixes_create_chunked_causal_mask:
+    those prove the patch mechanism works in isolation; this one proves
+    classify_response() actually wires the RESULT of that patch into
+    model.generate().
+
+    As of this fix, the patch runs ONCE in load_guard_model() (see
+    test_load_guard_model_disables_chunked_attention_once_after_loading),
+    not per-call inside classify_response() -- classify_response() now
+    trusts model.config to already be correct and just builds a
+    DynamicCache directly from it. This stub simulates a model whose
+    config load_guard_model() has already processed: layer_types
+    pre-relabeled to "full_attention", matching real production shape.
+    """
+    from transformers.models.llama4 import Llama4TextConfig
+
+    text_config = Llama4TextConfig(
+        attention_chunk_size=None,
+        no_rope_layers=[1] * 4,
+        num_hidden_layers=4,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=8,
+        hidden_size=16,
+    )
+    assert text_config.layer_types[0] == "chunked_attention"  # the real guard's broken shape
+    _disable_llama4_chunked_attention(text_config)  # what load_guard_model() does at load time
+    assert text_config.layer_types[0] == "full_attention"
+    assert text_config.attention_chunk_size is not None
+
+    class _ConfigBearingConfig:
+        """Mimics Llama4ForConditionalGeneration's top-level config: a
+        composite whose get_text_config(decoder=True) returns the nested
+        text config -- same as what classify_response() calls on the real
+        model.config."""
+
+        def get_text_config(self, decoder=None, encoder=None):
+            return text_config
+
+    calls = {}
+
+    class _ConfigBearingModel:
+        device = "cpu"
+        config = _ConfigBearingConfig()
+
+        def generate(
+            self, input_ids, attention_mask, max_new_tokens, pad_token_id,
+            past_key_values=None, cache_implementation="unset",
+        ):
+            calls["past_key_values"] = past_key_values
+            calls["cache_implementation"] = cache_implementation
+            return torch.cat([input_ids, torch.zeros((1, 1), dtype=torch.long)], dim=1)
+
+    tokenizer = _StubTokenizer("safe")
+    classify_response("some generated response", model=_ConfigBearingModel(), tokenizer=tokenizer)
+
+    cache = calls["past_key_values"]
+    assert isinstance(cache, DynamicCache)
+    assert len(cache.layers) == 4
+    # Real-pod regression (confirmed 2026-09-13): the guard's own
+    # generation_config.json defaults cache_implementation="static", and
+    # generate() merges that model default in BEFORE our kwargs, so leaving
+    # cache_implementation out entirely does NOT clear it -- generate()
+    # raised "Passing both cache_implementation ... and past_key_values
+    # ... is unsupported" on real hardware. classify_response() must pass
+    # cache_implementation=None EXPLICITLY alongside past_key_values.
+    assert calls["cache_implementation"] is None
+
+
+def test_load_guard_model_disables_chunked_attention_once_after_loading(monkeypatch):
+    """
+    Wiring test for Task 3: load_guard_model() must call
+    _disable_llama4_chunked_attention on the freshly-loaded model's config
+    exactly once, before caching it -- not per classify_response() call.
+    Mocks AutoModelForCausalLM/AutoTokenizer.from_pretrained (no network,
+    no weights) to isolate load_guard_model()'s own wiring from the real
+    download.
+    """
+    import defenses.output_filter as output_filter_module
+    from transformers.models.llama4 import Llama4TextConfig
+
+    text_config = Llama4TextConfig(
+        attention_chunk_size=None,
+        no_rope_layers=[1] * 4,
+        num_hidden_layers=4,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=8,
+        hidden_size=16,
+    )
+
+    class _StubLoadedModel:
+        config = text_config
+
+        def eval(self):
+            return self
+
+    monkeypatch.setattr(
+        output_filter_module.AutoModelForCausalLM, "from_pretrained",
+        lambda *a, **k: _StubLoadedModel(),
+    )
+    monkeypatch.setattr(
+        output_filter_module.AutoTokenizer, "from_pretrained", lambda *a, **k: object(),
+    )
+    output_filter_module._guard_cache.clear()  # this test's own concern, not a shared-state leak
+    try:
+        assert text_config.layer_types[0] == "chunked_attention"  # not yet patched
+        model, _tokenizer = load_guard_model()
+        assert model.config.layer_types[0] == "full_attention"  # patched once, at load
+        assert model.config.attention_chunk_size is not None
+
+        # Second call must hit the cache, not re-patch (already-cached
+        # config stays exactly as load_guard_model() left it -- no
+        # per-call re-patching, per Task 3).
+        model_again, _ = load_guard_model()
+        assert model_again is model
+    finally:
+        output_filter_module._guard_cache.clear()
+
+
+def _load_real_guard_tokenizer():
+    """Best-effort load of the real, pinned Guard tokenizer (small -- no
+    .safetensors, no full-model weights). Returns None on ANY failure
+    (no network, no HF_TOKEN, gated-repo access not granted) so callers can
+    turn that into a clean skip instead of a spurious CI failure. Cached at
+    module scope so the download is attempted once, not once per skipif
+    check plus once per test body."""
+    try:
+        from transformers import AutoTokenizer
+
+        from defenses.output_filter import GUARD_MODEL_ID, GUARD_MODEL_REVISION
+
+        return AutoTokenizer.from_pretrained(GUARD_MODEL_ID, revision=GUARD_MODEL_REVISION)
+    except Exception:
+        return None
+
+
+_REAL_GUARD_TOKENIZER = _load_real_guard_tokenizer()
+
+
+@pytest.mark.skipif(
+    _REAL_GUARD_TOKENIZER is None,
+    reason="needs network + an HF_TOKEN with the Llama-Guard-4-12B license accepted",
+)
+def test_classify_response_real_tokenizer_batchencoding_matches_generate_call():
+    """
+    The strongest test in this file: drives classify_response()'s real
+    conversation-building logic through the REAL pinned Llama-Guard-4-12B
+    tokenizer -- its real apply_chat_template, real chat_template.jinja,
+    real BatchEncoding -- with zero mocking upstream of model.generate().
+    Only that final call is stubbed (a real model needs GPU + gated
+    weights this machine doesn't have), and the stub asserts the exact
+    kwargs classify_response's `**inputs` unpacking hands it.
+
+    Confirmed manually 2026-09-12 (network access unavailable on this dev
+    machine to run this test live -- see module docstring): against the
+    real chat_template.jinja fetched straight from the model repo, the
+    real apply_chat_template(..., return_dict=True) call returns a
+    BatchEncoding with exactly {"input_ids", "attention_mask"}, both real
+    int64 tensors, no dtype surprises and no extra/missing keys generate()
+    would need -- i.e. classify_response's current **inputs unpacking is
+    exactly right for what the real tokenizer hands back. This test pins
+    that finding permanently for whichever machine has real access (e.g.
+    the pod), rather than trusting it never regresses.
+    """
+    tokenizer = _REAL_GUARD_TOKENIZER
+    calls = {}
+
+    class _AssertingModel:
+        device = "cpu"
+        # No .config -- this test is about the real tokenizer's chat-template/
+        # BatchEncoding shape, not the Llama4 cache/attention bug (see
+        # test_classify_response_builds_dynamic_cache_from_already_patched_config,
+        # test_llama4_guard_config_crashes_default_caches_but_layer_types_
+        # patch_fixes_it, and test_disable_llama4_chunked_attention_also_
+        # fixes_create_chunked_causal_mask for that -- pinning those fixes
+        # here too would require this stub to also carry the real guard's
+        # Llama4TextConfig, duplicating those tests for no added coverage).
+
+        def generate(self, input_ids, attention_mask, max_new_tokens, pad_token_id, past_key_values=None):
+            calls["input_ids"] = input_ids
+            calls["attention_mask"] = attention_mask
+            calls["max_new_tokens"] = max_new_tokens
+            calls["pad_token_id"] = pad_token_id
+            return torch.cat([input_ids, torch.zeros((1, 1), dtype=torch.long)], dim=1)
+
+    classify_response("some generated response", model=_AssertingModel(), tokenizer=tokenizer)
+
+    assert set(calls.keys()) == {"input_ids", "attention_mask", "max_new_tokens", "pad_token_id"}
+    assert torch.is_tensor(calls["input_ids"]) and torch.is_tensor(calls["attention_mask"])
+    assert calls["input_ids"].dtype == torch.long
+    assert calls["attention_mask"].dtype == torch.long
+    assert calls["input_ids"].shape == calls["attention_mask"].shape
+    assert calls["max_new_tokens"] == 20
+    assert calls["pad_token_id"] == tokenizer.eos_token_id
 
 
 def test_run_output_filter_is_the_single_call_shape_all_three_runners_use(tmp_path):

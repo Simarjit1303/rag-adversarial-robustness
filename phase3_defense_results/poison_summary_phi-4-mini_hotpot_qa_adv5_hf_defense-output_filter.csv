@@ -1,0 +1,2 @@
+model,corpus,poison_config,n,attack_success_rate,f1_target,contains_target_diagnostic,poison_echoed_not_adopted_rate,exact_match,f1_clean,retrieval_f1_at_k
+phi-4-mini,hotpot_qa,adv5,19,0.5789,0.7079,0.7368,0.1579,0.0,0.0686,1.0

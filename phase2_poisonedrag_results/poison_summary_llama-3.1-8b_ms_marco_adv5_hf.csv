@@ -1,0 +1,2 @@
+model,corpus,poison_config,n,attack_success_rate,f1_target,contains_target_diagnostic,poison_echoed_not_adopted_rate,exact_match,f1_clean,retrieval_f1_at_k
+llama-3.1-8b,ms_marco,adv5,96,0.1771,0.3658,0.1979,0.0208,0.0,0.1018,0.8896

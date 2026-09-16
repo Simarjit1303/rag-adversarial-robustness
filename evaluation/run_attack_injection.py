@@ -42,12 +42,110 @@ from attacks.asr_scoring import score_asr
 from attacks.indirect_injection import build_attack_user_prompt, run_attack_query
 from attacks.injection_templates import TEMPLATES
 from config import MODELS, RESULTS_DIR, SEED, TOP_K, RAG_VLLM_MAX_MODEL_LEN
-from data.build_index import build_index
-from data.normalize import extract_gold_answers, extract_question
+from data.build_index import build_index, retrieve
+from data.normalize import extract_gold_answers, extract_passage_text, extract_question
+from defenses.instruction_detection import (
+    PassageLog,
+    detect_injection,
+    log_passage_detection_event,
+)
+from defenses.output_filter import run_output_filter
+from defenses.spotlighting import SPOTLIGHTING_SYSTEM_INSTRUCTION, encode_passage_base64
 from evaluation.metrics import contains_answer, exact_match, f1_score
-from evaluation.result_paths import ATTACK_ELIGIBLE_CORPORA, attack_result_file_paths, resolve_attack_sweep_selection
-from harness.model_loader import load_model
+from evaluation.result_paths import (
+    ATTACK_ELIGIBLE_CORPORA,
+    attack_result_file_paths,
+    resolve_attack_sweep_selection,
+    resolve_defense,
+)
+from harness.model_loader import build_chat_prompt, load_model
 from harness.pipeline import SYSTEM_PROMPT, clean_generation
+
+# Spotlighting's top_k is locked to 2 for THIS runner regardless of the
+# baseline/other-defense TOP_K (5) -- deliberate, not a bug. Base64 encoding
+# measures ~4.12x real token expansion (defenses/spotlighting.py's docstring,
+# "TOKEN BUDGET IMPACT ANALYSIS", real Qwen3-8B tokenizer) and top_k=5
+# overflows config.RAG_VLLM_MAX_MODEL_LEN=13056 on BOTH attack-eligible
+# corpora (hotpot_qa ~25.6k tokens, ms_marco ~14.1k tokens at top_k=5).
+# top_k=2 keeps both corpora under budget -- see that docstring for the
+# exact per-corpus numbers this constraint is based on.
+SPOTLIGHTING_TOP_K = 2
+
+
+def _defended_top_k(defense: str) -> int:
+    return SPOTLIGHTING_TOP_K if defense == "spotlighting" else TOP_K
+
+
+def _build_defended_attack_prompt(index, records, question: str, corpus_name: str,
+                                   injection_template: str, top_k: int, defense: str):
+    """
+    Builds (system_prompt, user_prompt, retrieved, target_string, hijack_type,
+    passage_log) for the instruction_detection/spotlighting pre-generation
+    defenses. passage_log is a list[PassageLog] (one entry per originally
+    retrieved passage, in rank order) when defense=="instruction_detection",
+    None otherwise -- the per-passage detection result the caller persists
+    to instruction_detection_log_attack_*.jsonl (mirrors output_filter's
+    per-response guard log).
+
+    Mirrors attacks.indirect_injection.build_attack_user_prompt's retrieval +
+    rank-1 injection logic exactly (kept in sync, not imported -- same
+    "byte-for-byte in sync" precedent as this module's own _atomic_open)
+    because that function joins the final context string directly; a
+    defense needs the per-passage text BEFORE joining so it can drop
+    (instruction_detection) or transform (spotlighting) individual passages,
+    including the injected rank-1 one -- the whole point of testing a
+    defense against this attack is whether it catches that injected text.
+
+    Deliberately NOT delegated to
+    defenses.instruction_detection.filter_retrieved_passages despite that
+    function's matching signature/purpose: filter_retrieved_passages runs
+    detect_injection on extract_passage_text(corpus_name, doc) directly from
+    `retrieved`, before the injection template is ever rendered onto the
+    rank-1 passage -- swapping it in here would classify the CLEAN passage
+    instead of the injected one, silently defeating the entire attack test.
+    This function's own texts (template.render() applied to texts[0] above)
+    is what must be classified instead.
+    """
+    if injection_template not in TEMPLATES:
+        raise ValueError(
+            f"Unknown injection template '{injection_template}'. "
+            f"Options: {list(TEMPLATES)}"
+        )
+    template = TEMPLATES[injection_template]
+
+    retrieved = retrieve(index, records, question, k=top_k)
+    if not retrieved:
+        raise ValueError("No documents retrieved -- cannot inject into an empty top-k.")
+
+    texts = []
+    for i, (doc, score) in enumerate(retrieved):
+        text = extract_passage_text(corpus_name, doc)
+        if i == 0:
+            text = template.render(text)
+        texts.append(text)
+
+    passage_log = None
+    if defense == "instruction_detection":
+        detections = [detect_injection(text) for text in texts]
+        lines = [
+            f"[{i + 1}] {text}" for i, (text, result) in enumerate(zip(texts, detections))
+            if not result.flagged
+        ]
+        passage_log = [
+            PassageLog(passage_id=i, flagged=r.flagged, score=r.score, label=r.label)
+            for i, r in enumerate(detections)
+        ]
+        system_prompt = SYSTEM_PROMPT
+    elif defense == "spotlighting":
+        lines = [f"[{i + 1}] {encode_passage_base64(text)}" for i, text in enumerate(texts)]
+        system_prompt = SYSTEM_PROMPT + "\n\n" + SPOTLIGHTING_SYSTEM_INSTRUCTION
+    else:
+        raise ValueError(f"_build_defended_attack_prompt does not handle defense={defense!r}")
+
+    context = "\n\n".join(lines)
+    user_prompt = f"Context:\n{context}\n\nQuestion: {question}"
+    return (system_prompt, user_prompt, retrieved, template.target_string,
+            template.hijack_type, passage_log)
 
 
 @contextmanager
@@ -72,7 +170,7 @@ def _atomic_open(final_path, newline=None):
 
 
 def run_attack_sweep(model_keys=None, corpus_names=None, injection_templates=None,
-                      split="dev", sample_n=None):
+                      split="dev", sample_n=None, defense=None):
     """
     sample_n: cap the number of QUESTIONS ACTUALLY PROCESSED per (model,
     corpus, injection_template) cell (falls back to the RAG_SAMPLE_N env
@@ -84,10 +182,19 @@ def run_attack_sweep(model_keys=None, corpus_names=None, injection_templates=Non
     question/gold filtering, so it is an approximate cap (matches
     scripts/compute_max_model_len.py's --sample semantics), not an exact
     slice of the raw corpus.
+
+    defense: one of evaluation.result_paths.DEFENSE_OPTIONS ("none" by
+    default, falls back to the RAG_DEFENSE env var via resolve_defense()).
+    "instruction_detection"/"spotlighting" apply pre-generation (the
+    retrieved context is filtered/transformed before it reaches the prompt);
+    "output_filter" applies post-generation (the final answer is checked and
+    replaced if flagged). Exactly one defense per sweep cell.
     """
     if sample_n is None:
         env_val = os.environ.get("RAG_SAMPLE_N")
         sample_n = int(env_val) if env_val else None
+    if defense is None:
+        defense = resolve_defense()
 
     default_model_keys, default_corpus_names, default_templates, engine = (
         resolve_attack_sweep_selection()
@@ -120,7 +227,7 @@ def run_attack_sweep(model_keys=None, corpus_names=None, injection_templates=Non
     if engine not in ("hf", "vllm"):
         raise ValueError(f"INFERENCE_ENGINE must be 'hf' or 'vllm', got '{engine}'")
     if engine == "vllm":
-        return _run_vllm_attack_sweep(model_keys, corpus_names, injection_templates, split, sample_n)
+        return _run_vllm_attack_sweep(model_keys, corpus_names, injection_templates, split, sample_n, defense)
 
     if torch.cuda.is_available():
         print(f"[attack] Running on GPU: {torch.cuda.get_device_name(0)} "
@@ -142,11 +249,21 @@ def run_attack_sweep(model_keys=None, corpus_names=None, injection_templates=Non
 
         for corpus_name in corpus_names:
             index, records = build_index(corpus_name, split=split)
+            top_k = _defended_top_k(defense)
+            output_filter_log_path = None
+            if defense == "output_filter":
+                output_filter_log_path = RESULTS_DIR / f"output_filter_log_attack_{model_key}_{corpus_name}.jsonl"
+            instruction_detection_log_path = None
+            if defense == "instruction_detection":
+                instruction_detection_log_path = (
+                    RESULTS_DIR / f"instruction_detection_log_attack_{model_key}_{corpus_name}.jsonl"
+                )
 
             for injection_template in injection_templates:
-                print(f"--- {model_key} x {corpus_name} x {injection_template} ---")
+                print(f"--- {model_key} x {corpus_name} x {injection_template} "
+                      f"(defense={defense}) ---")
                 raw_path, summary_path = attack_result_file_paths(
-                    RESULTS_DIR, model_key, corpus_name, injection_template, engine
+                    RESULTS_DIR, model_key, corpus_name, injection_template, engine, defense
                 )
 
                 em_scores, f1_clean_scores, f1_raw_scores = [], [], []
@@ -163,10 +280,57 @@ def run_attack_sweep(model_keys=None, corpus_names=None, injection_templates=Non
                         if sample_n and n_processed >= sample_n:
                             break
 
-                        result = run_attack_query(
-                            model, tokenizer, model_key, corpus_name, question,
-                            injection_template, index=index, records=records,
-                        )
+                        if defense in ("instruction_detection", "spotlighting"):
+                            system_prompt, user_prompt, retrieved, target_string, hijack_type, passage_log = (
+                                _build_defended_attack_prompt(
+                                    index, records, question, corpus_name,
+                                    injection_template, top_k, defense,
+                                )
+                            )
+                            if defense == "instruction_detection":
+                                log_passage_detection_event(instruction_detection_log_path, {
+                                    "model": model_key,
+                                    "corpus": corpus_name,
+                                    "injection_template": injection_template,
+                                    "question": question,
+                                    "passages": [
+                                        {"passage_id": p.passage_id, "flagged": p.flagged,
+                                         "score": p.score, "label": p.label}
+                                        for p in passage_log
+                                    ],
+                                })
+                            prompt = build_chat_prompt(model_key, tokenizer, system_prompt, user_prompt)
+                            inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+                            with torch.no_grad():
+                                output_ids = model.generate(
+                                    **inputs, max_new_tokens=256, do_sample=False,
+                                )
+                            generated = tokenizer.decode(
+                                output_ids[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True
+                            ).strip()
+                            result = {
+                                "question": question,
+                                "retrieved_doc_ids": [idx for idx, _ in enumerate(retrieved)],
+                                "generated_answer": generated,
+                                "generated_answer_clean": clean_generation(generated),
+                                "injection_template": injection_template,
+                                "hijack_type": hijack_type,
+                                "target_string": target_string,
+                            }
+                        else:
+                            result = run_attack_query(
+                                model, tokenizer, model_key, corpus_name, question,
+                                injection_template, index=index, records=records, top_k=top_k,
+                            )
+
+                        if defense == "output_filter":
+                            filtered = run_output_filter(
+                                result["generated_answer"], output_filter_log_path,
+                                {"model": model_key, "corpus": corpus_name,
+                                 "injection_template": injection_template, "question": question},
+                            )
+                            result["generated_answer"] = filtered
+                            result["generated_answer_clean"] = clean_generation(filtered)
 
                         em = exact_match(result["generated_answer_clean"], gold)
                         f1_clean = f1_score(result["generated_answer_clean"], gold)
@@ -200,8 +364,21 @@ def run_attack_sweep(model_keys=None, corpus_names=None, injection_templates=Non
                         n_processed += 1
 
                         if (i + 1) % 50 == 0:
+                            # flush=True: stdout is fully block-buffered (not
+                            # line-buffered) once redirected to a file, e.g.
+                            # `nohup ... > log.txt` -- Python's default 8KB
+                            # buffer would otherwise hold this line (and every
+                            # other print in this loop) until either that
+                            # buffer fills or the process exits, so a `tail`
+                            # on the log during a long run can show zero
+                            # output even while real progress is happening.
+                            # Confirmed 2026-09-13: at sample_n=1000/cadence
+                            # 50, this loop alone only ever emits ~20 short
+                            # lines (~1KB total) before completing, nowhere
+                            # near the 8KB auto-flush threshold, so it would
+                            # never self-flush mid-run without this.
                             print(f"  {i + 1}/{len(records)} done "
-                                  f"({time.time() - start:.0f}s elapsed)")
+                                  f"({time.time() - start:.0f}s elapsed)", flush=True)
 
                 summary_row = _summarize(
                     model_key, corpus_name, injection_template,
@@ -224,7 +401,8 @@ def run_attack_sweep(model_keys=None, corpus_names=None, injection_templates=Non
     return summary_rows
 
 
-def _run_vllm_attack_sweep(model_keys, corpus_names, injection_templates, split, sample_n=None):
+def _run_vllm_attack_sweep(model_keys, corpus_names, injection_templates, split, sample_n=None,
+                            defense="none"):
     """
     vLLM control flow: retrieval + injection + prompt construction runs
     per-question, but all prompts for a (corpus, injection_template) go to
@@ -251,15 +429,26 @@ def _run_vllm_attack_sweep(model_keys, corpus_names, injection_templates, split,
 
         for corpus_name in corpus_names:
             index, records = build_index(corpus_name, split=split)
+            top_k = _defended_top_k(defense)
+            output_filter_log_path = None
+            if defense == "output_filter":
+                output_filter_log_path = RESULTS_DIR / f"output_filter_log_attack_{model_key}_{corpus_name}.jsonl"
+            instruction_detection_log_path = None
+            if defense == "instruction_detection":
+                instruction_detection_log_path = (
+                    RESULTS_DIR / f"instruction_detection_log_attack_{model_key}_{corpus_name}.jsonl"
+                )
 
             for injection_template in injection_templates:
-                print(f"--- {model_key} x {corpus_name} x {injection_template} (vLLM, batched) ---")
+                print(f"--- {model_key} x {corpus_name} x {injection_template} "
+                      f"(vLLM, batched, defense={defense}) ---")
                 raw_path, summary_path = attack_result_file_paths(
-                    RESULTS_DIR, model_key, corpus_name, injection_template, "vllm"
+                    RESULTS_DIR, model_key, corpus_name, injection_template, "vllm", defense
                 )
 
                 questions, golds, user_prompts, retrieved_ids = [], [], [], []
-                target_strings, hijack_types = [], []
+                target_strings, hijack_types, passage_logs = [], [], []
+                system_prompt = SYSTEM_PROMPT
                 for record in records:
                     question = extract_question(corpus_name, record)
                     gold = extract_gold_answers(corpus_name, record)
@@ -267,29 +456,60 @@ def _run_vllm_attack_sweep(model_keys, corpus_names, injection_templates, split,
                         continue
                     if sample_n and len(questions) >= sample_n:
                         break
-                    user_prompt, retrieved, target_string, hijack_type = build_attack_user_prompt(
-                        index, records, question, corpus_name, injection_template, top_k=TOP_K
-                    )
+                    passage_log = None
+                    if defense in ("instruction_detection", "spotlighting"):
+                        system_prompt, user_prompt, retrieved, target_string, hijack_type, passage_log = (
+                            _build_defended_attack_prompt(
+                                index, records, question, corpus_name,
+                                injection_template, top_k, defense,
+                            )
+                        )
+                    else:
+                        user_prompt, retrieved, target_string, hijack_type = build_attack_user_prompt(
+                            index, records, question, corpus_name, injection_template, top_k=top_k
+                        )
                     questions.append(question)
                     golds.append(gold)
                     user_prompts.append(user_prompt)
                     retrieved_ids.append([idx for idx, _ in enumerate(retrieved)])
                     target_strings.append(target_string)
                     hijack_types.append(hijack_type)
+                    passage_logs.append(passage_log)
 
                 start = time.time()
                 print(f"  sending {len(user_prompts)} prompts in one batch")
-                outputs = generate_batch(llm, model_key, SYSTEM_PROMPT, user_prompts)
+                outputs = generate_batch(llm, model_key, system_prompt, user_prompts)
                 print(f"  batch generated in {time.time() - start:.0f}s")
 
                 em_scores, f1_clean_scores, f1_raw_scores = [], [], []
                 ca_scores, asr_scores = [], []
                 with _atomic_open(raw_path) as raw_f:
-                    for question, gold, doc_ids, generated, target_string, hijack_type in zip(
-                        questions, golds, retrieved_ids, outputs, target_strings, hijack_types
+                    for question, gold, doc_ids, generated, target_string, hijack_type, passage_log in zip(
+                        questions, golds, retrieved_ids, outputs, target_strings, hijack_types, passage_logs
                     ):
                         generated = generated.strip()
                         generated_clean = clean_generation(generated)
+
+                        if defense == "instruction_detection":
+                            log_passage_detection_event(instruction_detection_log_path, {
+                                "model": model_key,
+                                "corpus": corpus_name,
+                                "injection_template": injection_template,
+                                "question": question,
+                                "passages": [
+                                    {"passage_id": p.passage_id, "flagged": p.flagged,
+                                     "score": p.score, "label": p.label}
+                                    for p in passage_log
+                                ],
+                            })
+
+                        if defense == "output_filter":
+                            generated = run_output_filter(
+                                generated, output_filter_log_path,
+                                {"model": model_key, "corpus": corpus_name,
+                                 "injection_template": injection_template, "question": question},
+                            )
+                            generated_clean = clean_generation(generated)
 
                         em = exact_match(generated_clean, gold)
                         f1_clean = f1_score(generated_clean, gold)
