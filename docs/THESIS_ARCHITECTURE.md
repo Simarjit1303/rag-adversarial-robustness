@@ -385,5 +385,5 @@ rag-adversarial-robustness/
 ---
 
 *Companion to [`THESIS_MASTER_RECORD.md`](THESIS_MASTER_RECORD.md). Every
-number and finding above matches that document's current (post-`e414aa8`)
+number and finding above matches that document's current (post-`22b1e97`)
 content — where this file summarizes, that file explains.*
