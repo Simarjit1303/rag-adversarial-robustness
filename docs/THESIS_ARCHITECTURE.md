@@ -364,18 +364,22 @@ rag-adversarial-robustness/
 ├── phase2_poisonedrag_results/        # Attack 2 raw + summary
 ├── phase2_crescendo_results/          # Attack 3 raw + summary
 ├── phase3_defense_results/            # All 3 defenses' raw + summary + mechanism logs
-├── PHASE2_INJECTION_INSIGHTS.md       # Attack 1 findings (ministral flag now resolved)
-├── PHASE2_POISONEDRAG_INSIGHTS.md     # Attack 2 findings
-├── PHASE2_CRESCENDO_INSIGHTS.md       # Attack 3 findings
-├── PHASE3_DEFENSE_INSIGHTS.md         # Defense findings, final backend-corrected version
-├── nq_open_leakage_finding.md         # why nq_open is excluded project-wide (original finding)
-├── NQ_OPEN_SCOPE_DECISION.md          # formal scope-adjustment note, pending supervisor sign-off
-├── SUPERVISION_MEETINGS_LOG.md        # meeting 1-3 logged, 4 corroborated, 5-6 remain before submission
-├── PHASE4_EU_AI_ACT_MAPPING.md        # Article 15 mapping against final Phase 1-3 results
-├── CITATIONS.md                       # real, peer-reviewed reference list --
-│                                       #   inlined in full in THESIS_MASTER_RECORD.md §12
-├── THESIS_MASTER_RECORD.md            # full narrative record — the story
-└── THESIS_ARCHITECTURE.md             # this file — the shape
+├── docs/
+│   ├── PHASE2_INJECTION_INSIGHTS.md   # Attack 1 findings (ministral flag now resolved)
+│   ├── PHASE2_POISONEDRAG_INSIGHTS.md # Attack 2 findings
+│   ├── PHASE2_CRESCENDO_INSIGHTS.md   # Attack 3 findings
+│   ├── PHASE3_DEFENSE_INSIGHTS.md     # Defense findings, final backend-corrected version
+│   ├── nq_open_leakage_finding.md     # why nq_open is excluded project-wide (original finding)
+│   ├── NQ_OPEN_SCOPE_DECISION.md      # formal scope-adjustment note, pending supervisor sign-off
+│   ├── SUPERVISION_MEETINGS_LOG.md    # meeting 1-3 logged, 4 corroborated, 5-6 remain before submission
+│   ├── PHASE4_EU_AI_ACT_MAPPING.md    # Article 15 mapping against final Phase 1-3 results
+│   ├── CITATIONS.md                   # real, peer-reviewed reference list --
+│   │                                   #   inlined in full in THESIS_MASTER_RECORD.md §13
+│   ├── THESIS_MASTER_RECORD.md        # full narrative record — the story
+│   ├── THESIS_ARCHITECTURE.md         # this file — the shape
+│   └── archive/task-briefs/           # one-off Claude Code task briefs/prompts, historical
+│                                       #   record, already absorbed into THESIS_MASTER_RECORD.md
+└── README.md                          # repo front door — stays at root
 ```
 
 ---
