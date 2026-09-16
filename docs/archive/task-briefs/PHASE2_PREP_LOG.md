@@ -1,6 +1,6 @@
 # Phase 2 Prep Log
 
-Durable record of the pre-Phase-2 cleanup orchestrated per `Drafts/CLAUDE_CODE_RUNBOOK.md` against `Drafts/PRE_PHASE2_CHECKLIST.md`. Append-only, timestamped, newest at bottom.
+Durable record of the pre-Phase-2 cleanup orchestrated per `Drafts/archive/CLAUDE_CODE_RUNBOOK.md` against `Drafts/archive/PRE_PHASE2_CHECKLIST.md`. Append-only, timestamped, newest at bottom.
 
 ---
 
@@ -82,7 +82,7 @@ Presented Phase A findings plus two decisions to the user: (1) runbook's built-i
 
 **PR #11 (amend instead of new PR):** checked out `runpod-self-termination`, added `ENV VLLM_USE_FLASHINFER_SAMPLER=0` to the Dockerfile (the second, previously-nowhere-to-be-found flashinfer JIT fix — bakes it into the image since it's vLLM's own recognized env var, not a custom RAG_-prefixed default). Committed `2d33fa5`, pushed to `origin/runpod-self-termination`. Rewrote PR #11's full description via `gh pr edit` to document the 7 previously-undocumented commits (vllm_engine.py, attention backend, max model len, ffmpeg, filename collision, partial-success test, leaked-answer cleanup) plus this new one, numbered as Fixes 7–12 alongside the original six, updated "What's still unverified" (vLLM path is now verified — nothing outstanding there), updated the Commits list.
 
-**Checklist updated** (`Drafts/PRE_PHASE2_CHECKLIST.md`): items 1–6 checked off with notes on what actually happened vs. the original plan.
+**Checklist updated** (`Drafts/archive/PRE_PHASE2_CHECKLIST.md`): items 1–6 checked off with notes on what actually happened vs. the original plan.
 
 **Correction:** caught and fixed a transcription typo in this log and in memory — commit hash is `13a9b7d`, not `13c9b7d` (the earlier "Fix result filename collision" commit).
 
@@ -97,7 +97,7 @@ Presented Phase A findings plus two decisions to the user: (1) runbook's built-i
 
 ## 2026-08-31 — Data backup done; Gate 2 answered; Phase D executed locally (NOT pushed)
 
-**Data backup:** user chose to back up now, decide git-tracking later. Zipped `phase1_results_complete/` + `baseline_raw_qwen3.jsonl` to `Drafts/TEMP_BACKUP_phase1_results_2026-08-31.zip` (861 KB), named per user's explicit instruction to read as temporary, not permanent storage. `.gitignore`/git-tracking deliberately untouched, as instructed.
+**Data backup:** user chose to back up now, decide git-tracking later. Zipped `phase1_results_complete/` + `baseline_raw_qwen3.jsonl` to `Drafts/archive/TEMP_BACKUP_phase1_results_2026-08-31.zip` (861 KB), named per user's explicit instruction to read as temporary, not permanent storage. `.gitignore`/git-tracking deliberately untouched, as instructed.
 
 **Gate 2:** user answered yes — merge now, locally, no pushes between merges, plus a specific requirement: before the final push, directly grep the merged main's actual workflow file (not trust PR history) to confirm PR #8's guard is genuinely there. Report the confirmation, then stop and wait — user will open the Actions tab and give explicit go-ahead before the push happens.
 
