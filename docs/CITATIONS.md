@@ -1,6 +1,6 @@
 # Citations and References — Phases 0–3
 
-**Inclusion policy:** every entry below is a peer-reviewed, published source — conference proceedings, journal, or workshop proceedings with a formal publisher (ACM, IEEE, PMLR, USENIX, ACL Anthology, CEUR-WS). No bare arXiv preprints are cited as primary sources. Where a paper started as an arXiv preprint and was later accepted at a venue, the venue-published version is cited, not the arXiv listing. Two entries are knowingly *not* peer-reviewed papers — they are documented as model artifacts, not studies, with that distinction stated explicitly (see the "Model artifacts" note under Phase 3). Ordered newest-first within each section.
+**Inclusion policy:** every entry below is a peer-reviewed, published source — conference proceedings, journal, or workshop proceedings with a formal publisher (ACM, IEEE, PMLR, USENIX, ACL Anthology, CEUR-WS). No bare arXiv preprints are cited as primary sources. Where a paper started as an arXiv preprint and was later accepted at a venue, the venue-published version is cited, not the arXiv listing. Eight entries are knowingly *not* peer-reviewed papers — every model release actually run in this project's pipeline (target models, attacker/judge/generator models, and defense-pipeline models) that has no peer-reviewed paper behind it — documented as model artifacts, not studies, with that distinction stated explicitly (see "Model artifacts" below). Ordered newest-first within each section.
 
 ---
 
@@ -22,6 +22,14 @@
 
 - Kwon, W., Li, Z., Zhuang, S., Sheng, Y., Zheng, L., Yu, C. H., Gonzalez, J., Zhang, H., & Stoica, I. (2023). *Efficient Memory Management for Large Language Model Serving with PagedAttention*. In Proceedings of the 29th ACM Symposium on Operating Systems Principles (SOSP '23), pp. 611–626. Association for Computing Machinery. https://doi.org/10.1145/3600006.3613165
   — *vLLM, the inference engine used throughout the sweep harness.*
+
+**Embedding model (dense retrieval)**
+
+- Reimers, N., & Gurevych, I. (2019). *Sentence-BERT: Sentence Embeddings using Siamese BERT-Networks*. In Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natural Language Processing (EMNLP-IJCNLP), pp. 3982–3992. Association for Computational Linguistics. https://aclanthology.org/D19-1410/
+  — *Foundational architecture (Siamese/triplet fine-tuning of a transformer encoder for cosine-comparable sentence embeddings) underlying `sentence-transformers/all-mpnet-base-v2`, the embedder used to build the FAISS retrieval index for every corpus.*
+
+- Song, K., Tan, X., Qin, T., Lu, J., & Liu, T.-Y. (2020). *MPNet: Masked and Permuted Pre-training for Language Understanding*. Advances in Neural Information Processing Systems 33 (NeurIPS 2020). https://proceedings.neurips.cc/paper/2020/hash/c3a690be93aa602ee2dc0ccab5b7b67e-Abstract.html
+  — *Pre-training objective underlying the base encoder of `all-mpnet-base-v2`, the specific checkpoint used.*
 
 ---
 
@@ -112,14 +120,44 @@
 
 ## Model artifacts (not peer-reviewed papers — cited as artifacts, per standard practice)
 
-Two components of the defense pipeline are documented only via model card / repository, not a published study. Both are stated here explicitly rather than presented as having equivalent academic standing to the papers above:
+Every model release this project actually runs that has no peer-reviewed paper behind it is listed here explicitly, grouped by pipeline role, rather than presented as having equivalent academic standing to the papers above. Where a company-published technical report exists (arXiv or a company-hosted PDF), it is cited as a technical-report artifact, not as a substitute for peer review; where none exists at all, only the model card/announcement is cited.
+
+**Target models under test (Phases 1–3)** — the four models whose robustness this project measures; these are the actual research subjects, not pipeline tooling.
+
+- **Llama-3.1-8B-Instruct** (Meta AI, 2024). Grattafiori, A., et al. *The Llama 3 Herd of Models*. arXiv:2407.21783. https://arxiv.org/abs/2407.21783 — technical report, not peer-reviewed as of this writing. Model: https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct
+
+- **Qwen3-8B** (Qwen Team, Alibaba, 2025). Yang, A., et al. *Qwen3 Technical Report*. arXiv:2505.09388. https://arxiv.org/abs/2505.09388 — technical report, not peer-reviewed as of this writing. Model: https://huggingface.co/Qwen/Qwen3-8B
+
+- **Phi-4-mini-instruct** (Microsoft, 2025). Abouelenin, A., et al. *Phi-4-Mini Technical Report: Compact yet Powerful Multimodal Language Models via Mixture-of-LoRAs*. arXiv:2503.01743. https://arxiv.org/abs/2503.01743 — technical report, not peer-reviewed as of this writing. Model: https://huggingface.co/microsoft/Phi-4-mini-instruct
+
+- **Ministral-3-8B-Instruct-2512** (Mistral AI, 2025) — no technical report or paper exists for this release; documented via the announcement blog post ("Introducing Mistral 3," https://mistral.ai/news/mistral-3/, 2 December 2025) and the Hugging Face model card only. Model: https://huggingface.co/mistralai/Ministral-3-8B-Instruct-2512
+
+**Attacker / generator / judge models** — used only to *produce or score* attack data (PoisonedRAG's poison passages; Crescendo's escalation turns and verdicts), never evaluated as this project's research subjects.
+
+- **`nvidia/nemotron-3-ultra-550b-a55b`** (NVIDIA, 2025) — PoisonedRAG's poison-passage generator (Section 5.2 of `THESIS_MASTER_RECORD.md`). Documented via NVIDIA's own technical report ("NVIDIA Nemotron 3 Ultra: Open, Efficient Mixture-of-Experts Hybrid Mamba-Transformer Model for Agentic Reasoning," NVIDIA, 2025/2026, https://research.nvidia.com/labs/nemotron/files/NVIDIA-Nemotron-3-Ultra-Technical-Report.pdf) — a company-published PDF report, not a peer-reviewed venue. Model card: https://build.nvidia.com/nvidia/nemotron-3-ultra-550b-a55b/modelcard
+
+- **`deepseek-ai/deepseek-v4-pro-0813`** (DeepSeek-AI, 2026) — Crescendo's attacker and judge model, never a target (Section 5.3 of `THESIS_MASTER_RECORD.md`). DeepSeek-AI. *DeepSeek-V4: Towards Highly Efficient Million-Token Context Intelligence*. arXiv:2606.19348. https://arxiv.org/abs/2606.19348 — technical report, not peer-reviewed as of this writing.
+
+**Defense-pipeline models**
 
 - **`protectai/deberta-v3-base-prompt-injection-v2`** (Protect AI, 2024) — industry-released classifier fine-tuned from the peer-reviewed DeBERTaV3 architecture (He et al., ICLR 2023, cited above). No accompanying paper; documented via Hugging Face model card only. https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2
 
 - **Llama Guard 4** (Meta AI, 2025) — model release, no accompanying peer-reviewed paper as of this writing. Documented via model card only. https://huggingface.co/meta-llama/Llama-Guard-4-12B
 
-Cite both in the methodology chapter as "an open-source/industry classifier" or "a released safety-classification model," not as a study — this is the accurate and defensible framing for a viva.
+Cite all of the above in the methodology chapter as "a released model" / "an industry technical report," not as a peer-reviewed study — this is the accurate and defensible framing for a viva.
 
 ---
 
-*Compiled September 2026. All venue and page-number details verified against official proceedings pages (PMLR, ACL Anthology, USENIX, IEEE Xplore/CEUR-WS) at time of writing — re-verify any DOI links before final submission in case of link rot.*
+## Reference implementations consulted (code provenance, not bibliography)
+
+This project's own attack implementations are original code, not copies: a repo-wide search of `attacks/poisonedrag.py`, `attacks/crescendo.py`, and the rest of the source tree, plus the full git history, found no verbatim external code, no vendored files, and no third-party license headers. Two named reference implementations were consulted for methodology fidelity while building the attacks described above, and both are named inline in `THESIS_MASTER_RECORD.md` Sections 5.2–5.3; their repository URLs are recorded here for completeness:
+
+- **PoisonedRAG** (Section 5.2) — informed by the paper's own official reference implementation, `sleeepeer/PoisonedRAG`: https://github.com/sleeepeer/PoisonedRAG
+
+- **Crescendo** (Section 5.3) — informed by Microsoft's PyRIT `CrescendoOrchestrator`, the reference implementation of the paper's escalation/backtrack strategy. Originally consulted at `Azure/PyRIT`; that repository is now archived and redirects to its current canonical location, `microsoft/PyRIT`: https://github.com/microsoft/PyRIT
+
+Neither is cited as a source of copied code — both are disclosed here as implementations read for methodological correctness when reproducing each paper's described algorithm, consistent with standard practice for reimplementing a published attack.
+
+---
+
+*Compiled September 2026; extended the same month with the full model-artifact and code-provenance audit above. All venue and page-number details verified against official proceedings pages (PMLR, ACL Anthology, USENIX, IEEE Xplore/CEUR-WS) at time of writing — re-verify any DOI links before final submission in case of link rot.*

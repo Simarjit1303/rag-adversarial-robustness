@@ -470,6 +470,25 @@ rag-adversarial-robustness/
 
 ---
 
+## Tooling & Notation
+
+Every diagram in this document is authored in
+[Mermaid](https://mermaid.js.org/) (mermaid-js/mermaid,
+https://github.com/mermaid-js/mermaid), an open-source, text-based
+diagramming syntax and renderer; its official documentation is the
+canonical reference for the syntax used throughout.
+
+The diagrams do not follow a named architectural notation standard such
+as C4, UML, or BPMN. Shape and colour follow this document's own
+ad-hoc, internally consistent convention instead, stated once in the
+notation legend above the master diagram and applied unchanged
+throughout every subsequent diagram: rectangles are process steps,
+diamonds are decision points, a bordered subgraph groups a phase or
+outcome category, and colour maps to outcome (green = done/resolved,
+amber = partial, blue = default flow, red = confounded/unresolved).
+
+---
+
 *Companion to [`THESIS_MASTER_RECORD.md`](THESIS_MASTER_RECORD.md). Every
 number and finding above matches that document's current content — where
 this file summarizes, that file explains.*

@@ -620,8 +620,10 @@ Russinovich, Salem & Eldan, *Great, Now Write an Article About That: The
 Crescendo Multi-Turn LLM Jailbreak Attack* (USENIX Security 2025 — the
 task brief that scoped this attack cited the 2024 arXiv preprint, per
 `CITATIONS.md`'s inclusion policy the venue-published 2025 version is the
-citable one; see Section 13); reference implementation Microsoft PyRIT,
-`Azure/PyRIT`. **DeepSeek V4 Pro is the attacker and judge
+citable one; see Section 13); reference implementation Microsoft PyRIT
+(`microsoft/PyRIT`; consulted at its former location, `Azure/PyRIT`, now
+an archived redirect — see Section 13's code-provenance note). **DeepSeek
+V4 Pro is the attacker and judge
 in every conversation, never a target** — this role asymmetry must be read
 into every result below: "which model resists Crescendo" describes only
 the four `config.MODELS` targets, never DeepSeek, whose high compliance as
@@ -1404,10 +1406,12 @@ conference proceedings, journal, or workshop proceedings with a formal
 publisher (ACM, IEEE, PMLR, USENIX, ACL Anthology, CEUR-WS). No bare
 arXiv preprints are cited as primary sources; where a paper started as an
 arXiv preprint and was later accepted at a venue, the venue-published
-version is cited instead. Two entries are knowingly *not* peer-reviewed
-papers — documented as model artifacts, not studies, with that
-distinction stated explicitly. Ordered newest-first within each section,
-matching `CITATIONS.md`'s own ordering.
+version is cited instead. Eight entries are knowingly *not* peer-reviewed
+papers — every model release this project actually runs (target models,
+attacker/judge/generator models, and defense-pipeline models) that has no
+peer-reviewed paper behind it — documented as model artifacts, not
+studies, with that distinction stated explicitly. Ordered newest-first
+within each section, matching `CITATIONS.md`'s own ordering.
 
 ### Phase 0/1 — Baseline (datasets, retrieval, serving)
 
@@ -1421,6 +1425,11 @@ matching `CITATIONS.md`'s own ordering.
 
 - Johnson, J., Douze, M., & Jégou, H. (2021). *Billion-Scale Similarity Search with GPUs*. IEEE Transactions on Big Data, 7(3), 535–547. https://doi.org/10.1109/TBDATA.2019.2921572 — FAISS, used for dense retrieval indexing.
 - Kwon, W., Li, Z., Zhuang, S., Sheng, Y., Zheng, L., Yu, C. H., Gonzalez, J., Zhang, H., & Stoica, I. (2023). *Efficient Memory Management for Large Language Model Serving with PagedAttention*. In Proceedings of the 29th ACM Symposium on Operating Systems Principles (SOSP '23), pp. 611–626. Association for Computing Machinery. https://doi.org/10.1145/3600006.3613165 — vLLM, the inference engine used throughout the sweep harness (Section 3.1, Section 8).
+
+**Embedding model (dense retrieval)**
+
+- Reimers, N., & Gurevych, I. (2019). *Sentence-BERT: Sentence Embeddings using Siamese BERT-Networks*. In Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natural Language Processing (EMNLP-IJCNLP), pp. 3982–3992. Association for Computational Linguistics. https://aclanthology.org/D19-1410/ — foundational architecture underlying `sentence-transformers/all-mpnet-base-v2`, the embedder used to build the FAISS retrieval index for every corpus (Section 3.1).
+- Song, K., Tan, X., Qin, T., Lu, J., & Liu, T.-Y. (2020). *MPNet: Masked and Permuted Pre-training for Language Understanding*. Advances in Neural Information Processing Systems 33 (NeurIPS 2020). https://proceedings.neurips.cc/paper/2020/hash/c3a690be93aa602ee2dc0ccab5b7b67e-Abstract.html — pre-training objective underlying the base encoder of `all-mpnet-base-v2`.
 
 ### Phase 2, Attack 1 — Indirect Prompt Injection
 
@@ -1478,38 +1487,56 @@ matching `CITATIONS.md`'s own ordering.
 
 ### Model artifacts (not peer-reviewed papers — cited as artifacts, per standard practice)
 
-Two components of the defense pipeline are documented only via model card
-or repository, not a published study, per `CITATIONS.md`'s own explicit
-framing:
+Every model release this project actually runs that has no peer-reviewed
+paper behind it is documented here, grouped by pipeline role, per
+`CITATIONS.md`'s own explicit framing. Where a company-published
+technical report exists it is cited as such, not as a substitute for
+peer review; where none exists at all, only the model card/announcement
+is cited.
+
+**Target models under test (Phases 1–3)** — the actual research subjects:
+
+- **Llama-3.1-8B-Instruct** (Meta AI, 2024). Grattafiori, A., et al. *The Llama 3 Herd of Models*. arXiv:2407.21783. https://arxiv.org/abs/2407.21783 — technical report, not peer-reviewed as of this writing.
+- **Qwen3-8B** (Qwen Team, Alibaba, 2025). Yang, A., et al. *Qwen3 Technical Report*. arXiv:2505.09388. https://arxiv.org/abs/2505.09388 — technical report, not peer-reviewed as of this writing.
+- **Phi-4-mini-instruct** (Microsoft, 2025). Abouelenin, A., et al. *Phi-4-Mini Technical Report: Compact yet Powerful Multimodal Language Models via Mixture-of-LoRAs*. arXiv:2503.01743. https://arxiv.org/abs/2503.01743 — technical report, not peer-reviewed as of this writing.
+- **Ministral-3-8B-Instruct-2512** (Mistral AI, 2025) — no technical report or paper exists; documented via the announcement blog post ("Introducing Mistral 3," https://mistral.ai/news/mistral-3/, 2 December 2025) and the Hugging Face model card only.
+
+**Attacker / generator / judge models** — produce or score attack data (Section 5.2, Section 5.3); never evaluated as this project's research subjects:
+
+- `nvidia/nemotron-3-ultra-550b-a55b` (NVIDIA, via NIM) — PoisonedRAG's poison-passage generator (Section 5.2). Documented via NVIDIA's own technical report, https://research.nvidia.com/labs/nemotron/files/NVIDIA-Nemotron-3-Ultra-Technical-Report.pdf — a company-published PDF, not a peer-reviewed venue.
+- `deepseek-ai/deepseek-v4-pro-0813` (DeepSeek, via NIM/OpenRouter) — Crescendo's attacker and judge model (Section 5.3). DeepSeek-AI. *DeepSeek-V4: Towards Highly Efficient Million-Token Context Intelligence*. arXiv:2606.19348. https://arxiv.org/abs/2606.19348 — technical report, not peer-reviewed as of this writing.
+
+**Defense-pipeline models:**
 
 - **`protectai/deberta-v3-base-prompt-injection-v2`** (Protect AI, 2024) — industry-released classifier fine-tuned from the peer-reviewed DeBERTaV3 architecture (He et al., ICLR 2023, above). No accompanying paper; documented via Hugging Face model card only. https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2
-- **Llama Guard 4** (Meta AI, 2025) — model release, no accompanying peer-reviewed paper as of `CITATIONS.md`'s writing. Documented via model card only. https://huggingface.co/meta-llama/Llama-Guard-4-12B
+- **Llama Guard 4** (Meta AI, 2025) — model release, no accompanying peer-reviewed paper as of this writing. Documented via model card only. https://huggingface.co/meta-llama/Llama-Guard-4-12B
 
-`CITATIONS.md`'s own guidance: cite both in the methodology chapter as
-"an open-source/industry classifier" or "a released safety-classification
-model," not as a study — the accurate and defensible framing for a viva.
+`CITATIONS.md`'s own guidance: cite all of the above in the methodology
+chapter as "a released model" or "an industry technical report," not as
+a peer-reviewed study — the accurate and defensible framing for a viva.
 
-### Operational models not covered by `CITATIONS.md`
+### Code provenance — reference implementations consulted
 
-`CITATIONS.md` is a citation list for the thesis's academic apparatus — it
-does not enumerate every model identifier this project's pipeline actually
-calls (the four target models, and the generator/attacker/judge models
-used only to *produce* attack data, not evaluated as citable research
-artifacts themselves). Listed here for this document's own completeness
-requirement, not duplicated from `CITATIONS.md`:
+A repo-wide search of the attack source (`attacks/poisonedrag.py`,
+`attacks/crescendo.py`) and the full git history found no verbatim
+external code, vendored files, or third-party license headers — both
+attacks are original implementations. Two reference implementations were
+consulted for methodology fidelity while building them, already named
+inline above (Section 5.2, Section 5.3); their canonical URLs, recorded
+in `CITATIONS.md`, are `sleeepeer/PoisonedRAG`
+(https://github.com/sleeepeer/PoisonedRAG) and Microsoft's PyRIT, now at
+`microsoft/PyRIT` (https://github.com/microsoft/PyRIT) — consulted at its
+former location, `Azure/PyRIT`, which is now an archived redirect to the
+current repository. Neither is a source of copied code; both are
+disclosed as implementations read for correctness when reproducing each
+paper's described algorithm.
 
-- Llama-3.1-8B-Instruct (Meta), Ministral-3-8B-Instruct-2512 (Mistral AI),
-  Phi-4-mini-instruct (Microsoft), Qwen3-8B (Alibaba) — the four target
-  models under test throughout Phases 1–3.
-- `nvidia/nemotron-3-ultra-550b-a55b` (NVIDIA, via NIM) — PoisonedRAG's
-  poison-passage generator (Section 5.2).
-- `deepseek-ai/deepseek-v4-pro-0813` (DeepSeek, via NIM/OpenRouter) —
-  Crescendo's attacker and judge model (Section 5.3).
-
-*Compiled September 2026 (`CITATIONS.md`'s own compilation note): all venue
-and page-number details verified against official proceedings pages
-(PMLR, ACL Anthology, USENIX, IEEE Xplore/CEUR-WS) at time of writing —
-re-verify any DOI links before final submission in case of link rot.*
+*Compiled September 2026 (`CITATIONS.md`'s own compilation note); extended
+the same month with the model-artifact and code-provenance audit above.
+All venue and page-number details verified against official proceedings
+pages (PMLR, ACL Anthology, USENIX, IEEE Xplore/CEUR-WS) at time of
+writing — re-verify any DOI links before final submission in case of link
+rot.*
 
 ---
 
