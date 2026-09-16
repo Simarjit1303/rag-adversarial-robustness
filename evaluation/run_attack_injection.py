@@ -83,7 +83,7 @@ def run_attack_sweep(model_keys=None, corpus_names=None, injection_templates=Non
         raise ValueError(f'Unknown model keys {unknown}. Options: {list(MODELS)}')
     unknown_corpora = [c for c in corpus_names if c not in ATTACK_ELIGIBLE_CORPORA]
     if unknown_corpora:
-        raise ValueError(f'Unknown or excluded corpus names {unknown_corpora}. Options: {ATTACK_ELIGIBLE_CORPORA} (nq_open is excluded -- see nq_open_leakage_finding.md)')
+        raise ValueError(f'Unknown or excluded corpus names {unknown_corpora}. Options: {ATTACK_ELIGIBLE_CORPORA} (nq_open is excluded -- see docs/nq_open_leakage_finding.md)')
     unknown_templates = [t for t in injection_templates if t not in TEMPLATES]
     if unknown_templates:
         raise ValueError(f'Unknown injection templates {unknown_templates}. Options: {list(TEMPLATES)}')

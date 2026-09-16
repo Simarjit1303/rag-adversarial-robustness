@@ -138,7 +138,7 @@ def run_poisonedrag_sweep(model_keys=None, corpus_names=None, poison_configs=Non
         raise ValueError(f'Unknown model keys {unknown}. Options: {list(MODELS)}')
     unknown_corpora = [c for c in corpus_names if c not in ATTACK_ELIGIBLE_CORPORA]
     if unknown_corpora:
-        raise ValueError(f'Unknown or excluded corpus names {unknown_corpora}. Options: {ATTACK_ELIGIBLE_CORPORA} (nq_open is excluded -- see nq_open_leakage_finding.md)')
+        raise ValueError(f'Unknown or excluded corpus names {unknown_corpora}. Options: {ATTACK_ELIGIBLE_CORPORA} (nq_open is excluded -- see docs/nq_open_leakage_finding.md)')
     if engine not in ('hf', 'vllm'):
         raise ValueError(f"INFERENCE_ENGINE must be 'hf' or 'vllm', got '{engine}'")
     top_k = _defended_top_k(defense)

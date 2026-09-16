@@ -23,25 +23,25 @@ below.
 
 **Start here:**
 
-- **[`THESIS_MASTER_RECORD.md`](THESIS_MASTER_RECORD.md)** — the full
+- **[`THESIS_MASTER_RECORD.md`](docs/THESIS_MASTER_RECORD.md)** — the full
   narrative record: research design, every phase's final results, the
   real-hardware engineering story, the backend-confound discovery and
   resolution, methodology, limitations, and open items. Self-contained —
   read this one document to understand the whole project.
-- **[`THESIS_ARCHITECTURE.md`](THESIS_ARCHITECTURE.md)** — visual
+- **[`THESIS_ARCHITECTURE.md`](docs/THESIS_ARCHITECTURE.md)** — visual
   companion: Mermaid diagrams of the project flow, experimental design
   matrix, infrastructure/pipeline, attack and defense mechanisms, and the
   bug-discovery timeline. For seeing the shape of the project at a glance.
-- **[`CITATIONS.md`](CITATIONS.md)** — the peer-reviewed reference list
+- **[`CITATIONS.md`](docs/CITATIONS.md)** — the peer-reviewed reference list
   (see [Citation policy](#citation-policy) below).
 
 **Underlying detailed sources** (each already consolidated into
 `THESIS_MASTER_RECORD.md`, but the primary write-up for its own phase):
 
-- [`PHASE2_INJECTION_INSIGHTS.md`](PHASE2_INJECTION_INSIGHTS.md) — indirect prompt injection, full statistical detail.
-- [`PHASE2_POISONEDRAG_INSIGHTS.md`](PHASE2_POISONEDRAG_INSIGHTS.md) — PoisonedRAG corpus poisoning, full statistical detail.
-- [`PHASE2_CRESCENDO_INSIGHTS.md`](PHASE2_CRESCENDO_INSIGHTS.md) — Crescendo multi-turn jailbreak, full statistical detail.
-- [`PHASE3_DEFENSE_INSIGHTS.md`](PHASE3_DEFENSE_INSIGHTS.md) — all three defenses, final backend-corrected results.
+- [`PHASE2_INJECTION_INSIGHTS.md`](docs/PHASE2_INJECTION_INSIGHTS.md) — indirect prompt injection, full statistical detail.
+- [`PHASE2_POISONEDRAG_INSIGHTS.md`](docs/PHASE2_POISONEDRAG_INSIGHTS.md) — PoisonedRAG corpus poisoning, full statistical detail.
+- [`PHASE2_CRESCENDO_INSIGHTS.md`](docs/PHASE2_CRESCENDO_INSIGHTS.md) — Crescendo multi-turn jailbreak, full statistical detail.
+- [`PHASE3_DEFENSE_INSIGHTS.md`](docs/PHASE3_DEFENSE_INSIGHTS.md) — all three defenses, final backend-corrected results.
 
 ---
 
@@ -86,20 +86,25 @@ rag-adversarial-robustness/
 ├── phase2_poisonedrag_results/        # Attack 2 raw + summary
 ├── phase2_crescendo_results/          # Attack 3 raw + summary
 ├── phase3_defense_results/            # All 3 defenses' raw + summary + mechanism logs
-├── PHASE2_INJECTION_INSIGHTS.md
-├── PHASE2_POISONEDRAG_INSIGHTS.md
-├── PHASE2_CRESCENDO_INSIGHTS.md
-├── PHASE3_DEFENSE_INSIGHTS.md
-├── nq_open_leakage_finding.md         # why nq_open is excluded project-wide
-├── CITATIONS.md
-├── THESIS_MASTER_RECORD.md
-├── THESIS_ARCHITECTURE.md
+├── docs/
+│   ├── PHASE2_INJECTION_INSIGHTS.md
+│   ├── PHASE2_POISONEDRAG_INSIGHTS.md
+│   ├── PHASE2_CRESCENDO_INSIGHTS.md
+│   ├── PHASE3_DEFENSE_INSIGHTS.md
+│   ├── PHASE4_EU_AI_ACT_MAPPING.md
+│   ├── NQ_OPEN_SCOPE_DECISION.md
+│   ├── SUPERVISION_MEETINGS_LOG.md
+│   ├── nq_open_leakage_finding.md     # why nq_open is excluded project-wide
+│   ├── CITATIONS.md
+│   ├── THESIS_MASTER_RECORD.md
+│   ├── THESIS_ARCHITECTURE.md
+│   └── archive/task-briefs/           # one-off task-brief/prompt files, historical record
 └── README.md                          # this file
 ```
 
 (A handful of task-brief `.md` files and per-bug fix write-ups also live
-at the repo root — real engineering narrative, consolidated into
-`THESIS_MASTER_RECORD.md` Sections 3 and 7 rather than duplicated here.)
+under `docs/archive/task-briefs/` — real engineering narrative, consolidated
+into `THESIS_MASTER_RECORD.md` Sections 3 and 7 rather than duplicated here.)
 
 ---
 
@@ -207,16 +212,19 @@ silently billing forever or erasing its own evidence. See
   mid-analysis and fully resolved; see
   [Key findings](#key-findings) below and `THESIS_MASTER_RECORD.md`
   Section 8.
-- **Phase 4 (EU AI Act Article 15 mapping):** Referenced only by
-  implication (this README's own framing) — no dedicated planning,
-  mapping, or status document exists in this repository as of this
-  writing. `PHASE2_ROADMAP.md`, referenced by name in several task
-  briefs, does not exist in this repository either.
+- **Phase 4 (EU AI Act Article 15 mapping):** Started, real content exists —
+  see [`docs/PHASE4_EU_AI_ACT_MAPPING.md`](docs/PHASE4_EU_AI_ACT_MAPPING.md),
+  which verifies the regulatory context directly, quotes Article 15's real
+  requirements, and maps them against this project's final Phase 1–3
+  results. `PHASE2_ROADMAP.md`, referenced by name in several task briefs,
+  does not exist in this repository — it exists only in the parent project
+  folder outside this repo (see `docs/NQ_OPEN_SCOPE_DECISION.md` for a
+  direct quote from it).
 - **Thesis write-up:** Not part of this repository's committed material.
   `THESIS_MASTER_RECORD.md` is explicitly positioned as the backbone for
   writing it, not a substitute for it.
-- **Branch:** current work lives on `defense/wire-sweep-runners`, not yet
-  merged to `main`.
+- **Branch:** `defense/wire-sweep-runners` has been merged into `main`;
+  current work lives on `main`.
 
 (Status pulled from `THESIS_MASTER_RECORD.md` Section 12 and this
 repository's own commit history — no separate status-tracking file exists
@@ -267,7 +275,7 @@ Full detail, numbers, and statistical tests for every point above:
 Peer-reviewed venues only — ACM, IEEE, PMLR, USENIX, ACL Anthology,
 CEUR-WS — with bare arXiv preprints avoided except two explicitly-flagged
 model artifacts documented only via model card. See
-[`CITATIONS.md`](CITATIONS.md) for the full reference list and its stated
+[`CITATIONS.md`](docs/CITATIONS.md) for the full reference list and its stated
 inclusion policy.
 
 ---
