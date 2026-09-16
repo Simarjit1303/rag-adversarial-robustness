@@ -13,6 +13,7 @@ import json
 import pytest
 
 from scripts.analyze_phase3_defense_stats import (
+    BACKEND_CONFOUND_DEFENSES,
     _holm_adjusted_pvalues,
     _mcnemar_and_effect,
     _paired_cell,
@@ -340,6 +341,80 @@ def test_mechanism_instruction_detection_splits_flagged_vs_unflagged_blocks(fake
     assert result[key]["n_blocked"] == 3
     assert result[key]["n_any_flagged"] == 2  # q0 and q2, not q1
     assert result[key]["frac_any_passage_flagged"] == pytest.approx(2 / 3)
+
+
+def test_backend_confound_defenses_includes_instruction_detection():
+    # 2026-09-16 follow-up: instruction_detection's n=40 backend-matched
+    # no-defense baseline turned out to already exist for free (the first
+    # 40 rows of Task B's n=1000 attack_raw_*_hf.jsonl are byte-identical,
+    # in order, to instruction_detection's own n=40 item set -- verified by
+    # scripts/verify_phase3_instruction_detection_baseline_items.py against
+    # real committed data, no new pod sweep), so it was wired into the same
+    # 3-way confound machinery as output_filter/spotlighting rather than
+    # left pending a launch.
+    assert "instruction_detection" in BACKEND_CONFOUND_DEFENSES
+
+
+def test_discover_backend_confound_cells_covers_instruction_detection_at_n40(fake_confound_dirs):
+    p3, p2 = fake_confound_dirs
+    model, corpus, template, defense = "ministral-3-8b", "hotpot_qa", "ignore", "instruction_detection"
+    n = 40
+
+    # same backend_confound pattern as output_filter's real ministral-3-8b
+    # cells: vllm succeeds on 14/40, hf-no-defense and hf-defended agree
+    # (both fail on everything) -- the defense adds nothing beyond the
+    # backend switch itself.
+    vllm_rows = [_injection_row(f"q{i}", attack_success=(1 if i < 14 else 0)) for i in range(n)]
+    nodef_rows = [_injection_row(f"q{i}", attack_success=0) for i in range(n)]
+    def_rows = [_injection_row(f"q{i}", attack_success=0) for i in range(n)]
+
+    _write_jsonl(p2 / f"attack_raw_{model}_{corpus}_{template}_vllm.jsonl", vllm_rows)
+    _write_jsonl(p3 / f"attack_raw_{model}_{corpus}_{template}_hf.jsonl", nodef_rows)
+    _write_jsonl(p3 / f"attack_raw_{model}_{corpus}_{template}_hf_defense-{defense}.jsonl", def_rows)
+
+    cells = discover_backend_confound_cells()
+
+    key = (defense, model, corpus, template)
+    assert key in cells
+    assert cells[key]["n"] == 40
+    assert cells[key]["verdict"] == "backend_confound"
+
+    corrected = corrected_backend_isolated_table(cells)
+    assert defense in corrected
+    assert (model, corpus, template) in corrected[defense]
+
+
+def test_mechanism_instruction_detection_hf_nodef_baseline_redefines_blocked(fake_id_mechanism_dirs):
+    p3, p2 = fake_id_mechanism_dirs
+    model, corpus, template = "ministral-3-8b", "hotpot_qa", "ignore"
+
+    # vllm baseline succeeds on all 4 (so all 4 look "blocked" under the
+    # default vllm comparator); the backend-matched hf-no-defense baseline
+    # only succeeds on q0/q1 -- so under baseline="hf_nodef", q2 and q3 are
+    # NOT blocked (the defended run's failure there is indistinguishable
+    # from the undefended hf backend's own behavior, not the classifier).
+    vllm_rows = [_injection_row(f"q{i}", attack_success=1) for i in range(4)]
+    nodef_rows = [_injection_row(f"q{i}", attack_success=(1 if i < 2 else 0)) for i in range(4)]
+    defended_rows = [_injection_row(f"q{i}", attack_success=0) for i in range(4)]
+    _write_jsonl(p2 / f"attack_raw_{model}_{corpus}_{template}_vllm.jsonl", vllm_rows)
+    _write_jsonl(p3 / f"attack_raw_{model}_{corpus}_{template}_hf.jsonl", nodef_rows)
+    _write_jsonl(
+        p3 / f"attack_raw_{model}_{corpus}_{template}_hf_defense-instruction_detection.jsonl", defended_rows
+    )
+    log_rows = [
+        _id_log_row(model, corpus, template, "q0", [True]),
+        _id_log_row(model, corpus, template, "q1", [False]),
+    ]
+    _write_jsonl(p3 / f"instruction_detection_log_attack_{model}_{corpus}.jsonl", log_rows)
+
+    vllm_result = mechanism_instruction_detection(baseline="vllm")
+    hf_nodef_result = mechanism_instruction_detection(baseline="hf_nodef")
+    key = (model, corpus, template)
+
+    assert vllm_result[key]["n_blocked"] == 4  # q0-q3 all "blocked" vs vllm
+    assert hf_nodef_result[key]["n_blocked"] == 2  # only q0/q1 vs the real backend-matched baseline
+    assert hf_nodef_result[key]["n_any_flagged"] == 1  # q0 flagged, q1 not
+    assert hf_nodef_result[key]["frac_any_passage_flagged"] == pytest.approx(0.5)
 
 
 def test_mechanism_instruction_detection_by_model_corpus_aggregates_templates():

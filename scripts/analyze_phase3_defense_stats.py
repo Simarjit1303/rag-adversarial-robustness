@@ -212,7 +212,20 @@ def discover_injection_cells():
 # hf-defended, per matched cell, for output_filter and spotlighting.
 # ---------------------------------------------------------------------------
 
-BACKEND_CONFOUND_DEFENSES = ("output_filter", "spotlighting")
+BACKEND_CONFOUND_DEFENSES = ("output_filter", "spotlighting", "instruction_detection")
+# instruction_detection's cells are n=40, not n=1000 -- but the same
+# nodef_path (attack_raw_*_hf.jsonl, Task B's RAG_SAMPLE_N=1000 sweep) still
+# works as its backend-matched no-defense baseline with ZERO new GPU work:
+# scripts/verify_phase3_instruction_detection_baseline_items.py confirmed
+# (2026-09-16, no model/GPU touched) that all 16 real instruction_detection
+# cells' n=40 items are byte-identical, in order, to the first 40 rows of
+# the already-committed Task B file for that (model, corpus, template) --
+# expected, since evaluation/run_attack_injection.py's hf-engine item-
+# selection loop depends only on (corpus, split), never on sample_n itself
+# beyond when to stop, nor on defense. The `common = [q for q in defended
+# if q in nodef and q in vllm]` key-intersection below already restricts
+# the 1000-row nodef file down to the matching 40 questions automatically
+# -- no separate n=40 file or new sweep was needed.
 PAIR_LABELS = ("vllm_vs_hf_nodef", "hf_nodef_vs_hf_def", "vllm_vs_hf_def")
 
 
@@ -337,7 +350,7 @@ def corrected_backend_isolated_table(confound_cells):
     attribution above, which answers a different question (which pair
     differs) than this one (is the backend-isolated defense effect
     significant, across the family of cells for that defense)."""
-    by_defense = {"output_filter": {}, "spotlighting": {}}
+    by_defense = {"output_filter": {}, "spotlighting": {}, "instruction_detection": {}}
     for (defense, model, corpus, template), v in confound_cells.items():
         stats = _mcnemar_and_effect(v["_nodef_asr_arr"], v["_def_asr_arr"])
         by_defense[defense][(model, corpus, template)] = stats
@@ -531,14 +544,26 @@ def mechanism_output_filter_poisonedrag():
     return results, overall_flag_rate, len(all_flags)
 
 
-def mechanism_instruction_detection():
+def mechanism_instruction_detection(baseline="vllm"):
     """Per (model, corpus, template) cell: of items blocked by
-    instruction_detection (vllm Phase2 baseline succeeded, defended run
-    failed -- same "blocked" definition as mechanism_output_filter_*),
-    what fraction had >=1 retrieved passage actually flagged=True by the
-    classifier (context was actually stripped pre-generation) vs. zero
-    passages flagged (the model resisted the attack on its own, the
-    classifier never fired for that item).
+    instruction_detection, what fraction had >=1 retrieved passage actually
+    flagged=True by the classifier (context was actually stripped pre-
+    generation) vs. zero passages flagged (the model resisted the attack on
+    its own, the classifier never fired for that item).
+
+    baseline="vllm" (default): "blocked" = the original Phase 2 vllm
+    baseline succeeded and the hf-defended run failed -- same definition
+    as mechanism_output_filter_*, and the one the 20.0%-overall headline
+    number uses.
+
+    baseline="hf_nodef": "blocked" = the backend-matched hf no-defense
+    baseline (Task B's attack_raw_*_hf.jsonl, restricted to the matching
+    40 items) succeeded and the hf-defended run failed. This is the
+    backend-corrected version of the same question -- cross-referencing it
+    against the vllm-baseline result answers whether the classifier's
+    observed 20.0% catch rate holds up once the hf/vllm backend switch
+    itself is no longer conflated into "blocked," or whether some of those
+    "blocks" were really just the backend switch and evaporate here.
 
     Now answerable: defenses/instruction_detection.py's
     log_passage_detection_event and evaluation/run_attack_injection.py's
@@ -569,12 +594,14 @@ def mechanism_instruction_detection():
                 defended = _load_jsonl_by_key(def_path, "question")
                 if len(defended) < INJECTION_EXPECTED_N["instruction_detection"] * MIN_LEGIT_N_FRACTION:
                     continue  # smoke-test fragment
-                baseline = _load_jsonl_by_key(
-                    P2_INJECTION_DIR / f"attack_raw_{model}_{corpus}_{template}_vllm.jsonl", "question"
-                )
+                if baseline == "hf_nodef":
+                    baseline_path = P3_DIR / f"attack_raw_{model}_{corpus}_{template}_hf.jsonl"
+                else:
+                    baseline_path = P2_INJECTION_DIR / f"attack_raw_{model}_{corpus}_{template}_vllm.jsonl"
+                baseline_rows = _load_jsonl_by_key(baseline_path, "question")
                 blocked = [
                     q for q in defended
-                    if q in baseline and baseline[q]["attack_success"] == 1
+                    if q in baseline_rows and baseline_rows[q]["attack_success"] == 1
                     and defended[q]["attack_success"] == 0
                 ]
                 any_flagged = [
@@ -730,8 +757,14 @@ def main():
 
     mech_id = mechanism_instruction_detection()
     mech_id_rollup = mechanism_instruction_detection_by_model_corpus(mech_id)
+    mech_id_corrected = mechanism_instruction_detection(baseline="hf_nodef")
+    mech_id_corrected_rollup = mechanism_instruction_detection_by_model_corpus(mech_id_corrected)
     print("\n-- instruction_detection / injection: mechanism attribution (per model/corpus) --")
     for (model, corpus), v in mech_id_rollup.items():
+        print(f"  {model}/{corpus}: n_blocked={v['n_blocked']} n_any_flagged={v['n_any_flagged']} "
+              f"frac_any_passage_flagged={v['frac_any_passage_flagged']:.3f}")
+    print("  -- backend-corrected (hf-nodef baseline instead of vllm) --")
+    for (model, corpus), v in mech_id_corrected_rollup.items():
         print(f"  {model}/{corpus}: n_blocked={v['n_blocked']} n_any_flagged={v['n_any_flagged']} "
               f"frac_any_passage_flagged={v['frac_any_passage_flagged']:.3f}")
     print("  -- per (model, corpus, template) --")
@@ -740,7 +773,7 @@ def main():
 
     print("\n=== Task 2: backend-confound isolation (vllm baseline vs hf-no-defense vs hf-defended) ===")
     confound_cells = discover_backend_confound_cells()
-    print(f"  {len(confound_cells)} 3-way matched cells (output_filter + spotlighting)")
+    print(f"  {len(confound_cells)} 3-way matched cells (output_filter + spotlighting + instruction_detection)")
     header = (f"{'cell':<60}{'n':>5}{'vllm':>7}{'nodef':>7}{'def':>7}{'tot_red':>8}"
               f"{'bknd_frac':>10}{'verdict':>18}")
     print(header)
@@ -793,6 +826,8 @@ def main():
             "mechanism_crescendo": mech_cres,
             "mechanism_instruction_detection": _stringify_keys(mech_id),
             "mechanism_instruction_detection_by_model_corpus": _stringify_keys(mech_id_rollup),
+            "mechanism_instruction_detection_backend_corrected": _stringify_keys(mech_id_corrected),
+            "mechanism_instruction_detection_backend_corrected_by_model_corpus": _stringify_keys(mech_id_corrected_rollup),
             "backend_confound_cells": _stringify_keys(
                 {k: {kk: vv for kk, vv in v.items() if not kk.startswith("_")} for k, v in confound_cells.items()}
             ),
@@ -817,6 +852,8 @@ def main():
         "mechanism_crescendo": mech_cres,
         "mechanism_instruction_detection": mech_id,
         "mechanism_instruction_detection_by_model_corpus": mech_id_rollup,
+        "mechanism_instruction_detection_backend_corrected": mech_id_corrected,
+        "mechanism_instruction_detection_backend_corrected_by_model_corpus": mech_id_corrected_rollup,
         "backend_confound_cells": confound_cells,
         "corrected_backend_isolated_table": corrected,
         "utility_rows": util_rows,

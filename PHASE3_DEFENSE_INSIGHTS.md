@@ -26,6 +26,26 @@ question, previously reported unanswerable, is now answered directly from
 new per-passage log data (see the `instruction_detection` mechanism
 section) — 20.0% of its blocked attacks had a passage actually flagged.
 
+**Second follow-up (2026-09-16):** the two remaining gaps this document
+used to flag as open — `instruction_detection`'s own exposure to the
+backend confound, and PoisonedRAG's backend confound — are now both
+closed, and neither needed new GPU time. `instruction_detection`'s n=40
+backend-matched no-defense baseline turned out to already exist for free
+(the first 40 rows of Task B's already-committed n=1000 no-defense sweep
+are byte-identical, in order, to its own n=40 item set — verified by
+`scripts/verify_phase3_instruction_detection_baseline_items.py` against
+real committed data, zero model/GPU touched); run through the same 3-way
+test as output_filter/spotlighting, **0 of 16 `instruction_detection`
+cells remain significant** once backend-corrected (down from 3/16 under
+the original `vllm` comparator). PoisonedRAG's backend confound turned out
+never to have existed: `git log --diff-filter=A` on
+`phase2_poisonedrag_results/` shows every file ever committed there was
+generated with `INFERENCE_ENGINE=hf` — Phase 2's PoisonedRAG baseline
+(unlike injection's) always ran on the same `hf` backend as Phase 3's
+defended PoisonedRAG runs, so the PoisonedRAG rows in the master table
+below were backend-clean from the start. See "Backend-confound isolation
+(Task 2)" and Methodology (f) for both.
+
 ---
 
 ## Headline findings
@@ -81,6 +101,29 @@ section) — 20.0% of its blocked attacks had a passage actually flagged.
    re-run still finds 9/16 spotlighting cells significant, unchanged from
    the original count. Base64-encoding genuinely defeats injection
    independent of the backend switch; output_filter's guard does not.
+
+   **`instruction_detection` resolves the same way as output_filter, not
+   spotlighting.** A second follow-up gave it the identical 3-way test at
+   its own n=40 (its backend-matched no-defense baseline is the first 40
+   rows of the already-committed Task B file — see the update banner
+   above). Only 3 of 16 cells had any pairwise gap reach significance at
+   all (all `ministral-3-8b`), and all 3 are `backend_confound`:
+   `hf`-no-defense-vs-defended never reaches significance (p_holm = 1.0 in
+   all three), matching output_filter's pattern exactly. **The
+   backend-isolated corrected table finds 0 of 16 instruction_detection
+   cells significant** — down from 3/16 under the original `vllm`
+   comparator. Cross-referenced against the 20.0% mechanism-flag finding
+   below: recomputing "blocked" against the backend-matched baseline
+   instead of `vllm` shrinks the blocked-item count from 55 to 10 (the
+   other 45 were never really "blocked" by the classifier — they were
+   just the backend switch), and **all 10 of the remaining
+   backend-corrected blocks have a passage actually flagged (100%, up from
+   20.0%)**. The confound doesn't wash out the classifier's mechanism
+   signal — it explains why the *aggregate* ASR reduction isn't
+   statistically significant (n=40 per cell, mostly near-zero baseline
+   ASR, too little power) while confirming that on the rare items where
+   instruction_detection's block was real, the classifier is the reason
+   every time.
 
 3. **Spotlighting eliminates injection ASR almost perfectly but at a
    severe utility cost that the ASR table alone hides.** 12 of 16
@@ -231,28 +274,36 @@ legitimate result.
 **This count uses the original, `vllm`-baseline comparator and is kept
 for historical reference.** A follow-up confirmed a backend confound
 (headline finding 2, Methodology (f)) that invalidates 6 of output_filter's
-significant cells: once corrected to the backend-matched `hf`
-comparator ("Backend-confound isolation (Task 2)" below), the true
-significant count is **12/51 injection cells** — 3 `instruction_detection`
-cells (all `ministral-3-8b`; unaffected by this correction, see
-Methodology (f)'s note that instruction_detection wasn't tested this way)
-+ 9 backend-isolated `spotlighting` cells (the same 9 cells as before —
-down from the original count only in *effect size*, not membership) + 0
+and all 3 of instruction_detection's significant cells: once corrected to
+the backend-matched `hf` comparator ("Backend-confound isolation (Task 2)"
+below), the true significant count is **9/51 injection cells** — 9
+backend-isolated `spotlighting` cells (the same 9 cells as before — down
+from the original count only in *effect size*, not membership) + 0
 `output_filter` cells (down from 6, all of which were `ministral-3-8b`/
-`phi-4-mini`). PoisonedRAG's 4/24 count is unchanged — not covered by
-this correction (Methodology (f)).
+`phi-4-mini`) + 0 `instruction_detection` cells (down from 3, all of which
+were `ministral-3-8b`). PoisonedRAG's 4/24 count is unchanged, but for a
+different reason than "not yet corrected": Phase 2's PoisonedRAG baseline
+already ran on the `hf` backend (confirmed via git history, see
+Methodology (f)) — it was never confounded by a backend switch in the
+first place, so its 4/24 significant count needs no correction, not "not
+covered by this correction."
 
 ---
 
 ## Backend-confound isolation (Task 2)
 
 Full per-cell results behind headline finding 2's resolution. For each of
-the 35 real output_filter/spotlighting injection cells (19 + 16), three
-matched conditions on the same items: `vllm` baseline (Phase 2),
+the 51 real output_filter/spotlighting/instruction_detection injection
+cells (19 + 16 + 16), three matched conditions on the same items: `vllm`
+baseline (Phase 2),
 backend-matched `hf` no-defense baseline (`attack_raw_*_hf.jsonl`,
-`RAG_DEFENSE=none`, item selection verified identical to the defended
-runs by `scripts/verify_phase3_backend_baseline_items.py`), and the `hf`
-defended run. Test: pairwise McNemar (`vllm`-vs-`hf_nodef`,
+`RAG_DEFENSE=none`) — item selection verified identical to the
+output_filter/spotlighting defended runs' own 1000-item sets by
+`scripts/verify_phase3_backend_baseline_items.py`, and, separately, verified
+identical to instruction_detection's own 40-item sets (as an exact
+40-row prefix of the same 1000-item file — no new sweep needed) by
+`scripts/verify_phase3_instruction_detection_baseline_items.py` — and the
+`hf` defended run. Test: pairwise McNemar (`vllm`-vs-`hf_nodef`,
 `hf_nodef`-vs-`hf_def`, `vllm`-vs-`hf_def`) with Holm-Bonferroni applied
 *within each cell's own 3-comparison family* — chosen over Cochran's Q
 because the question is which pair differs (to attribute the reduction to
@@ -266,10 +317,12 @@ alone (`(vllm_asr − hf_nodef_asr) / (vllm_asr − hf_def_asr)`). Verdict:
 (backend switch changes nothing, defense does all the work),
 `partial_split` (both pairwise gaps are significant — both contribute),
 `inconclusive` (neither gap reached significance, usually a near-zero-ASR
-cell with no room to show an effect). 27 cells are `inconclusive` — every
-llama-3.1-8b cell and most near-zero-baseline qwen3-8b/phi-4-mini
-output_filter cells, where ASR was already too low for any 3-way
-comparison to have power.
+cell with no room to show an effect). 33 of the 51 cells are
+`inconclusive` — every llama-3.1-8b cell, most near-zero-baseline
+qwen3-8b/phi-4-mini output_filter cells, and 13 of instruction_detection's
+16 cells, where ASR was already too low (or, for instruction_detection's
+n=40 per cell, the sample too small) for any 3-way comparison to have
+power.
 
 | Defense | Model | Corpus | Template | n | vllm ASR | hf-nodef ASR | hf-def ASR | Total reduction | Backend frac. | Verdict |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -288,6 +341,9 @@ comparison to have power.
 | spotlighting | ministral-3-8b | hotpot_qa | fake_completion | 1000 | 0.608 | 0.085 | 0.000 | 0.608 | 0.860 | partial_split |
 | spotlighting | ministral-3-8b | ms_marco | ignore | 1000 | 0.305 | 0.143 | 0.000 | 0.305 | 0.531 | partial_split |
 | spotlighting | ministral-3-8b | ms_marco | fake_completion | 1000 | 0.515 | 0.143 | 0.000 | 0.515 | 0.722 | partial_split |
+| instruction_detection | ministral-3-8b | hotpot_qa | ignore | 40 | 0.350 | 0.075 | 0.025 | 0.325 | 0.846 | backend_confound |
+| instruction_detection | ministral-3-8b | hotpot_qa | fake_completion | 40 | 0.550 | 0.100 | 0.050 | 0.500 | 0.900 | backend_confound |
+| instruction_detection | ministral-3-8b | ms_marco | fake_completion | 40 | 0.425 | 0.150 | 0.100 | 0.325 | 0.846 | backend_confound |
 
 **Every one of output_filter's 6 non-inconclusive cells is
 `backend_confound`** (`hf_nodef`-vs-`hf_def` never reaches significance:
@@ -303,21 +359,30 @@ contribution at all (`backend_frac` ≈ 0) — model-specific, consistent
 with qwen3-8b's no-defense `hf` baseline tracking its `vllm` baseline
 closely everywhere in this dataset, unlike ministral-3-8b and phi-4-mini.
 
+**instruction_detection's 3 non-inconclusive cells (its only cells with
+enough signal to reach significance at all) are all `backend_confound`,
+the same pattern as output_filter** — `hf_nodef`-vs-`hf_def` never
+reaches significance (p_holm = 1.0 in all three), and 85–90% of the total
+reduction is attributable to the backend switch, all on `ministral-3-8b`
+— the same model driving output_filter's and spotlighting's
+`ministral-3-8b`/backend-confound cells throughout this dataset.
+
 ### Corrected master table (backend-isolated `hf_nodef` vs `hf_def`)
 
-The methodologically correct comparator for output_filter and
-spotlighting/injection, now that the confound above is confirmed for
-output_filter and partially present for spotlighting: `hf`-no-defense
-baseline vs `hf`-defended, the same items, McNemar + Holm-Bonferroni
-re-applied as two fresh 19-cell / 16-cell families (distinct from the
+The methodologically correct comparator for output_filter,
+spotlighting, and instruction_detection/injection, now that the confound
+above is confirmed for output_filter and instruction_detection and
+partially present for spotlighting: `hf`-no-defense baseline vs
+`hf`-defended, the same items, McNemar + Holm-Bonferroni re-applied as
+three fresh 19-cell / 16-cell / 16-cell families (distinct from the
 per-cell 3-comparison family above — this one asks a different question,
 "is the backend-isolated defense effect significant across this
 defense's cells," the same question the *original* master table asked
-with the wrong baseline). This supersedes the output_filter and
-spotlighting/injection rows of the original master table below; those
-rows are kept for historical reference (see Methodology note on this
-correction) but should not be read as defense effects without this
-correction applied.
+with the wrong baseline). This supersedes the output_filter, spotlighting,
+and instruction_detection/injection rows of the original master table
+below; those rows are kept for historical reference (see Methodology note
+on this correction) but should not be read as defense effects without
+this correction applied.
 
 **output_filter/injection: 0 of 19 cells significant** (down from 6/19
 under the original `vllm`-baseline comparator) — every cell's `p_holm =
@@ -351,12 +416,34 @@ unchanged for all 9 — spotlighting's effect is real, just smaller than
 the uncorrected table implied for the cells where the backend confound
 also applies.
 
-**PoisonedRAG is not covered by this correction.** Task B's backend-
-matched baseline only reran the injection attack path; no equivalent
-`RAG_DEFENSE=none`/`hf`-backend PoisonedRAG baseline exists. The
-PoisonedRAG rows of the master table below (and PoisonedRAG's
-Methodology item (f) caveat) remain exactly as uncorrected as before —
-an open question, not resolved by this session's work.
+**instruction_detection/injection: 0 of 16 cells significant** (down from
+3/16 under the original `vllm`-baseline comparator) — every cell's
+`p_holm = 1.0`. All 3 originally-significant cells (`ministral-3-8b`,
+both corpora) drop out entirely once the comparator is the backend-matched
+`hf` no-defense baseline instead of `vllm` — the same fate as
+output_filter's 6, not spotlighting's 9. The full corrected table (all 16
+cells, all non-significant) is available via `python -m
+scripts.analyze_phase3_defense_stats --dump-json <path>` under
+`corrected_backend_isolated_table.instruction_detection`.
+
+**PoisonedRAG needed no correction — it was never confounded.** Unlike
+injection, whose Phase 2 baseline ran on `vllm` (`phase2_injection_results/
+attack_raw_*_vllm.jsonl`), Phase 2's PoisonedRAG baseline
+(`phase2_poisonedrag_results/poison_raw_*_hf.jsonl`) and Phase 2's
+Crescendo baseline (`phase2_crescendo_results/crescendo_raw_*_hf.jsonl`)
+both already ran on the `hf` backend — confirmed via `git log
+--diff-filter=A --name-only` on both directories, which shows every
+`poison_raw_*`/`crescendo_raw_*` file ever committed was named `_hf`, never
+`_vllm` (`evaluation/result_paths.py`'s `poison_result_file_paths`/
+`crescendo_result_file_paths` bake the actual `INFERENCE_ENGINE` used into
+the filename, so this is a direct read of what backend each run used, not
+an inference). PoisonedRAG's and Crescendo's defended Phase 3 runs also
+used `hf` (`phase3_defense_results/poison_raw_*_hf_defense-*.jsonl`,
+`crescendo_raw_*_hf_defense-*.jsonl`) — same backend on both sides of the
+comparison, for both attacks, from the start. The PoisonedRAG rows of the
+master table below were backend-clean before this session's follow-up
+ever began; no new `RAG_DEFENSE=none` PoisonedRAG sweep was needed, and
+none was run.
 
 ---
 
@@ -455,31 +542,49 @@ attack on its own, the classifier never fired for that item):
 | ministral-3-8b | ms_marco | 15 | 4 | 0.267 |
 
 **Overall: 11 of 55 blocked items (20.0%) had at least one passage
-actually flagged and stripped.** This is real mechanism evidence, and
-notably higher than output_filter's 0.8% guard-catch rate (finding 2
-above) — instruction_detection's DeBERTa classifier does meaningfully
-contribute to some blocks, unlike output_filter's safety guard, which
-barely fires at all. Still, the majority of blocks (80%) have zero
-passages flagged, meaning either the model resisted the attack
-independent of the defense, or (an open question, see limitation below)
-some of these blocks are themselves backend-switch artifacts rather than
-model resistance.
+actually flagged and stripped**, against the original `vllm`-baseline
+definition of "blocked." This is real mechanism evidence, and notably
+higher than output_filter's 0.8% guard-catch rate (finding 2 above) —
+instruction_detection's DeBERTa classifier does meaningfully contribute to
+some blocks, unlike output_filter's safety guard, which barely fires at
+all. Still, the majority of blocks under this definition (80%) have zero
+passages flagged.
 
-**Limitation carried forward, not resolved by this rerun:** Task 2's
-3-way backend-confound test (vllm / hf-no-defense / hf-defended) was only
-run for output_filter and spotlighting, at n=1000 — it was never run for
-instruction_detection at its own n=40, because Task B's backend-matched
-baseline sweep did not include a `RAG_DEFENSE=none` pass at
-`RAG_SAMPLE_N=40`. So unlike output_filter, instruction_detection's ASR
-reduction has **not** been checked against the same backend confound —
-the 80% of blocks with zero passages flagged could be genuine model
-resistance, or partly the same `hf`/`vllm` backend effect that explained
-nearly all of output_filter's reduction. This mechanism table shows the
-classifier *does* fire on a meaningful minority of blocks (unlike
-output_filter's near-zero rate), which is evidence against a pure
-backend-confound explanation here, but it is not the same direct proof
-Task 2 established for output_filter — a genuinely open question, flagged
-as such rather than assumed resolved.
+**Resolved, backend-corrected version of the same question.** A second
+follow-up re-ran this exact analysis with "blocked" redefined against the
+backend-matched `hf` no-defense baseline (Task B's `attack_raw_*_hf.jsonl`,
+restricted to the matching 40 items) instead of `vllm` — the same
+correction "Backend-confound isolation (Task 2)" above applies to the ASR
+numbers, applied here to the mechanism question:
+
+| Model | Corpus | n blocked (backend-corrected) | n ≥1 passage flagged | frac guard-caught |
+|---|---|---|---|---|
+| llama-3.1-8b | hotpot_qa | 0 | 0 | n/a (0 blocked) |
+| llama-3.1-8b | ms_marco | 0 | 0 | n/a (0 blocked) |
+| qwen3-8b | hotpot_qa | 1 | 1 | 1.000 |
+| qwen3-8b | ms_marco | 2 | 2 | 1.000 |
+| phi-4-mini | hotpot_qa | 0 | 0 | n/a (0 blocked) |
+| phi-4-mini | ms_marco | 0 | 0 | n/a (0 blocked) |
+| ministral-3-8b | hotpot_qa | 4 | 4 | 1.000 |
+| ministral-3-8b | ms_marco | 3 | 3 | 1.000 |
+
+**10 of 55 originally "blocked" items survive the backend correction, and
+all 10 (100%) have a passage actually flagged.** The other 45 items
+(mostly `ministral-3-8b`'s 33+15=48 raw blocks, reduced to 4+3=7 real
+ones) were never really blocked by the classifier at all — the model's
+answer already changed between `vllm` and the undefended `hf` backend,
+independent of any defense, and the original vllm-baseline definition of
+"blocked" was silently counting those as instruction_detection's doing.
+**This answers the cross-reference question directly: the confound does
+not wash out the classifier's mechanism signal — it inflates the
+denominator.** Every genuinely defense-driven block in this dataset has a
+flagged passage behind it; the 20.0% figure understated the classifier's
+reliability by counting ~4.5x too many items as "blocked." This is also
+exactly consistent with headline finding 2's resolution of
+instruction_detection's ASR numbers: 0/16 cells reach significance
+precisely because the *real* (backend-corrected) block counts are this
+small (n=40 per cell, only a handful of genuine blocks per cell) — not
+because the classifier is unreliable when it does fire.
 
 ### `crescendo` / `output_filter` — guard-would-have-intervened framing (mechanism-only, not an ASR result)
 
@@ -680,12 +785,20 @@ these raw numbers, but under a header that says explicitly they are not
 an ASR-reduction-family result (see `scripts/analyze_phase3_defense_stats.py::main`).
 
 **(f) The backend mismatch (`_hf` vs `_vllm`) — CONFIRMED for
-output_filter, real but partial for spotlighting, resolved with a
-backend-matched baseline rather than left as a suspected confound.**
-Phase 2's injection/PoisonedRAG/Crescendo baselines all ran on the `vllm`
-backend; every Phase 3 defended cell ran on `hf` (transformers) instead —
-same model weights, different inference stack. This was originally
-flagged as a methodology footnote and later strengthened to "likely" by
+output_filter and instruction_detection, real but partial for
+spotlighting, and never present at all for PoisonedRAG or Crescendo.
+Resolved with real backend-matched baselines throughout, not left as a
+suspected or partially-checked confound anywhere.** Only **injection's**
+Phase 2 baseline ran on the `vllm` backend
+(`phase2_injection_results/attack_raw_*_vllm.jsonl`); every Phase 3
+defended cell ran on `hf` (transformers) instead — same model weights,
+different inference stack. (An earlier version of this document claimed
+all three attacks' Phase 2 baselines ran on `vllm` — that was wrong for
+PoisonedRAG and Crescendo, corrected below; `evaluation/result_paths.py`'s
+file-naming functions bake the actual engine used into every result
+filename, so this is directly checkable per attack, not something to
+generalize across attacks.) This was originally flagged as a methodology
+footnote for injection and later strengthened to "likely" by
 output_filter's 0.8% guard-catch rate. A follow-up ran the missing third
 condition directly (a backend-matched, no-defense `hf` baseline — see
 "Backend-confound isolation (Task 2)" above for the full per-cell table)
@@ -696,19 +809,35 @@ switch is controlled for (down from 6/19 under the original comparator).
 For spotlighting/injection, the confound is real but only partial — 6 of
 9 significant cells have the backend switch explaining 50–86% of the
 original reduction, but spotlighting still shows a significant,
-backend-isolated effect in all 9 cells.** This does not apply to
-`instruction_detection`, whose per-passage classifier mechanism was
-checked directly via the new mechanism-attribution log data (see
-"`instruction_detection` / injection" above) rather than via this same
-3-way test — no backend-matched `RAG_SAMPLE_N=40` baseline was run for
-it, so its own exposure to this confound remains an open question, not
-resolved the way output_filter's was.
+backend-isolated effect in all 9 cells.**
 
-**PoisonedRAG's backend confound remains unresolved** — Task B's
-backend-matched baseline only covered the injection attack path, so the
-PoisonedRAG rows in the master table above (and the 0/160 = 0% guard flag
-rate in the PoisonedRAG mechanism section) still carry this confound as
-an unconfirmed likelihood, exactly as before this session's follow-up.
+A second follow-up closed the two gaps this item used to flag as open.
+**`instruction_detection`/injection is now also directly confirmed,
+same pattern as output_filter**: its n=40 backend-matched no-defense
+baseline turned out to be the first 40 rows of Task B's already-committed
+n=1000 no-defense file (verified byte-identical, in order, by
+`scripts/verify_phase3_instruction_detection_baseline_items.py` against
+real committed data — no new pod sweep needed), and the same 3-way test
+finds 0 of 16 cells retain a significant effect once corrected (down from
+3/16), all 3 originally-significant cells being `backend_confound`. The
+mechanism-attribution cross-reference (see "`instruction_detection` /
+injection" above) confirms this from the log data directly: once
+"blocked" is redefined against the backend-matched baseline, only 10 of
+the original 55 blocked items are real, and all 10 (100%) have a flagged
+passage — the confound inflated the denominator, it didn't obscure a
+real classifier failure.
+
+**PoisonedRAG's and Crescendo's backend confound never existed —
+confirmed, not just newly checked.** Unlike injection, Phase 2's
+PoisonedRAG baseline (`phase2_poisonedrag_results/poison_raw_*_hf.jsonl`)
+and Crescendo baseline (`phase2_crescendo_results/crescendo_raw_*_hf.jsonl`)
+both already ran on `hf` — the same backend Phase 3's defended runs for
+both attacks use. Confirmed via `git log --all --diff-filter=A
+--name-only` on both result directories: every file ever committed to
+either is named `_hf`, and no `_vllm` variant was ever committed for
+either attack. The PoisonedRAG rows in the master table above (and the
+0/160 = 0% guard flag rate in the PoisonedRAG mechanism section) were
+backend-clean from the start — no correction needed, and none applied.
 
 **(g) Fisher's exact vs. McNemar.** No cell in this dataset used the
 unpaired Fisher's-exact fallback — every one of the 79 cells had a
@@ -752,6 +881,24 @@ previously could only flag as missing. The master ASR-reduction table's
 are kept in place, unedited, for historical reference rather than
 silently rewritten, with pointers added at both the table's summary line
 and Methodology (f) so a reader lands on the correction either way.
+
+**A second follow-up (2026-09-16) closed the two gaps this document
+still flagged as open after the first revision** — instruction_detection's
+own exposure to the backend confound, and PoisonedRAG's backend confound.
+Both were resolved with real data and zero new GPU time, not by launching
+the pod sweeps originally assumed necessary: a dry-run item-selection
+check (`scripts/verify_phase3_instruction_detection_baseline_items.py`)
+found instruction_detection's n=40 backend-matched baseline already
+existed as a 40-row prefix of Task B's committed n=1000 file, and a git
+history check on `phase2_poisonedrag_results/` and
+`phase2_crescendo_results/` found neither attack's Phase 2 baseline ever
+ran on `vllm` in the first place — an earlier version of this document's
+Methodology (f) incorrectly claimed all three attacks' baselines ran on
+`vllm`; that claim is corrected in place there, not silently. This
+document now carries zero cells or mechanism findings still marked
+provisional, not-yet-backend-verified, or open — every gap flagged by an
+earlier revision is either directly confirmed or directly resolved as
+never having existed.
 
 ---
 
