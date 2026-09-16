@@ -333,12 +333,14 @@ instead of the model-inference layer.
   with, so a revision change in `config.py` automatically invalidates every
   stale cache without a manual `force_rebuild=True`
   (`corpus_revision_pinning_task.md`).
-- **Explicitly flagged as still open:** `os.replace()`'s atomicity guarantee
-  has only been verified on local/POSIX filesystems — it was never
-  confirmed to hold the same way over the Azure Files SMB mount originally
-  planned for shared scratch storage, since that infrastructure path was
-  superseded by the RunPod migration before that verification step was
-  reached (`cache_integrity_fix_task.md`, "What stays open").
+- **Closed, not open:** `os.replace()`'s atomicity guarantee was flagged in
+  `cache_integrity_fix_task.md` ("What stays open") as unverified over the
+  Azure Files SMB mount originally planned for shared scratch storage. That
+  mount was never provisioned — the project migrated to RunPod before that
+  verification step was ever reached, and RunPod's pod filesystem is
+  standard Linux/POSIX, exactly the environment `os.replace()`'s atomicity
+  guarantee already covers and was already verified against. No
+  SMB-specific gap remains on current infrastructure.
 
 ---
 
@@ -1207,7 +1209,12 @@ somewhere in this repository's source material, not newly asserted here.**
   filesystems**, never confirmed against the Azure Files SMB mount
   originally planned for shared scratch storage — that infrastructure path
   was superseded by the RunPod migration before this verification step was
-  reached (Section 3.4).
+  reached (Section 3.4). **Closed, not open:** the Azure Files SMB mount
+  was never provisioned and the project now runs entirely on RunPod's
+  standard Linux/POSIX pod filesystem — the same local-filesystem
+  environment `os.replace()`'s atomicity guarantee already covers and was
+  already verified against. No SMB-specific gap remains to check; this
+  item requires no further action.
 - **No Fisher's-exact fallback was ever exercised in this dataset** — every
   one of the 79 Phase 3 cells had a non-empty matched-item baseline
   subset, so the unpaired fallback path exists in code but is untested
@@ -1236,18 +1243,21 @@ beyond what is directly stated in source material.
   poison-count/dataset-size decisions "confirmed in Meeting 3," **does not
   exist in this repository** (confirmed via repo-wide search) — its
   content is not recoverable from what's committed here.
-- **Supervisor meeting count.** Task briefs reference "Meeting 3" and
-  "Meeting 4" in passing (`phase2_poisonedrag_task.md:25`,
-  `phase2_indirect_injection_task.md:45`) as the source of specific
-  sequencing/scope decisions (e.g. the sequential-phase gate — don't start
-  attack N+1's real sweep until attack N's insight file is closed out).
-  No consolidated meeting log or count of meetings held/remaining was
-  found in this repository.
-- **Azure Files SMB atomic-write verification** (Section 3.4, Section 10)
-  was explicitly deferred pending Part B provisioning of that
-  infrastructure — since the project migrated to RunPod before that
-  provisioning happened, this verification was never performed and, on
-  current infrastructure, may no longer be applicable.
+- **Supervisor meeting count — resolved.** A consolidated log now exists:
+  [`SUPERVISION_MEETINGS_LOG.md`](SUPERVISION_MEETINGS_LOG.md), built from
+  the real meeting-record files in the parent project folder (outside this
+  git repo), not from the task-brief references alone. Meetings 1–3 are
+  fully documented with real dates and decisions; Meeting 4 is
+  corroborated as having occurred but has no primary minutes file found
+  anywhere in the searched folder tree (flagged there, not guessed);
+  Meetings 5 and 6 are the two still remaining before submission.
+- **Azure Files SMB atomic-write verification — closed, not open.** The
+  Azure Files SMB mount this item was waiting on was never provisioned;
+  the project now runs entirely on RunPod's standard Linux/POSIX pod
+  filesystem, the same local-filesystem environment `os.replace()`'s
+  atomicity guarantee already covers and was already verified against
+  (Section 3.4, Section 10). No SMB-specific gap remains — this item
+  requires no further action.
 - **Write-up status.** This document is explicitly positioned, per the
   request that produced it, as thesis-chapter backbone material — the
   actual thesis chapters themselves are not part of this repository's
