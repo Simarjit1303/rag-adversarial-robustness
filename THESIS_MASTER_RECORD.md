@@ -1144,7 +1144,13 @@ somewhere in this repository's source material, not newly asserted here.**
   comparison in this project**, by construction (Section 4) — its Phase 1
   numbers describe closed-book answer-copying via a retrieval-shaped
   scaffold, not genuine RAG, and are reported once, labeled, in Section 9.1
-  only.
+  only. **This is a scope adjustment (4 models × 3 corpora → 4 models × 2
+  corpora for the two corpus-dependent attack families; Crescendo is
+  corpus-independent and entirely unaffected) still pending explicit
+  supervisor acknowledgment, not a unilaterally closed decision** — see
+  [`NQ_OPEN_SCOPE_DECISION.md`](NQ_OPEN_SCOPE_DECISION.md) for the full
+  Methodology/Limitations-chapter-ready writeup, drawn directly from
+  `nq_open_leakage_finding.md`.
 - **`ministral-3-8b`'s injection ASR figures (`ignore`/`fake_completion`)
   are resolved (Section 5.1) — a documented nuance, not an open item.**
   The chat-template round-trip diagnostic ruled out a rendering-artifact
