@@ -1,98 +1,21 @@
-"""
-Phase 3, retrieval-stage defense: instruction detection.
-
-Runs an existing open-source prompt-injection classifier against each
-retrieved passage BEFORE the passage is rendered into the RAG context
-block (harness.pipeline.build_rag_user_prompt /
-attacks.indirect_injection.build_attack_user_prompt), and drops any
-passage the classifier flags. Unlike a hard refusal, the query still
-proceeds on whatever context survives -- partial context loss, not
-total denial -- so this measures utility impact of losing a passage,
-not just a block/no-block outcome.
-
-Detector: protectai/deberta-v3-base-prompt-injection-v2 (HF Hub)
-https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2 --
-a DeBERTa-v3-base binary classifier (labels SAFE/INJECTION, confirmed
-via the model's config.json) fine-tuned by Protect AI specifically for
-prompt-injection detection. Chosen over an LLM-judge-style detector
-(e.g. one of this project's own Llama-Guard/Qwen3Guard judges, see
-defenses/__init__.py) because it is a purpose-built, single-forward-
-pass classifier: ~184M params, runs on CPU in well under a second per
-passage, well-established (Apache-2.0, widely downloaded on the Hub) --
-cheap enough to run on every retrieved passage in every sweep cell
-without needing a GPU, which a generative guard model is not.
-
-Integration (one-line change, not applied by this module): a caller
-that currently does
-    context = "\n\n".join(f"[{i+1}] {extract_passage_text(corpus_name, doc)}"
-                           for i, (doc, score) in enumerate(retrieved))
-swaps that line for
-    context, detection_log = filter_retrieved_passages(retrieved, corpus_name)
--- same (doc, score) `retrieved` input, same extract_passage_text call,
-same "[{i+1}] text" numbering for surviving passages.
-"""
-
 import json
 import os
 from dataclasses import dataclass
 from typing import Callable, Optional
-
 from data.normalize import extract_passage_text
-
-_MODEL_NAME = "protectai/deberta-v3-base-prompt-injection-v2"
-_FLAG_LABEL = "INJECTION"
+_MODEL_NAME = 'protectai/deberta-v3-base-prompt-injection-v2'
+_FLAG_LABEL = 'INJECTION'
 _DEFAULT_THRESHOLD = 0.5
-
-_pipeline = None  # lazy singleton -- only loaded if no classifier override is given
-
+_pipeline = None
 
 def _load_default_classifier():
-    """
-    Lazily downloads and loads the real HF pipeline. Only ever called
-    when detect_injection/filter_retrieved_passages are invoked WITHOUT
-    a `classifier` override -- i.e. during a real sweep on the RunPod
-    GPU pod, never from this repo's test suite (see
-    tests/test_instruction_detection.py's module docstring: the dev
-    machine this repo runs on is not meant to pull model weights).
-    """
     global _pipeline
     if _pipeline is None:
         import torch
         from transformers import pipeline
-        # Cap PyTorch's CPU intra-op thread pool BEFORE loading the
-        # pipeline. Real-pod measurement (2026-09-13): a single
-        # RAG_SAMPLE_N=1 item (5 passages at TOP_K=5, one detect_injection
-        # call per passage -- confirmed correct, not a loop bug) took
-        # real 4m27s but user 56m5s CPU-time -- a ~12.6x ratio, meaning
-        # far more CPU-thread-seconds were burned than one classification
-        # pass needs. cProfile confirmed every one of those seconds is
-        # spent inside DeBERTa's real forward pass (nn.Linear/attention),
-        # not a stray loop or reinit -- so the cost is genuine compute,
-        # multiplied by thread-pool overhead: torch.set_num_threads()
-        # defaults to the CPU count PyTorch detects, uncapped, and this
-        # module never overrode it. A single 512-token forward pass on a
-        # ~184M-param model is too small a matmul to benefit from wide
-        # intra-op parallelism -- on a RunPod GPU rental's high-vCPU-count
-        # (or cgroup-quota-mismatched-container) host, spawning/
-        # synchronizing dozens of threads for that little compute burns
-        # far more aggregate CPU-time than it saves in wall-clock, and can
-        # even slow the wall-clock itself down via contention. Capping to
-        # 1 thread removes this scaling risk entirely regardless of the
-        # host's reported core count -- confirmed offline this is not a
-        # meaningful latency regression (single real-model call on a
-        # real-length hotpot_qa-shaped passage stayed in the low single
-        # digits of seconds at 1 thread vs default).
         torch.set_num_threads(1)
-        # device=-1: CPU-only. No GPU code path exists in this module by
-        # design -- the model is small enough (~184M params) that a
-        # per-passage classifier call is cheap on CPU even on the pod,
-        # so this defense never competes with the target model for GPU
-        # memory during a sweep.
-        _pipeline = pipeline(
-            "text-classification", model=_MODEL_NAME, tokenizer=_MODEL_NAME, device=-1,
-        )
+        _pipeline = pipeline('text-classification', model=_MODEL_NAME, tokenizer=_MODEL_NAME, device=-1)
     return _pipeline
-
 
 @dataclass
 class DetectionResult:
@@ -100,79 +23,22 @@ class DetectionResult:
     score: float
     label: str
 
-
-def detect_injection(
-    text: str,
-    classifier: Optional[Callable[..., list]] = None,
-    threshold: float = _DEFAULT_THRESHOLD,
-) -> DetectionResult:
-    """
-    Runs the classifier on a single passage of text.
-
-    `classifier` is the swap-in point for tests (and for a different
-    detector later): any callable matching a HF text-classification
-    pipeline's contract -- callable on a string, returning
-    [{"label": ..., "score": float}]. Defaults to the lazily-loaded
-    protectai DeBERTa pipeline described in this module's docstring.
-    """
+def detect_injection(text: str, classifier: Optional[Callable[..., list]]=None, threshold: float=_DEFAULT_THRESHOLD) -> DetectionResult:
     clf = classifier or _load_default_classifier()
-    # max_length=512 is explicit, not left for truncation=True to infer from
-    # the tokenizer's own model_max_length: protectai/deberta-v3-base-prompt-
-    # injection-v2's published tokenizer_config.json sets model_max_length to
-    # the "no limit configured" HF sentinel (~1e30, transformers'
-    # VERY_LARGE_INTEGER), and transformers' own tokenization_utils_base.py
-    # (_get_padding_truncation_strategies) silently downgrades truncation=True
-    # to DO_NOT_TRUNCATE whenever max_length is omitted and model_max_length
-    # exceeds LARGE_INTEGER -- confirmed by reading that exact source path.
-    # So truncation=True alone was a silent no-op here: any passage longer
-    # than the model's real trained context ran through DeBERTa's O(n^2)
-    # self-attention at FULL, uncapped length on CPU. hotpot_qa's
-    # extract_passage_text (data/normalize.py) concatenates the ENTIRE
-    # distractor-config context -- all ~10 documents' sentences -- into one
-    # string per passage, unlike this module's own short smoke-test
-    # fixtures, so real sweep passages are routinely far longer than
-    # anything the test suite exercises. This is almost certainly the real
-    # pod's apparent hang at n=1000 (CPU pinned at 100%, state R -- genuinely
-    # computing one pathologically long forward pass, not an infinite loop):
-    # confirmed offline via the real published config.json, max_position_
-    # embeddings=512 is the model's actual trained/supported length.
     result = clf(text, truncation=True, max_length=512)[0]
-    label = result["label"]
-    score = float(result["score"])
+    label = result['label']
+    score = float(result['score'])
     flagged = label.upper() == _FLAG_LABEL and score >= threshold
     return DetectionResult(flagged=flagged, score=score, label=label)
 
-
 @dataclass
 class PassageLog:
-    """One entry per ORIGINAL retrieved passage (dropped ones included),
-    in original rank order -- needed for mechanism attribution and
-    false-positive analysis against XSTest / OR-Bench-Hard-1K."""
-
     passage_id: int
     flagged: bool
     score: float
     label: str
 
-
 def filter_retrieved_passages(retrieved, corpus_name: str, classifier=None):
-    """
-    Mirrors harness.pipeline.build_rag_user_prompt's context-rendering
-    loop (same extract_passage_text call, same "[{i+1}] text" numbering
-    for survivors), but runs each passage through detect_injection first
-    and drops any flagged passage from the rendered context entirely --
-    the query still runs on whatever passages survive (see module
-    docstring: no hard refusal).
-
-    `retrieved` is the (doc, score) list data.build_index.retrieve
-    returns -- the exact shape build_rag_user_prompt /
-    build_attack_user_prompt already receive, so integration is a
-    one-line swap at the call site (see module docstring).
-
-    Returns (context_str, log): log is a list[PassageLog], one per
-    original passage in original rank order (dropped passages included,
-    flagged=True, absent from context_str).
-    """
     lines = []
     log = []
     for i, (doc, score) in enumerate(retrieved):
@@ -181,28 +47,12 @@ def filter_retrieved_passages(retrieved, corpus_name: str, classifier=None):
         log.append(PassageLog(passage_id=i, flagged=result.flagged, score=result.score, label=result.label))
         if result.flagged:
             continue
-        lines.append(f"[{i + 1}] {text}")
-    context = "\n\n".join(lines)
-    return context, log
-
+        lines.append(f'[{i + 1}] {text}')
+    context = '\n\n'.join(lines)
+    return (context, log)
 
 def log_passage_detection_event(log_path, record: dict):
-    """
-    Appends one JSONL row and fsyncs immediately -- identical discipline to
-    defenses/output_filter.py's log_filter_event (same rationale: an
-    interruption mid-sweep should only cost rows not yet logged, not the
-    whole file). Kept as its own copy rather than imported from that module
-    so this module has no dependency on output_filter, same "byte-for-byte
-    in sync, not imported" precedent already used elsewhere in this repo
-    (e.g. evaluation/run_attack_injection.py's own _atomic_open).
-
-    record is expected to carry the caller's row-id keys (model/corpus/
-    injection_template/question, mirroring output_filter's row_id
-    convention) merged with a "passages" list of
-    {"passage_id", "flagged", "score", "label"} dicts, one per originally
-    retrieved passage in rank order -- see PassageLog above.
-    """
-    with open(log_path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    with open(log_path, 'a', encoding='utf-8') as f:
+        f.write(json.dumps(record, ensure_ascii=False) + '\n')
         f.flush()
         os.fsync(f.fileno())
