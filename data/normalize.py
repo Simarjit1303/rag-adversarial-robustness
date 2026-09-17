@@ -1,36 +1,65 @@
+"""
+Schema normalization across the three corpora.
+
+nq_open, hotpot_qa, and ms_marco each expose different field names for the
+question, the gold answer(s), and the supporting passages. The mappings
+below are best-effort based on each corpus's documented schema. The FIRST
+time you load each corpus, run:
+
+    from data.loader import load_corpus
+    recs = load_corpus("nq_open", split="dev")
+    print(recs[0].keys())
+
+...and confirm the field names below actually match what comes back. HF
+dataset schemas do shift between versions, and it costs five minutes to
+check versus a baseline run silently reading the wrong field for weeks.
+"""
+
+
 def extract_passage_text(corpus_name: str, record: dict) -> str:
-    if corpus_name == 'nq_open':
-        return record.get('question', '') + ' ' + ' '.join(record.get('answer', []))
-    if corpus_name == 'hotpot_qa':
-        context = record.get('context', {})
-        titles = context.get('title', [])
-        sentences = context.get('sentences', [])
+    """Return the text to embed for a single record (used when building the FAISS index)."""
+    if corpus_name == "nq_open":
+        # EXCLUDED from all real Phase 2/3 sweeps (decided 2026-09-04): this
+        # branch's "passage" is literally the question plus the gold answer,
+        # which is exactly the gold-answer leakage documented in
+        # nq_open_leakage_finding.md. nq_open has no independent supporting
+        # passage to fall back to, so it can't be fixed the way hotpot_qa/
+        # ms_marco were. Left as-is (not deleted) so the Phase 1 baseline
+        # stays reproducible as a documented limitation.
+        return record.get("question", "") + " " + " ".join(record.get("answer", []))
+    if corpus_name == "hotpot_qa":
+        # hotpot_qa's "context" is a list of [title, sentences] pairs in the distractor config
+        context = record.get("context", {})
+        titles = context.get("title", [])
+        sentences = context.get("sentences", [])
         flat = []
         for t, s in zip(titles, sentences):
-            flat.append(t + ': ' + ' '.join(s))
-        return ' '.join(flat) if flat else record.get('question', '')
-    if corpus_name == 'ms_marco':
-        passages = record.get('passages', {})
-        texts = passages.get('passage_text', [])
-        return ' '.join(texts) if texts else record.get('query', '')
+            flat.append(t + ": " + " ".join(s))
+        return " ".join(flat) if flat else record.get("question", "")
+    if corpus_name == "ms_marco":
+        passages = record.get("passages", {})
+        texts = passages.get("passage_text", [])
+        return " ".join(texts) if texts else record.get("query", "")
     raise ValueError(f"No normalization rule for corpus '{corpus_name}'")
+
 
 def extract_question(corpus_name: str, record: dict) -> str:
-    if corpus_name == 'nq_open':
-        return record.get('question', '')
-    if corpus_name == 'hotpot_qa':
-        return record.get('question', '')
-    if corpus_name == 'ms_marco':
-        return record.get('query', '')
+    if corpus_name == "nq_open":
+        return record.get("question", "")
+    if corpus_name == "hotpot_qa":
+        return record.get("question", "")
+    if corpus_name == "ms_marco":
+        return record.get("query", "")
     raise ValueError(f"No normalization rule for corpus '{corpus_name}'")
 
+
 def extract_gold_answers(corpus_name: str, record: dict) -> list[str]:
-    if corpus_name == 'nq_open':
-        return record.get('answer', [])
-    if corpus_name == 'hotpot_qa':
-        ans = record.get('answer')
+    if corpus_name == "nq_open":
+        return record.get("answer", [])
+    if corpus_name == "hotpot_qa":
+        ans = record.get("answer")
         return [ans] if ans else []
-    if corpus_name == 'ms_marco':
-        answers = record.get('answers', [])
+    if corpus_name == "ms_marco":
+        answers = record.get("answers", [])
         return answers if isinstance(answers, list) else [answers]
     raise ValueError(f"No normalization rule for corpus '{corpus_name}'")
