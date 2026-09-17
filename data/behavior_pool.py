@@ -1,6 +1,6 @@
 """
 Loads Crescendo's target-behavior pool: JBB-Behaviors + HarmBench, per
-config.BEHAVIOR_DATASETS -- see phase2_crescendo_task.md's Grounding
+config.BEHAVIOR_DATASETS -- see docs/archive/task-briefs/phase2_crescendo_task.md's Grounding
 section ("pull directly, don't hand-write behaviors"). Same shape as
 data/loader.py's corpus loading: pinned revision, cached to disk as JSONL,
 atomic write. Two differences from that loader: no sampling here (the full

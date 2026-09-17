@@ -30,7 +30,7 @@ from config import CORPORA, MODELS
 # sweeps generally going forward). nq_open is excluded: it has no
 # independent supporting passage, so its "passage" text is the gold answer
 # by construction -- unfixable gold-answer leakage, see
-# nq_open_leakage_finding.md and config.py's CORPORA comment. This is a
+# docs/nq_open_leakage_finding.md and config.py's CORPORA comment. This is a
 # real default (not just a comment) so an attack sweep invoked without an
 # explicit RAG_CORPORA doesn't silently include it.
 ATTACK_ELIGIBLE_CORPORA = [c for c in CORPORA if c != "nq_open"]
@@ -225,7 +225,7 @@ def resolve_poison_sweep_selection():
     resolve_sweep_selection's docstring). RAG_CORPORA defaults to
     ATTACK_ELIGIBLE_CORPORA -- nq_open excluded by default here too, same
     reasoning as the injection sweep (unfixable gold-answer leakage, see
-    nq_open_leakage_finding.md).
+    docs/nq_open_leakage_finding.md).
     """
     model_keys_env = os.environ.get("RAG_MODELS")
     model_keys = (
@@ -291,7 +291,7 @@ def expected_poison_result_files(results_dir, defense: str = None):
 # ---------------------------------------------------------------------------
 # Crescendo (Attack 3) naming -- extends the {model}_{engine} pattern with a
 # turn_count axis in place of the other two sweeps' corpus/poison_config
-# axis. No corpus dimension here (per phase2_crescendo_task.md's Scope
+# axis. No corpus dimension here (per docs/archive/task-briefs/phase2_crescendo_task.md's Scope
 # section: Crescendo is a direct conversational attack on the target model,
 # not a RAG-corpus attack), so this doesn't reuse
 # {result,attack,poison}_result_file_paths' 4-part shape -- a 3-part
@@ -307,7 +307,7 @@ def resolve_crescendo_sweep_selection():
     evaluation.run_crescendo.run_crescendo_sweep(). RAG_MODELS/
     INFERENCE_ENGINE are shared with the other sweeps (same reasoning as
     resolve_sweep_selection's docstring). RAG_MAX_TURNS lets a smoke test
-    override the fixed max_turns=5 (see phase2_crescendo_task.md's Tasks
+    override the fixed max_turns=5 (see docs/archive/task-briefs/phase2_crescendo_task.md's Tasks
     section) without touching config.
     """
     model_keys_env = os.environ.get("RAG_MODELS")

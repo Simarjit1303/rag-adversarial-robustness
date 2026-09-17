@@ -42,7 +42,6 @@ COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
     PIP_DEFAULT_TIMEOUT=120 pip install --retries 10 -r requirements.txt
 
-# Copy the rest of your RAG application source code
 COPY . .
 
 # Containers have no TTY, so Python block-buffers stdout (~8 KB) by default.

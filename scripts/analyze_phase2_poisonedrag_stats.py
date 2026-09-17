@@ -5,14 +5,14 @@ Reads phase1_results_complete/ (Phase 1 baseline, already committed) and
 phase2_poisonedrag_results/ (this attack's real sweep output, downloaded
 from the RunPod run) directly by path -- same pattern as
 scripts/analyze_phase2_injection_stats.py. Only hotpot_qa and ms_marco
-exist here (nq_open excluded project-wide, see nq_open_leakage_finding.md).
+exist here (nq_open excluded project-wide, see docs/nq_open_leakage_finding.md).
 
 Unlike Attack 1, PoisonedRAG has no template dimension -- one poison
 config ("adv5", ADV_PER_QUERY=5) per (model, corpus) cell, 8 cells total.
 n is NOT the full 1000-question dev slice: PoisonedRAG samples 100 target
 questions per corpus (evaluation/run_poisonedrag.py, seed 42) and some are
 lost to generator failures during Phase A context-building (see
-PHASE2_POISONEDRAG_INSIGHTS.md's skip/loss section) -- n=90/100 hotpot_qa,
+docs/PHASE2_POISONEDRAG_INSIGHTS.md's skip/loss section) -- n=90/100 hotpot_qa,
 n=96/100 ms_marco, same across all 4 models since Phase A's poisoned
 contexts are model-agnostic and shared.
 

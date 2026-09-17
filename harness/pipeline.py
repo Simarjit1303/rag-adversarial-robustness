@@ -149,7 +149,7 @@ def build_rag_user_prompt(index, records, question: str, corpus_name: str, top_k
     nq_open branch concatenates the gold answer into the "passage" text by
     construction (there's nothing else to embed/display). This is a corpus
     -construction choice, not something a context-rendering fix can resolve;
-    see nq_open_leakage_finding.md. hotpot_qa and ms_marco's branches are
+    see docs/nq_open_leakage_finding.md. hotpot_qa and ms_marco's branches are
     genuinely clean (real passage/context text, no answer key mixed in).
     """
     retrieved = retrieve(index, records, question, k=top_k)

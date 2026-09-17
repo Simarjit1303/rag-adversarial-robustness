@@ -5,7 +5,7 @@ Russinovich, Salem, Eldan, "Great, Now Write an Article About That: The
 Crescendo Multi-Turn LLM Jailbreak Attack" (2024). Reference implementation:
 Microsoft's PyRIT (Azure/PyRIT) Crescendo orchestrator -- this module adapts
 its turn-generation and backtrack strategy, not the paper's own from-scratch
-prompt engineering. See phase2_crescendo_task.md for the full pre-flight
+prompt engineering. See docs/archive/task-briefs/phase2_crescendo_task.md for the full pre-flight
 verification (platform, cost sizing) and build plan.
 
 Differs from Attack 1 (instruction hijack, single template render) and
@@ -16,7 +16,7 @@ prior turns AND the target model's own prior replies -- genuinely new
 control flow, not a templated one-shot.
 
 Attacker + judge model: DeepSeek V4 Pro, confirmed clean (no reasoning-leak/
-truncation) at real escalation-role scale -- see phase2_crescendo_task.md's
+truncation) at real escalation-role scale -- see docs/archive/task-briefs/phase2_crescendo_task.md's
 pre-flight section for the verification evidence. Transport is config-driven
 (CRESCENDO_LLM_PROVIDER, see _LLM_PROVIDERS below) -- defaults to OpenRouter's
 paid tier as of 2026-09-10 (round 5): a full day of cumulative NIM traffic
@@ -175,7 +175,7 @@ REFUSAL_PHRASES = [
 
 _VERDICT_RE = re.compile(r"verdict\s*:\s*(yes|no)", re.IGNORECASE)
 
-# NIM's free-tier budget is ~40 req/min (see phase2_crescendo_task.md pre-
+# NIM's free-tier budget is ~40 req/min (see docs/archive/task-briefs/phase2_crescendo_task.md pre-
 # flight). Real smoke-test finding, 2026-09-09 (round 2): a fixed 1.6s
 # min-spacing between consecutive calls wasn't enough -- llama-3.1-8b (run
 # first) got 3/3, qwen3-8b partial, phi-4-mini and ministral-3-8b (run
@@ -368,7 +368,7 @@ def _nim_chat(messages: list, api_token: str, model: str, max_tokens: int, conte
     content = (message.get("content") or "").strip()
     if not content:
         # Same reasoning-leak/exhaustion failure shape checked and ruled out
-        # for this model+platform in phase2_crescendo_task.md's pre-flight --
+        # for this model+platform in docs/archive/task-briefs/phase2_crescendo_task.md's pre-flight --
         # still guarded here defensively, same as poisonedrag's parse-failure
         # logging, in case a future NIM-side change reintroduces it.
         print(

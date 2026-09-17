@@ -140,7 +140,7 @@ def test_build_defended_attack_prompt_instruction_detection_drops_flagged_passag
     # regression coverage for the per-passage mechanism log this defense
     # now persists (previously computed and discarded, see
     # evaluation/run_attack_injection.py's _build_defended_attack_prompt
-    # docstring and PHASE3_DEFENSE_INSIGHTS.md's original mechanism-
+    # docstring and docs/PHASE3_DEFENSE_INSIGHTS.md's original mechanism-
     # attribution gap for instruction_detection)
     assert len(passage_log) == 2
     assert passage_log[0].flagged is True and passage_log[0].label == "INJECTION"

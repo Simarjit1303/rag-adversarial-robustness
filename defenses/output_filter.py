@@ -12,7 +12,7 @@ run_output_filter() -- as the final pass after generation.
 
 Deliberately independent of attacks.crescendo.is_refusal(): that matcher
 is a naive, voice-blind substring scan already confirmed (see
-PHASE2_CRESCENDO_INSIGHTS.md) to false-positive on a fabricated-quote case
+docs/PHASE2_CRESCENDO_INSIGHTS.md) to false-positive on a fabricated-quote case
 (the match landed inside character dialogue the model invented, not its
 own refusal) and a copyright hedge-then-comply case (a hedge paired with
 immediate compliance via a workaround, not a refusal). This module's job

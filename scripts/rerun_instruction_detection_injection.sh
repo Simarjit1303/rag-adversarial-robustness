@@ -7,7 +7,7 @@
 # DetectionResult was computed per passage and used only inline to filter the
 # context -- never persisted -- making the mechanism question ("did blocking
 # actually happen, or did the model just resist anyway") unanswerable from
-# the committed data (see PHASE3_DEFENSE_INSIGHTS.md's
+# the committed data (see docs/PHASE3_DEFENSE_INSIGHTS.md's
 # mechanism_instruction_detection() finding). This produces the missing
 # instruction_detection_log_attack_{model}_{corpus}.jsonl files.
 #

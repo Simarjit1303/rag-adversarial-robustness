@@ -32,7 +32,7 @@ attacks would conflate unrelated hypotheses.
 
 Crescendo/output_filter is a special case, not a bug: run_crescendo.py's
 guard check is observational-only by design (discards the filtered text,
-scores the real unfiltered conversation -- see PHASE3_DEFENSE_INSIGHTS.md
+scores the real unfiltered conversation -- see docs/PHASE3_DEFENSE_INSIGHTS.md
 methodology section for the exact code citations). Its attack_success is
 therefore NOT a defended-condition outcome; every Crescendo cell is
 tagged caveat="observational_only_no_intervention" /
@@ -61,7 +61,7 @@ instruction_detection's mechanism attribution (mechanism_instruction_
 detection) was a genuine gap in the original analysis -- the runner
 computed each passage's DetectionResult inline and discarded it, so no
 per-passage flagged/not-flagged log existed. This session's rerun (see
-PHASE3_DEFENSE_INSIGHTS.md's Task C) persists that log to
+docs/PHASE3_DEFENSE_INSIGHTS.md's Task C) persists that log to
 instruction_detection_log_attack_{model}_{corpus}.jsonl; this function now
 answers the original question directly instead of reporting it as
 unanswerable.

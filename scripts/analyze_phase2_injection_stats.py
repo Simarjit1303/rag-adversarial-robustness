@@ -7,7 +7,7 @@ from the RunPod run) directly by path -- not config.RESULTS_DIR's
 scratch-dir convention, since these are downloaded result dumps living at
 the repo root, same pattern as phase1_results_complete/ itself. nq_open is
 never touched here (excluded from the whole attack sweep -- see
-nq_open_leakage_finding.md); only hotpot_qa and ms_marco exist in
+docs/nq_open_leakage_finding.md); only hotpot_qa and ms_marco exist in
 phase2_injection_results/.
 
 Two separate statistical questions, per the decided stats plan:

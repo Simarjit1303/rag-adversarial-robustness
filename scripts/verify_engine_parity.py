@@ -1,5 +1,5 @@
 """
-Stage 2 verification #1 (see stage2_vllm_task.md, "Verification before
+Stage 2 verification #1 (see docs/archive/task-briefs/stage2_vllm_task.md, "Verification before
 calling this done").
 
 The vLLM path hands clean_generation() and the metric hierarchy a plain

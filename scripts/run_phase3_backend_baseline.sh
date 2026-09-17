@@ -4,7 +4,7 @@
 # and injection/spotlighting -- isolates whether those two defenses' reported
 # ASR reductions are caused by the _hf-vs-_vllm backend switch between Phase
 # 2's baseline and Phase 3's defended runs, independent of any defense.
-# See PHASE3_DEFENSE_INSIGHTS.md headline finding 2 and Methodology item (f)
+# See docs/PHASE3_DEFENSE_INSIGHTS.md headline finding 2 and Methodology item (f)
 # for why this confound matters: output_filter/injection's guard only fired
 # on 0.8% of blocked items, so most of its measured ASR reduction is more
 # likely this backend switch than the guard.

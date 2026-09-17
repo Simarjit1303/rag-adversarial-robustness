@@ -10,8 +10,8 @@ Expected result:
   Both:      contains_answer 19/20 (the one miss is "drowned" vs "drowning")
 
 If your patched clean_generation() produces different numbers, something in the
-patch diverges from what's specified in phase1_fixes_task.md — diff against that
-before assuming the new numbers are an improvement.
+patch diverges from what's specified in docs/archive/task-briefs/phase1_fixes_task.md
+— diff against that before assuming the new numbers are an improvement.
 """
 
 import ast
@@ -146,7 +146,7 @@ def check(samples, label, expected_em_raw, expected_em_clean, expected_contains)
           f"F1_raw={f1_raw_mean:.3f} F1_clean={f1_clean_mean:.3f} "
           f"contains={contains}/{n}")
     ok = (em_raw == expected_em_raw and em_clean == expected_em_clean and contains == expected_contains)
-    print(f"  {'PASS' if ok else 'MISMATCH vs expected — check patch against phase1_fixes_task.md'}")
+    print(f"  {'PASS' if ok else 'MISMATCH vs expected — check patch against docs/archive/task-briefs/phase1_fixes_task.md'}")
     return ok
 
 r1 = check(qwen_samples, "Qwen3-8b", expected_em_raw=2, expected_em_clean=4, expected_contains=19)

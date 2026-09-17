@@ -63,7 +63,7 @@ def test_expected_result_files_covers_every_cell_in_the_selection(monkeypatch, t
 # --------------------------------------------------------------------------
 # Attack sweep (Phase 2, indirect prompt injection) -- extends the naming
 # above with an injection_template axis. nq_open is excluded by default:
-# see nq_open_leakage_finding.md and config.py's CORPORA comment.
+# see docs/nq_open_leakage_finding.md and config.py's CORPORA comment.
 # --------------------------------------------------------------------------
 
 def test_attack_eligible_corpora_excludes_nq_open():

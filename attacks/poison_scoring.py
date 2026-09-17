@@ -2,7 +2,7 @@
 PoisonedRAG success scoring.
 
 Built from the start with Attack 1's own finding in mind (see
-PHASE2_INJECTION_INSIGHTS.md's "ASR scoring conflates at least three
+docs/PHASE2_INJECTION_INSIGHTS.md's "ASR scoring conflates at least three
 qualitatively different phenomena" methodology section): a single
 substring-containment flag cannot distinguish genuine compliance from an
 echo or a glued-on-to-an-otherwise-correct-answer artifact. Rather than

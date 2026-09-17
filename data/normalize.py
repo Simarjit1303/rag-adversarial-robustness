@@ -22,7 +22,7 @@ def extract_passage_text(corpus_name: str, record: dict) -> str:
         # EXCLUDED from all real Phase 2/3 sweeps (decided 2026-09-04): this
         # branch's "passage" is literally the question plus the gold answer,
         # which is exactly the gold-answer leakage documented in
-        # nq_open_leakage_finding.md. nq_open has no independent supporting
+        # docs/nq_open_leakage_finding.md. nq_open has no independent supporting
         # passage to fall back to, so it can't be fixed the way hotpot_qa/
         # ms_marco were. Left as-is (not deleted) so the Phase 1 baseline
         # stays reproducible as a documented limitation.

@@ -121,7 +121,7 @@ def verify_success(scratch_dir: str, target: str) -> bool:
     got written. That's a known, accepted limitation for the unattended
     full-sweep case this script targets; a run whose correctness needs
     human judgment (a smoke test) should not go through this script at all
-    -- see verify_runpod_setup_prompt.md's section 3.
+    -- see docs/archive/task-briefs/verify_runpod_setup_prompt.md's section 3.
     """
     _, expected_files_fn = _RUN_TARGETS[target]
     results_dir = Path(scratch_dir) / "results"

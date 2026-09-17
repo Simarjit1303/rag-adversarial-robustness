@@ -5,7 +5,7 @@ CLEAN (non-adversarial) text.
 Runs the real protectai/deberta-v3-base-prompt-injection-v2 classifier (via
 defenses.instruction_detection.detect_injection with no `classifier`
 override -- the one real local model load this repo's hard local-execution
-constraint explicitly allows, see CLAUDE.md) against:
+constraint explicitly allows) against:
   - a sample of clean hotpot_qa and ms_marco passages (this repo's two
     attack-eligible RAG corpora -- data.loader.load_corpus, no embedding
     model needed, so this never touches sentence-transformers/faiss)

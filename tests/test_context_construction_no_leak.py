@@ -5,7 +5,7 @@ build_rag_user_prompt() rendered every retrieved document as
 "Context:" block was the raw Python dict repr of the dataset row, gold
 answer included (confirmed against real cached nq_open records; see
 harness/pipeline.py's build_rag_user_prompt docstring and
-nq_open_leakage_finding.md).
+docs/nq_open_leakage_finding.md).
 
 These tests pin the fixed behavior: hotpot_qa/ms_marco now render real
 passage text via data.normalize.extract_passage_text, with no raw dict

@@ -20,7 +20,7 @@ without any change to retrieval itself. Deterministic given
 reproducible.
 
 nq_open is excluded here (unfixable gold-answer leakage -- see
-nq_open_leakage_finding.md and config.py's CORPORA comment). This attack
+docs/nq_open_leakage_finding.md and config.py's CORPORA comment). This attack
 runs against hotpot_qa and ms_marco only; see
 evaluation/result_paths.py's ATTACK_ELIGIBLE_CORPORA.
 """

@@ -28,7 +28,7 @@ baseline prompts only) is not guaranteed to still cover the worst case.
 Renders every (corpus, injection_template) combination in
 evaluation.result_paths.ATTACK_ELIGIBLE_CORPORA x
 attacks.injection_templates.TEMPLATES (nq_open excluded, same as the
-attack sweep itself -- see nq_open_leakage_finding.md) and reports the max
+attack sweep itself -- see docs/nq_open_leakage_finding.md) and reports the max
 across all of them, not just the "combined" template -- worth confirming
 empirically rather than assuming the longest-looking template wins once
 real corpus documents of varying length are in the mix.

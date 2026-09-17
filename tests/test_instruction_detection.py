@@ -204,7 +204,7 @@ def test_log_passage_detection_event_appends_and_is_durable_across_calls(tmp_pat
     tests/test_output_filter.py's mirrored test) -- this is the write path
     evaluation/run_attack_injection.py now uses to persist the per-passage
     detection result that was previously computed and discarded (see
-    PHASE3_DEFENSE_INSIGHTS.md's original instruction_detection mechanism-
+    docs/PHASE3_DEFENSE_INSIGHTS.md's original instruction_detection mechanism-
     attribution gap)."""
     from defenses.instruction_detection import log_passage_detection_event
 

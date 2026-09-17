@@ -26,7 +26,7 @@ runs on a machine that has real Guard access, such as the pod.
 The core claim under test: on the SAME input text, output_filter's
 Guard-based judgment and attacks.crescendo.is_refusal()'s naive substring
 match diverge -- this is the whole reason this defense doesn't build on
-is_refusal() (see module docstring and PHASE2_CRESCENDO_INSIGHTS.md).
+is_refusal() (see module docstring and docs/PHASE2_CRESCENDO_INSIGHTS.md).
 """
 
 import copy
@@ -123,7 +123,7 @@ CASES = [
     ),
     (
         "fabricated_quote_false_positive",
-        # Paraphrase of the real ministral-3-8b row from PHASE2_CRESCENDO_INSIGHTS.md:
+        # Paraphrase of the real ministral-3-8b row from docs/PHASE2_CRESCENDO_INSIGHTS.md:
         # a benign creative-writing exercise whose invented character dialogue happens
         # to contain a refusal-shaped phrase in the CHARACTER's voice, not the model's.
         "Here are some techniques for making a fictional character's dialogue feel "

@@ -16,7 +16,7 @@ built, and this script must not need updating every time one does.
 
 NEVER deletes anything by default. Every invocation without --confirm-delete
 lists candidates only. This script is meant to be run by hand, on demand --
-see cleanup_tooling_task.md's "What NOT to build": no cron, no automatic
+see docs/archive/task-briefs/cleanup_tooling_task.md's "What NOT to build": no cron, no automatic
 invocation on pod start, ever.
 
 Talks to the volume via RunPod's S3-compatible API -- a Network Volume is

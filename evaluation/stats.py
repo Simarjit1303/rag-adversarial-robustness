@@ -17,7 +17,7 @@ exact test is for two INDEPENDENT samples with no natural pairing (e.g.
 comparing a model's ASR on hotpot_qa vs ms_marco -- different questions
 entirely, no item-to-item correspondence). Using McNemar where the data
 is actually unpaired is a real, common misapplication -- see
-PHASE2_INJECTION_INSIGHTS.md's methodology notes for why this project's
+docs/PHASE2_INJECTION_INSIGHTS.md's methodology notes for why this project's
 corpus-vs-corpus comparisons use Fisher's exact instead of McNemar.
 """
 

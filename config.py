@@ -121,7 +121,7 @@ CORPORA = {
     # EXCLUDED from all real Phase 2/3 sweeps (decided 2026-09-04): nq_open
     # has no independent supporting passage at all, so its "passage" text is
     # the gold answer by construction -- unfixable gold-answer leakage into
-    # the RAG context. See nq_open_leakage_finding.md (fixed for
+    # the RAG context. See docs/nq_open_leakage_finding.md (fixed for
     # hotpot_qa/ms_marco on branch fix-rag-context-answer-leak, but nq_open
     # cannot be fixed the same way). Real matrix going forward: 4 models x
     # 2 corpora (hotpot_qa, ms_marco) x 3 attacks. nq_open's Phase 1 result
@@ -185,7 +185,7 @@ BEHAVIOR_DATASETS = {
     # configs on this one repo, not one -- standard (200) + contextual (100)
     # + copyright (100) = 400 real total, not the 510 first assumed before
     # this was checked (that number was simply wrong; corrected here and
-    # everywhere it was cited -- see phase2_crescendo_task.md). All three
+    # everywhere it was cited -- see docs/archive/task-briefs/phase2_crescendo_task.md). All three
     # configs share split="train" and a "prompt" column (contextual adds
     # "context", copyright adds "tags" -- both ignored, only "prompt" is
     # used); data/behavior_pool.py's loader concatenates all three.

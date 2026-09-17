@@ -85,7 +85,7 @@ consuming the whole budget), and clean labeled-markdown content -- same
 general shape as Kimi's ("**Incorrect Answer:** ...", "**Corpus N**
 ..."), with its own separator quirk: this model consistently uses "***"
 (three asterisks) as its horizontal-rule separator, never "---". See
-PHASE2_POISONEDRAG_INSIGHTS.md's methodology section for the full
+docs/PHASE2_POISONEDRAG_INSIGHTS.md's methodology section for the full
 write-up, including the measured 480s kimi-k3 latency and this content-
 leakage finding.
 """
