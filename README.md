@@ -86,6 +86,10 @@ rag-adversarial-robustness/
 ├── phase2_poisonedrag_results/        # Attack 2 raw + summary
 ├── phase2_crescendo_results/          # Attack 3 raw + summary
 ├── phase3_defense_results/            # All 3 defenses' raw + summary + mechanism logs
+├── notebooks/
+│   └── results_analysis.ipynb         # regenerates fig01-fig09; cross-checks every number vs the master record
+├── results/
+│   └── figures/                       # 300 DPI PNGs written by the notebook
 ├── docs/
 │   ├── PHASE2_INJECTION_INSIGHTS.md
 │   ├── PHASE2_POISONEDRAG_INSIGHTS.md
@@ -180,6 +184,25 @@ scripts — set `RAG_DEFENSE` before running `run_attack_injection.py` /
 `instruction_detection`/`spotlighting` to act on, and its guard verdict is
 logged but deliberately never enforced; see
 `THESIS_MASTER_RECORD.md` Section 6.3).
+
+### Results notebook
+
+`notebooks/results_analysis.ipynb` regenerates all 9 result figures from
+the committed result directories only — never the untracked scratch
+dirs. Before plotting anything, it runs 297 assertions against
+`docs/THESIS_MASTER_RECORD.md` (Sections 5, 6, 8, 9) and the `nq_open`
+table in `docs/NQ_OPEN_SCOPE_DECISION.md`, at tolerances matched to each
+table's printed precision, and stops on any mismatch instead of
+producing a chart with drifted numbers.
+
+Run from the repo root or from `notebooks/`:
+
+```bash
+jupyter nbconvert --to notebook --execute notebooks/results_analysis.ipynb
+```
+
+Figures save to `results/figures/` at 300 DPI. `nq_open` never appears
+as a result — only once, as excluded leakage evidence (fig02).
 
 ### Cloud deployment (RunPod A100 + GHCR)
 
