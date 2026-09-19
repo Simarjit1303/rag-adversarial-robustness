@@ -94,9 +94,11 @@ raw JSONL, all 12 real Phase 1 cells, no re-generation needed):
 
 | Corpus | Mean F1(clean) across 4 models | Spread across models |
 |---|---|---|
-| `nq_open` | 0.963 | 0.005 (0.960–0.966) |
+| `nq_open` | 0.962 | 0.005 (0.960–0.965) |
 | `hotpot_qa` | 0.585 | 0.179 (0.460–0.639) |
 | `ms_marco` | 0.255 | 0.042 (0.234–0.276) |
+
+*Values recomputed on 2026-09-19 from the committed Phase 1 summary CSVs (`THESIS_MASTER_RECORD.md` Section 9.1). The `nq_open` row is 0.962 / 0.960–0.965; `nq_open_leakage_finding.md`, preserved unmodified, still shows 0.963 / 0.960–0.966. The other two rows and every spread are identical in both.*
 
 As the finding states: "`nq_open` is both near-ceiling and nearly invariant
 across four models of meaningfully different capability — the pattern
