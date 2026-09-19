@@ -172,7 +172,7 @@ regulatory context (the AI Act is Regulation (EU) 2024/1689, not the
 Digital Omnibus amendment 2026/1744; the discrepancy between these two is
 documented there), Article 15's real requirements quoted, a full mapping
 against this project's final results, and the CEN-CENELEC standards-gap
-novelty framing. See Section 12 for status.
+novelty framing.
 
 ---
 

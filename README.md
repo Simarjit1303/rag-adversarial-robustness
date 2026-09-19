@@ -212,14 +212,12 @@ silently billing forever or erasing its own evidence. See
   mid-analysis and fully resolved; see
   [Key findings](#key-findings) below and `THESIS_MASTER_RECORD.md`
   Section 8.
-- **Phase 4 (EU AI Act Article 15 mapping):** Started, real content exists —
+- **Phase 4 (EU AI Act Article 15 mapping):** Complete —
   see [`docs/PHASE4_EU_AI_ACT_MAPPING.md`](docs/PHASE4_EU_AI_ACT_MAPPING.md),
   which verifies the regulatory context directly, quotes Article 15's real
   requirements, and maps them against this project's final Phase 1–3
-  results. `PHASE2_ROADMAP.md`, referenced by name in several task briefs,
-  does not exist in this repository — it exists only in the parent project
-  folder outside this repo (see `docs/NQ_OPEN_SCOPE_DECISION.md` for a
-  direct quote from it).
+  results. See `docs/NQ_OPEN_SCOPE_DECISION.md` Section 3 for the
+  `PHASE2_ROADMAP.md` provenance note.
 - **Thesis write-up:** Not part of this repository's committed material.
   `THESIS_MASTER_RECORD.md` is explicitly positioned as the backbone for
   writing it, not a substitute for it.
