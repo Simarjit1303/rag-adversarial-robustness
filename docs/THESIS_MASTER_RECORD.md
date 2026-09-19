@@ -374,7 +374,7 @@ from pipeline code.
 
 **Evidence this matters, not just in principle:** recomputed from real
 Phase 1 data (all 12 model×corpus cells, `phase1_results_complete/`), mean
-F1(clean) across the 4 models is 0.963 (spread 0.005) on `nq_open` versus
+F1(clean) across the 4 models is 0.962 (spread 0.005) on `nq_open` versus
 0.585 (spread 0.179) on `hotpot_qa` and 0.255 (spread 0.042) on `ms_marco`
 (`nq_open_leakage_finding.md`, Table). `nq_open` is both near-ceiling and
 nearly invariant across four models of meaningfully different capability —
