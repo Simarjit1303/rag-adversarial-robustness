@@ -145,6 +145,14 @@ comment. Quoting it directly, not paraphrasing:
 > not 4×3×3. Every 'three corpora' reference elsewhere in this document
 > predates this decision and should be read with that correction in mind."
 
+*Provenance note:* `PHASE2_ROADMAP.md` does not exist in this git
+repository — confirmed via repo-wide search. It exists only in the parent
+project folder (`Drafts/PHASE2_ROADMAP.md`, outside this repo), so the
+quote above is the only place its content is preserved in anything
+committed here. Several task briefs (e.g. `phase2_poisonedrag_task.md:25`)
+also cite it by name as the source for poison-count and dataset-size
+decisions "confirmed in Meeting 3."
+
 This confirms option (b) is what was chosen, on 2026-09-04 — the same date
 `config.py`'s `CORPORA` comment records, consistent with a single decision
 made once and reflected in both places. `PHASE2_ROADMAP.md` states the

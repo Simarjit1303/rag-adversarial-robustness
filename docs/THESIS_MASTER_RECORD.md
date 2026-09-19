@@ -1355,39 +1355,6 @@ beyond what is directly stated in source material.
   `REFUSAL_MARKER` into the live conversation history, the same way
   injection's and PoisonedRAG's runners already do) is a well-motivated,
   unexplored next step, not yet started.
-- **Phase 4 (EU AI Act Article 15 mapping) — started, real content exists.**
-  [`PHASE4_EU_AI_ACT_MAPPING.md`](PHASE4_EU_AI_ACT_MAPPING.md) maps
-  Article 15's real requirements against this project's final Phase 1–3
-  results, verifies the regulatory context directly (correcting a
-  regulation-number error in the assumed starting context — the AI Act
-  is Regulation (EU) 2024/1689, not 2026/1744, which is the Digital
-  Omnibus amendment), and names the CEN-CENELEC standards gap as this
-  project's specific compliance-question contribution. Not yet a legal
-  compliance assessment or conformity assessment — see that document's
-  own Section 4 for what it explicitly does not claim.
-  `PHASE2_ROADMAP.md`, referenced by name in multiple task
-  briefs (e.g. `phase2_poisonedrag_task.md:25`) as the source for
-  poison-count/dataset-size decisions "confirmed in Meeting 3," **does not
-  exist in this git repository** — confirmed via repo-wide search, though
-  it does exist in the parent project folder (`Drafts/PHASE2_ROADMAP.md`,
-  outside this repo — see `NQ_OPEN_SCOPE_DECISION.md` Section 3 for a
-  direct quote from it, since its content is not recoverable from
-  anything committed to this repository itself).
-- **Supervisor meeting count — resolved.** A consolidated log now exists:
-  [`SUPERVISION_MEETINGS_LOG.md`](SUPERVISION_MEETINGS_LOG.md), built from
-  the real meeting-record files in the parent project folder (outside this
-  git repo), not from the task-brief references alone. Meetings 1–3 are
-  fully documented with real dates and decisions; Meeting 4 is
-  corroborated as having occurred but has no primary minutes file found
-  anywhere in the searched folder tree (flagged there, not guessed);
-  Meetings 5 and 6 are the two still remaining before submission.
-- **Azure Files SMB atomic-write verification — closed, not open.** The
-  Azure Files SMB mount this item was waiting on was never provisioned;
-  the project now runs entirely on RunPod's standard Linux/POSIX pod
-  filesystem, the same local-filesystem environment `os.replace()`'s
-  atomicity guarantee already covers and was already verified against
-  (Section 3.4, Section 11). No SMB-specific gap remains — this item
-  requires no further action.
 - **Write-up status.** This document is explicitly positioned, per the
   request that produced it, as thesis-chapter backbone material — the
   actual thesis chapters themselves are not part of this repository's
