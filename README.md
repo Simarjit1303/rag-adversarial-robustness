@@ -232,6 +232,13 @@ to check against.)
 
 ## Key findings
 
+![Injection ASR by model and template](results/figures/fig03_injection_asr_model_template.png)
+*Indirect injection: ministral-3-8b is the outlier; corpus identity, not model choice, drives PoisonedRAG success (see below).*
+
+![PoisonedRAG ASR by model and corpus](results/figures/fig04_poisonedrag_asr_model_corpus.png)
+
+Nine result figures in total (baseline quality, nq_open exclusion evidence, all three attacks, the backend-confound before/after, defense-utility trade-off, and the instruction_detection false-positive check) are captioned inline in [`docs/THESIS_MASTER_RECORD.md`](docs/THESIS_MASTER_RECORD.md).
+
 - **The three attacks are each dominated by a different axis** — indirect
   injection by *model identity* (large, model-specific mechanism
   differences), PoisonedRAG by *corpus identity* (all four models
