@@ -348,6 +348,9 @@ instead of the model-inference layer.
 
 ## 4. The `nq_open` Exclusion — Why One of Three Corpora Never Appears in a Real Comparison
 
+![nq_open exclusion evidence](../results/figures/fig02_nq_open_exclusion_evidence.png)
+*Near-ceiling, near-invariant F1 on nq_open (mean 0.962, spread 0.005) vs. genuine cross-model variance on hotpot_qa and ms_marco — the answer-copying signature.*
+
 Found while preparing Phase 2's injection attack: the RAG pipeline's
 "retrieved context" — the block of text every model actually read before
 answering — was not real passage text for any of the three corpora. It was
@@ -395,6 +398,9 @@ comparable to anything else in this document.
 ## 5. Phase 2 — Attacks
 
 ### 5.1 Indirect Prompt Injection
+
+![Injection ASR by model and template](../results/figures/fig03_injection_asr_model_template.png)
+*Attack success rate by model and template, split by goal-hijack vs. process-hijack — ministral-3-8b is the outlier across both corpora.*
 
 **Design.** 4 models × 2 corpora (`hotpot_qa`, `ms_marco`) × 5 injection
 templates, n=1000 per cell, 40 cells. Five strategies adapted from Liu,
@@ -547,6 +553,9 @@ specific to one model.
 
 ### 5.2 PoisonedRAG
 
+![PoisonedRAG ASR by model and corpus](../results/figures/fig04_poisonedrag_asr_model_corpus.png)
+*Corpus identity, not model choice, determines success: 4/4 models significant corpus-vs-corpus, 0/12 significant model-vs-model.*
+
 **Design.** 4 models × 2 corpora × 1 poison configuration (`adv5`,
 `ADV_PER_QUERY=5`), n=90/100 (`hotpot_qa`) and n=96/100 (`ms_marco`) —
 Phase A's poisoned contexts are model-agnostic and shared across all 4
@@ -612,6 +621,9 @@ OpenRouter) was verified as a working, tested backup and documented but not
 used.
 
 ### 5.3 Crescendo
+
+![Crescendo ASR with bootstrap CI](../results/figures/fig05_crescendo_asr_bootstrap_ci.png)
+*No model pair is significantly different after Holm-Bonferroni correction — the outcome is uniform even though resistance mechanism is not.*
 
 **Design.** 4 target models × 1 multi-turn escalation strategy × 5 turns,
 n=100 behaviors per model, seeded stratified sample from a pooled 100
@@ -720,6 +732,9 @@ table below.
 
 ### 6.1 `instruction_detection`
 
+![instruction_detection false-positive check](../results/figures/fig09_instruction_detection_fp_check.png)
+*False-positive rate on benign inputs: 0.0% on XSTest, 2.7-4.7% on clean passages and hard-but-safe prompts.*
+
 **Design.** `protectai/deberta-v3-base-prompt-injection-v2` run against
 each retrieved passage before context assembly; flagged passages are
 dropped (partial context loss measured, not a blanket refusal). Capped at
@@ -822,6 +837,9 @@ This remains a well-motivated, unexplored next step, not a hidden gap.
 
 ### 6.4 Utility preservation — mean ΔF1 by (attack, defense)
 
+![Defense-utility trade-off](../results/figures/fig08_phase3_defense_utility_tradeoff.png)
+*ASR reduction vs. ΔF1 across all 75 defended cells; PoisonedRAG defenses trade away far more answer quality than injection defenses do for the same ASR reduction.*
+
 Averaged across the 8 model×corpus cells, Phase 3 defended F1 vs. the
 matching Phase 1 no-attack, no-defense baseline:
 
@@ -844,6 +862,9 @@ hedge, or fail to extract an answer), which reads as "wrong answer" either
 way against gold-answer F1.
 
 ### 6.5 Verdict summary
+
+![Verdict per injection cell](../results/figures/fig07_phase3_backend_confound_verdicts.png)
+*Per-cell verdict for the 51 real injection cells: instruction_detection and output_filter are mostly inconclusive at this n; spotlighting is the only defense with a real (if partial) effect.*
 
 **9 of 51 real injection cells significant** (0 `output_filter` + 9
 `spotlighting` + 0 `instruction_detection`), all backend-corrected. **4 of
@@ -1009,6 +1030,9 @@ sweep.
 
 ### 8.1 How it was found
 
+![Defense effectiveness before vs. after backend correction](../results/figures/fig06_phase3_backend_correction_before_after.png)
+*Same defended cells scored against the pre-correction (vLLM) and post-correction (backend-matched HF) baseline — most of the originally reported reduction across injection and PoisonedRAG evaporates.*
+
 Phase 2's injection attack baseline was generated on the `vllm` inference
 engine (`phase2_injection_results/attack_raw_*_vllm.jsonl`); every Phase 3
 defended run — for every one of the three defenses — ran on the `hf`
@@ -1095,6 +1119,9 @@ corrected before being written into this document rather than after.
 ## 9. Master Results Tables
 
 ### 9.1 Phase 1 — Baseline (all 4 models × 3 corpora, `vllm`, n=1000 each)
+
+![Phase 1 baseline F1 and exact match](../results/figures/fig01_phase1_baseline_f1_em.png)
+*Clean-context answer quality per model and corpus, no attack, no defense — the reference point every ASR number in this record is measured against.*
 
 | model | corpus | f1_clean | exact_match | contains_answer (diagnostic) |
 |---|---|---:|---:|---:|
