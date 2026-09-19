@@ -187,7 +187,7 @@ logged but deliberately never enforced; see
 
 ### Results notebook
 
-`notebooks/results_analysis.ipynb` regenerates all 9 result figures from
+[`notebooks/results_analysis.ipynb`](https://github.com/Simarjit1303/rag-adversarial-robustness/blob/main/notebooks/results_analysis.ipynb) regenerates all 9 result figures from
 the committed result directories only — never the untracked scratch
 dirs. Before plotting anything, it runs 297 assertions against
 `docs/THESIS_MASTER_RECORD.md` (Sections 5, 6, 8, 9) and the `nq_open`
