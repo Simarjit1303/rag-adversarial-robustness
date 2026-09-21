@@ -16,14 +16,18 @@ otherwise, and that hasn't been confirmed in writing.
    it. If you can't point at where a claim comes from, cut it or flag it as
    your own interpretation explicitly ("this project's data suggests..." not
    "it is known that...").
-2. **`nq_open` is excluded, with a reason unique to that corpus** — not "the
-   model performed too well," but the specific corpus-construction fact:
-   `nq_open` ships with no real supporting passage, so its passage text *is*
-   the gold answer by construction (`NQ_OPEN_SCOPE_DECISION.md` Sec.2-3).
-   Evidence: mean F1 0.962 (spread 0.005) vs. `hotpot_qa` 0.585 (spread 0.179)
-   and `ms_marco` 0.255 (spread 0.042) — near-ceiling AND near-invariant
-   across 4 models of different capability is the answer-copying signature,
-   not a result.
+2. **`nq_open` is excluded, with a reason unique to that corpus — CONFIRMED
+   AND APPROVED by your supervisor.** Write it as a settled scope decision,
+   not an open discussion. But the approval is not the reasoning — the
+   reasoning is, and stays, the specific corpus-construction fact: `nq_open`
+   ships with no real supporting passage, so its passage text *is* the gold
+   answer by construction (`NQ_OPEN_SCOPE_DECISION.md` Sec.2-3). Evidence:
+   mean F1 0.962 (spread 0.005) vs. `hotpot_qa` 0.585 (spread 0.179) and
+   `ms_marco` 0.255 (spread 0.042) — near-ceiling AND near-invariant across
+   4 models of different capability is the answer-copying signature, not a
+   result. Write the F1 evidence as the argument; mention the approval only
+   as the procedural closure of that argument, not as the justification
+   itself.
 3. **The backend-confound discovery gets full documentation, not a footnote.**
    `THESIS_MASTER_RECORD.md` Sec.8 (8.1 how it was found, 8.2 what it
    affected, 8.3 methodological implication) plus `THESIS_ARCHITECTURE.md`
@@ -152,6 +156,10 @@ thesis/
 - **AI-use policy for this module isn't confirmed in writing.** Get that from
   your supervisor or the module leader before treating anything beyond this
   skeleton as settled.
+- ~~`nq_open` exclusion pending supervisor sign-off~~ — **confirmed and
+  approved.** Write it as settled in Evaluation and Conclusion; the technical
+  reasoning (corpus-construction fact, F1 evidence) still belongs in the text
+  in full — approval isn't a substitute for stating why.
 - `declaration.tex` needs GISMA's actual required wording — don't improvise it.
 - `attachments/bibliography.bib`'s DOI/URL links are as of September 2026,
   per `docs/CITATIONS.md`'s own note — re-verify before final submission.
