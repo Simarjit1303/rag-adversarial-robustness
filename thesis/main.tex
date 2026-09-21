@@ -25,11 +25,6 @@
 \renewcommand\maketitle{
 	{
 		\center
-		\begin{tikzpicture}[remember picture, overlay]
-			\node[opacity=0.2,inner sep=0pt] at (current page.south) [yshift=5cm]{
-				\includegraphics[width=\paperwidth, height=\paperheight, keepaspectratio]{campus}
-			};
-		\end{tikzpicture}
 		\includegraphics[width=0.6\textwidth]{logo}\par
 		{\scshape\LARGE\bf Gisma University of Applied Sciences \par}
 		{\scshape\Large\bf Department of Computer and Data Sciences \par}
@@ -59,10 +54,9 @@
 \pagestyle{plain}
 \pagenumbering{roman}
 \maketitle
-\include{chapters/abstract}
 \include{chapters/declaration}
-\include{chapters/acknowledgments}
 \include{chapters/dedication}
+\include{chapters/abstract}
 \tableofcontents
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
