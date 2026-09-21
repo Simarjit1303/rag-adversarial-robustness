@@ -1,0 +1,39 @@
+\chapter{Foundations}
+
+% ============================================================
+% CONTENT MAP -- the one chapter with the least existing prose to draw on.
+% This is background knowledge a reader needs before Related Work and
+% Approach make sense -- NOT a literature review (that's the next chapter).
+%
+% Suggested sections and what each needs to cover:
+%
+%   \section{Retrieval-Augmented Generation}
+%     - what RAG is, why it exists (grounding LLM outputs in retrieved
+%       text rather than parametric memory alone)
+%     - the retrieve-then-generate pipeline: embed query, similarity
+%       search over an index, concatenate retrieved passages into the
+%       prompt, generate an answer
+%     - cite: \cite{reimers2019sentencebert}, \cite{song2020mpnet}
+%       (the embedding model), \cite{johnson2021billionscale} (FAISS,
+%       the index), \cite{kwon2023efficient} (vLLM, the serving layer)
+%
+%   \section{Adversarial Robustness in Language Models}
+%     - what "attack success rate" (ASR) means as a metric
+%     - the difference between attacking the MODEL (jailbreaking) and
+%       attacking the CONTEXT the model is given (injection, poisoning)
+%       -- this distinction is the organizing idea of the whole thesis
+%
+%   \section{The Three Attack Families at a Glance}
+%     - one short paragraph each on indirect prompt injection, knowledge
+%       poisoning, and multi-turn jailbreaking, at a conceptual level
+%       (mechanics only -- save the specific attacks/papers for Related Work)
+%
+%   \section{Regulatory Context: the EU AI Act}
+%     - Regulation (EU) 2024/1689 (13 June 2024) -- correct citation,
+%       NOT 2026/1744 (that is the separate Digital Omnibus)
+%     - Article 15's accuracy/robustness/cybersecurity requirement, in
+%       plain terms, as the regulatory hook for Phase 4
+%     - source: docs/PHASE4_EU_AI_ACT_MAPPING.md
+%
+% Suggested word target: ~1,800 words
+% ============================================================

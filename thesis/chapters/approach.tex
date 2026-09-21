@@ -1,0 +1,34 @@
+\chapter{Approach}
+
+% ============================================================
+% CONTENT MAP -- best-documented chapter; mostly assembly from existing
+% docs, not new synthesis.
+%
+% Source material:
+%   - docs/THESIS_MASTER_RECORD.md Sec.3 (locked design: 4 models x
+%     2 corpora x 3 attacks x 3 defenses, why nq_open was dropped from
+%     the real matrix -- full detail goes in Evaluation, just flag the
+%     scope decision here)
+%   - docs/THESIS_ARCHITECTURE.md (11 Mermaid diagrams -- pick 2-3 for
+%     the actual dissertation, e.g. overall pipeline + one attack's flow)
+%   - docs/THESIS_MASTER_RECORD.md Sec.7 (the 8 real-hardware
+%     engineering bugs -- a genuinely citable methodology narrative,
+%     not just an appendix note)
+%   - notebooks/results_analysis.ipynb (mention the 297-assertion
+%     self-verification design as a methodological safeguard)
+%
+% Suggested sections:
+%   \section{System Architecture} -- pipeline diagram + judge models
+%     (Llama-Guard-4-12B primary, Qwen3Guard-Gen-8B secondary)
+%   \section{Target Models} -- the four models, with
+%     \cite{grattafiori2024llama3}, \cite{yang2025qwen3},
+%     \cite{abouelenin2025phi4mini}, \cite{mistralai2025ministral3}
+%   \section{Attack Implementations} -- one subsection each, referencing
+%     the same citations as Related Work but now describing YOUR
+%     implementation choices and parameters
+%   \section{Defense Implementations} -- same pattern
+%   \section{Infrastructure and Engineering Challenges} -- the 8-bug
+%     narrative; this is a real, defensible methodological contribution
+%
+% Suggested word target: ~2,400 words
+% ============================================================

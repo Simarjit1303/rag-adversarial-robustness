@@ -1,0 +1,49 @@
+\chapter{Evaluation and Results}
+
+% ============================================================
+% CONTENT MAP -- best-covered chapter by far. Every number below is
+% already verified (297 assertions in notebooks/results_analysis.ipynb
+% against docs/THESIS_MASTER_RECORD.md). Write around the real figures,
+% do not restate every number in prose -- the tables/figures ARE the
+% evidence, prose should interpret them.
+%
+%   \section{Baseline Answer Quality}
+%     \includegraphics{fig01_phase1_baseline_f1_em}
+%     source: THESIS_MASTER_RECORD.md Sec.9.1
+%
+%   \section{The nq\_open Exclusion}
+%     \includegraphics{fig02_nq_open_exclusion_evidence}
+%     mean F1 0.962 (spread 0.005) vs hotpot_qa 0.585/0.179 and
+%     ms_marco 0.255/0.042 -- source: THESIS_MASTER_RECORD.md Sec.4,
+%     docs/NQ_OPEN_SCOPE_DECISION.md
+%
+%   \section{Attack 1: Indirect Prompt Injection}
+%     \includegraphics{fig03_injection_asr_model_template}
+%     ministral-3-8b outlier (30.5-60.8% ASR); source: Sec.5.1
+%
+%   \section{Attack 2: PoisonedRAG}
+%     \includegraphics{fig04_poisonedrag_asr_model_corpus}
+%     corpus identity dominates (70-78% hotpot_qa vs 18-20% ms_marco,
+%     4/4 models significant corpus-vs-corpus, 0/12 model-vs-model);
+%     source: Sec.5.2
+%
+%   \section{Attack 3: Crescendo}
+%     \includegraphics{fig05_crescendo_asr_bootstrap_ci}
+%     59.2-70.2% ASR, no significant model ranking after Holm-Bonferroni;
+%     source: Sec.5.3
+%
+%   \section{Defense Evaluation and the Backend-Confound Discovery}
+%     \includegraphics{fig06_phase3_backend_correction_before_after}
+%     \includegraphics{fig07_phase3_backend_confound_verdicts}
+%     \includegraphics{fig09_instruction_detection_fp_check}
+%     output_filter/injection 0/19 significant (was a backend artifact,
+%     6/19 before correction); spotlighting/injection 9/16 (real, modest);
+%     instruction_detection 0/16 at n=40 but underpowered, not disproven;
+%     source: Sec.6, Sec.8
+%
+%   \section{Defense-Utility Trade-off}
+%     \includegraphics{fig08_phase3_defense_utility_tradeoff}
+%     source: Sec.6.4
+%
+% Suggested word target: ~3,200 words
+% ============================================================
