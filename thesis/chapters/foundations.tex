@@ -1,11 +1,12 @@
 \chapter{Foundations}
 
 % ============================================================
-% CONTENT MAP -- the one chapter with the least existing prose to draw on.
-% This is background knowledge a reader needs before Related Work and
-% Approach make sense -- NOT a literature review (that's the next chapter).
-%
-% Suggested sections and what each needs to cover:
+% CONTENT MAP -- the one chapter with the least existing prose to draw
+% on. Background knowledge a reader needs before Related Work and
+% Approach make sense -- NOT a literature review (that's the next
+% chapter). See PLAN.md "Ground rules" -- rule 1 (cite every claim)
+% applies especially hard here since it's the chapter written closest
+% to a blank page.
 %
 %   \section{Retrieval-Augmented Generation}
 %     - what RAG is, why it exists (grounding LLM outputs in retrieved
@@ -14,26 +15,30 @@
 %       search over an index, concatenate retrieved passages into the
 %       prompt, generate an answer
 %     - cite: \cite{reimers2019sentencebert}, \cite{song2020mpnet}
-%       (the embedding model), \cite{johnson2021billionscale} (FAISS,
-%       the index), \cite{kwon2023efficient} (vLLM, the serving layer)
+%       (embedding model), \cite{johnson2021billionscale} (FAISS,
+%       the index), \cite{kwon2023efficient} (vLLM, serving layer)
 %
 %   \section{Adversarial Robustness in Language Models}
 %     - what "attack success rate" (ASR) means as a metric
 %     - the difference between attacking the MODEL (jailbreaking) and
 %       attacking the CONTEXT the model is given (injection, poisoning)
-%       -- this distinction is the organizing idea of the whole thesis
+%       -- this distinction is the organizing idea of the whole thesis,
+%       and is exactly why the three attack families need three
+%       different treatments in Evaluation, not one blended ASR chart
 %
 %   \section{The Three Attack Families at a Glance}
 %     - one short paragraph each on indirect prompt injection, knowledge
-%       poisoning, and multi-turn jailbreaking, at a conceptual level
-%       (mechanics only -- save the specific attacks/papers for Related Work)
+%       poisoning, and multi-turn jailbreaking, conceptually only
+%       (mechanics -- save specific attacks/papers for Related Work)
 %
 %   \section{Regulatory Context: the EU AI Act}
 %     - Regulation (EU) 2024/1689 (13 June 2024) -- correct citation,
-%       NOT 2026/1744 (that is the separate Digital Omnibus)
+%       NOT 2026/1744 (the separate Digital Omnibus)
 %     - Article 15's accuracy/robustness/cybersecurity requirement, in
-%       plain terms, as the regulatory hook for Phase 4
-%     - source: docs/PHASE4_EU_AI_ACT_MAPPING.md
+%       plain technical terms -- this is background/context, NOT the
+%       mapping itself (that's Evaluation/Conclusion; see PLAN.md rule 5:
+%       present as a technical problem statement, not a legal claim)
+%     - source: PHASE4_EU_AI_ACT_MAPPING.md Sec.1-2
 %
 % Suggested word target: ~1,800 words
 % ============================================================

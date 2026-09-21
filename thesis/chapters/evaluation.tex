@@ -3,47 +3,164 @@
 % ============================================================
 % CONTENT MAP -- best-covered chapter by far. Every number below is
 % already verified (297 assertions in notebooks/results_analysis.ipynb
-% against docs/THESIS_MASTER_RECORD.md). Write around the real figures,
-% do not restate every number in prose -- the tables/figures ARE the
-% evidence, prose should interpret them.
+% against THESIS_MASTER_RECORD.md). Write around the real figures --
+% they ARE the evidence; prose interprets, it doesn't restate every
+% number. Every figure/table needs the full caption+label+cross-reference
+% pattern from PLAN.md rule 10, e.g.:
+%   \begin{figure}[htbp]
+%     \centering
+%     \includegraphics[width=0.9\textwidth]{fig03_injection_asr_model_template}
+%     \caption{Indirect injection ASR by model and template (Section 5.1
+%       of \texttt{THESIS\_MASTER\_RECORD.md}).}
+%     \label{fig:injection-asr}
+%   \end{figure}
+% then in prose: "as shown in Figure~\ref{fig:injection-asr}, ..."
 %
 %   \section{Baseline Answer Quality}
 %     \includegraphics{fig01_phase1_baseline_f1_em}
 %     source: THESIS_MASTER_RECORD.md Sec.9.1
 %
-%   \section{The nq\_open Exclusion}
+%   \section{The \texttt{nq\_open} Exclusion}
+%     -- METHODOLOGY, LIMITATIONS, CORPUS-UNIQUE REASON (PLAN.md rule 2),
+%     not just "it scored too high":
 %     \includegraphics{fig02_nq_open_exclusion_evidence}
-%     mean F1 0.962 (spread 0.005) vs hotpot_qa 0.585/0.179 and
-%     ms_marco 0.255/0.042 -- source: THESIS_MASTER_RECORD.md Sec.4,
-%     docs/NQ_OPEN_SCOPE_DECISION.md
+%     - what nq_open was intended to contribute: NQ_OPEN_SCOPE_DECISION.md Sec.1
+%     - the exact technical finding: Sec.2 -- no real supporting passage
+%       ships with nq_open, so the passage text IS the gold answer by
+%       construction (a corpus-construction fact, not a model or
+%       implementation failure)
+%     - why this makes the results unsuitable: Sec.3 -- evidence is mean
+%       F1 0.962 (spread 0.005) vs. hotpot_qa 0.585 (spread 0.179) and
+%       ms_marco 0.255 (spread 0.042) -- near-ceiling AND near-invariant
+%       across 4 models of different capability is the signature
+%     - scope impact is narrower than "lost a corpus": Sec.4 -- Crescendo
+%       is corpus-independent, entirely unaffected; only the two
+%       corpus-dependent attack families (injection, PoisonedRAG) lose
+%       one of three corpora, becoming a 4x2 matrix for those two
+%     - why no substitute corpus was pursued: Sec.5
+%     - honest framing: Sec.6 -- state this as a scope adjustment
+%       reached through documented technical evidence, not an
+%       unqualified closed decision, per THESIS_MASTER_RECORD.md Sec.11's
+%       own limitations-list framing
+%     - real matrix going forward: 4 models x 2 corpora x 3 attacks
+%       (Crescendo unaffected, corpus-independent)
 %
 %   \section{Attack 1: Indirect Prompt Injection}
 %     \includegraphics{fig03_injection_asr_model_template}
-%     ministral-3-8b outlier (30.5-60.8% ASR); source: Sec.5.1
+%     source: THESIS_MASTER_RECORD.md Sec.5.1
+%     PRECISE numbers, not "some models were vulnerable":
+%       - llama-3.1-8b: near-zero everywhere (0.0-0.6\%)
+%       - qwen3-8b: vulnerable specifically to fake_completion
+%         (11.7-14.1\%), not ignore (0.3-3.2\%)
+%       - phi-4-mini: vulnerable to fake_completion on ms_marco ONLY
+%         (10.1\% vs 0.2\% on hotpot_qa; corpus split confirmed real,
+%         p=8.18e-29)
+%       - ministral-3-8b: most susceptible, both process-hijack templates
+%         (30.5-60.8\%) -- CONFIRMED genuine partial compliance via a
+%         lossless tokenizer round-trip diagnostic (ruled out rendering
+%         artifact); never full task abandonment (0/607 flagged rows).
+%         State this distinction explicitly -- partial compliance, not
+%         task hijacking (THESIS_MASTER_RECORD.md Sec.11)
 %
 %   \section{Attack 2: PoisonedRAG}
 %     \includegraphics{fig04_poisonedrag_asr_model_corpus}
-%     corpus identity dominates (70-78% hotpot_qa vs 18-20% ms_marco,
-%     4/4 models significant corpus-vs-corpus, 0/12 model-vs-model);
-%     source: Sec.5.2
+%     source: Sec.5.2 -- corpus identity dominates (70-78\% hotpot_qa vs
+%     18-20\% ms_marco, ALL 4 models; 4/4 models significant
+%     corpus-vs-corpus (Fisher, Holm); 0/12 significant model-vs-model
+%     (McNemar, Holm))
 %
 %   \section{Attack 3: Crescendo}
 %     \includegraphics{fig05_crescendo_asr_bootstrap_ci}
-%     59.2-70.2% ASR, no significant model ranking after Holm-Bonferroni;
-%     source: Sec.5.3
+%     source: Sec.5.3 -- 59.2-70.2\% ASR, no significant model ranking
+%     after Holm-Bonferroni, but real per-model MECHANISM differences
+%     (refuse-then-bypass vs. barely-refuse vs. refuse-and-hold) --
+%     this outcome/mechanism split is the novel finding, per Sec.5.4's
+%     direct three-attack comparison table
+%
+%   \section{Cross-Attack Synthesis}
+%     source: THESIS_MASTER_RECORD.md Sec.5.4 -- reproduce the "three
+%     different dominant axes" table: model identity (injection),
+%     corpus identity (PoisonedRAG), neither (Crescendo, no model pair
+%     survives correction). State the load-bearing implication
+%     explicitly: a defense judged only on aggregate Crescendo ASR
+%     reduction would treat all 4 models as an equally good starting
+%     point, when llama-3.1-8b and ministral-3-8b need OPPOSITE
+%     interventions (one needs refusals to survive rephrasing, the
+%     other needs to refuse at all).
 %
 %   \section{Defense Evaluation and the Backend-Confound Discovery}
+%     -- PRECISE, PER-DEFENSE FINDINGS (PLAN.md rule 4), not "defenses
+%     reduced attacks":
 %     \includegraphics{fig06_phase3_backend_correction_before_after}
 %     \includegraphics{fig07_phase3_backend_confound_verdicts}
 %     \includegraphics{fig09_instruction_detection_fp_check}
-%     output_filter/injection 0/19 significant (was a backend artifact,
-%     6/19 before correction); spotlighting/injection 9/16 (real, modest);
-%     instruction_detection 0/16 at n=40 but underpowered, not disproven;
-%     source: Sec.6, Sec.8
+%     - backend discovery itself: THESIS_MASTER_RECORD.md Sec.8.1 (how
+%       found), 8.2 (what it affected), 8.3 (methodological implication);
+%       cross-reference THESIS_ARCHITECTURE.md Sec.5.1-5.4 for the
+%       per-defense breakdown diagram (output_filter fully confounded,
+%       spotlighting partially confounded, instruction_detection real
+%       but underpowered, PoisonedRAG+Crescendo never confounded)
+%     - output_filter: 0/19 injection cells, 0/24 PoisonedRAG cells
+%       significant after correction. Against PoisonedRAG specifically:
+%       0.0000 flag rate across all 160 scored responses -- STRUCTURAL
+%       mismatch (a safety classifier cannot see factually-wrong-but-
+%       safe-sounding text), not a tuning failure. State this
+%       distinction explicitly (Sec.6.3, Sec.10.2)
+%     - spotlighting: 9/16 injection cells, 4/24 PoisonedRAG cells
+%       significant -- the ONLY defense with a confirmed, backend-
+%       isolated real effect -- but the backend switch alone still
+%       accounts for 50-86\% of the originally-reported reduction in 6
+%       of those 9 cells, and it costs mean {\Delta}F1 -0.283 against
+%       injection (as low as -0.44 in some cells) (Sec.6.2, Sec.6.4)
+%     - instruction_detection: 0/16 injection cells significant at
+%       n=40, but 10/10 backend-corrected genuine blocks have a
+%       classifier flag behind them -- underpowered, not disproven.
+%       The n=40 cap (vs. 1000 for the other two) reflects a real
+%       compute constraint (a transformer classifier run per retrieved
+%       passage on CPU), not a design choice (Sec.6.1, Sec.11)
+%     - false-positive check: instruction_detection flags 4.7\%
+%       (hotpot_qa), 3.3\% (ms_marco), 0.0\% (XSTest safe prompts), 2.7\%
+%       (OR-Bench hard-but-safe) of benign inputs -- cite
+%       \cite{cui2025orbench}, \cite{rottger2024xstest}
 %
 %   \section{Defense-Utility Trade-off}
 %     \includegraphics{fig08_phase3_defense_utility_tradeoff}
 %     source: Sec.6.4
+%
+%   \section{Mapping to EU AI Act Article 15}
+%     -- TECHNICAL MAPPING, NOT LEGAL CLAIM (PLAN.md rule 5). Classify
+%     EACH result explicitly (PLAN.md rule 6), reproducing
+%     PHASE4_EU_AI_ACT_MAPPING.md Sec.3's verdicts precisely:
+%     - 15(1)/(3) accuracy: PARTIALLY DEMONSTRATED -- measured and
+%       declared per condition (Sec.9.1 baseline, Sec.6.4 utility table
+%       under every attack/defense condition); "throughout lifecycle"
+%       implies deployment-drift monitoring this fixed-point benchmark
+%       does not test
+%     - 15(4) fault-resilience: NOT TESTED -- named gap, stated as one,
+%       not silently folded into the Sec.7 engineering-bugs narrative
+%       (which is adjacent -- engineering discipline -- but not a test
+%       of runtime fault resilience)
+%     - 15(5) data poisoning (PoisonedRAG): DIRECTLY TESTED -- the
+%       output_filter structural-mismatch finding above is the concrete,
+%       compliance-relevant result: an "appropriate...mitigation" (15(5)'s
+%       own qualifier) failing structurally for a specific, plausible
+%       real-world choice
+%     - 15(5) adversarial examples (injection): DIRECTLY TESTED, nuanced
+%       -- no defense tested achieves both a confirmed effect AND
+%       utility preservation simultaneously
+%     - 15(5) model poisoning / confidentiality attacks: NOT APPLICABLE /
+%       OUT OF SCOPE -- all three attacks here are inference-time (RAG
+%       context, conversation turns), none touch training data or model
+%       weights; state this plainly, don't stretch another finding to fit
+%     - 15(5) general clause (Crescendo): FITS, WITH A DRAFTING
+%       OBSERVATION -- Article 15(5)'s illustrative list doesn't name
+%       multi-turn conversational escalation, even though it plainly
+%       falls under the general "exploiting system vulnerabilities"
+%       clause; output_filter against Crescendo is diagnostic-only by
+%       design (guard verdict logged, never fed back) -- 67-82\% of
+%       successful attacks had a turn the guard would have flagged, had
+%       it been wired to enforce -- a named engineering gap
+%       (THESIS_MASTER_RECORD.md Sec.12), not a completed defense test
 %
 % Suggested word target: ~3,200 words
 % ============================================================

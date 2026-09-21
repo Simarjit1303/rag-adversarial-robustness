@@ -1,34 +1,65 @@
 \chapter{Approach}
 
 % ============================================================
-% CONTENT MAP -- best-documented chapter; mostly assembly from existing
-% docs, not new synthesis.
+% CONTENT MAP -- best-documented chapter; mostly assembly, not new
+% synthesis. NOTE: an earlier version of this map incorrectly pointed
+% to THESIS_MASTER_RECORD.md Sec.3 for the locked scope/design --
+% CORRECTED: that's Sec.2 ("Project Scope & Research Design"). Sec.3
+% is "Infrastructure & Methodology" (3.1 tech stack, 3.2 statistical
+% methods, 3.3 Azure->RunPod migration, 3.4 cache/corpus integrity).
 %
 % Source material:
-%   - docs/THESIS_MASTER_RECORD.md Sec.3 (locked design: 4 models x
-%     2 corpora x 3 attacks x 3 defenses, why nq_open was dropped from
-%     the real matrix -- full detail goes in Evaluation, just flag the
-%     scope decision here)
-%   - docs/THESIS_ARCHITECTURE.md (11 Mermaid diagrams -- pick 2-3 for
-%     the actual dissertation, e.g. overall pipeline + one attack's flow)
-%   - docs/THESIS_MASTER_RECORD.md Sec.7 (the 8 real-hardware
-%     engineering bugs -- a genuinely citable methodology narrative,
-%     not just an appendix note)
+%   - THESIS_MASTER_RECORD.md Sec.2 (locked design: 4 models x 2 corpora
+%     x 3 attacks x 3 defenses; nq_open dropped from the real matrix --
+%     flag the scope decision here, full detail goes in Evaluation)
+%   - THESIS_MASTER_RECORD.md Sec.3.1-3.4 (tech stack, statistical
+%     methods and WHY each was chosen where it was, infrastructure
+%     migration, cache/corpus integrity)
+%   - THESIS_MASTER_RECORD.md Sec.7 (the 8 real-hardware engineering
+%     bugs -- a genuinely citable methodology narrative)
 %   - notebooks/results_analysis.ipynb (mention the 297-assertion
-%     self-verification design as a methodological safeguard)
+%     self-verification design as a methodological safeguard --
+%     PLAN.md rule 7, link claims to code)
+%
+% ARCHITECTURE DIAGRAMS (PLAN.md rule 12) -- reproduce from
+% docs/THESIS_ARCHITECTURE.md, specific sections, not "pick 2-3
+% vaguely":
+%   - Section 1 (Infrastructure) -- the overall pipeline diagram, for
+%     \section{System Architecture} below
+%   - Section 3.2 (PoisonedRAG mechanism) -- the most novel finding
+%     (corpus-dominant, not model-dominant), reproduce for
+%     \section{Attack Implementations}
+%   - Section 5 (5.1-5.4, Backend-Confound Discovery & Resolution) --
+%     reproduce for \section{Infrastructure and Engineering Challenges}
+%     below, paired with THESIS_MASTER_RECORD.md Sec.8
+% Each reproduced diagram needs its own \begin{figure}...\caption{}
+% ...\label{}...\end{figure} and in-text reference, same as any other
+% figure (PLAN.md rule 10) -- these are architecture diagrams you
+% recreate as native LaTeX/TikZ or import as images, not raw Mermaid
+% source pasted into the PDF.
 %
 % Suggested sections:
-%   \section{System Architecture} -- pipeline diagram + judge models
-%     (Llama-Guard-4-12B primary, Qwen3Guard-Gen-8B secondary)
-%   \section{Target Models} -- the four models, with
-%     \cite{grattafiori2024llama3}, \cite{yang2025qwen3},
-%     \cite{abouelenin2025phi4mini}, \cite{mistralai2025ministral3}
-%   \section{Attack Implementations} -- one subsection each, referencing
-%     the same citations as Related Work but now describing YOUR
-%     implementation choices and parameters
-%   \section{Defense Implementations} -- same pattern
-%   \section{Infrastructure and Engineering Challenges} -- the 8-bug
-%     narrative; this is a real, defensible methodological contribution
+%   \section{System Architecture}
+%     pipeline diagram (see above) + judge models (Llama-Guard-4-12B
+%     primary, Qwen3Guard-Gen-8B secondary)
+%   \section{Target Models}
+%     the four models, with \cite{grattafiori2024llama3},
+%     \cite{yang2025qwen3}, \cite{abouelenin2025phi4mini},
+%     \cite{mistralai2025ministral3} -- cite these as released models /
+%     technical reports, not peer-reviewed studies (PLAN.md rule 1)
+%   \section{Attack Implementations}
+%     one subsection each; reference the same citations as Related Work
+%     but describe YOUR implementation choices and parameters, plus the
+%     PoisonedRAG diagram above
+%   \section{Defense Implementations}
+%     same pattern -- instruction_detection uses
+%     protectai/deberta-v3-base-prompt-injection-v2 (industry release,
+%     fine-tuned from \cite{he2023debertav3}'s architecture, no
+%     accompanying paper -- state this distinction explicitly)
+%   \section{Infrastructure and Engineering Challenges}
+%     the 8-bug narrative (Sec.7) + the backend-confound diagram (Sec.5
+%     above) -- this pairing is itself the chapter's strongest
+%     methodological contribution, don't split them apart
 %
 % Suggested word target: ~2,400 words
 % ============================================================

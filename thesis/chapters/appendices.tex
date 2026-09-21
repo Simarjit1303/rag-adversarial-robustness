@@ -1,0 +1,36 @@
+\chapter{Appendices}
+
+% ============================================================
+% Handbook Sec.9 Appendices guidance: "extended data, mathematical
+% proofs, detailed implementation steps, or raw datasets not core to
+% the dissertation body but providing valuable context."
+%
+% Per your instruction, the List of Figures and List of Tables live
+% here rather than in the front matter (their more common LaTeX
+% placement) -- both are wired into the main Table of Contents below
+% via \addcontentsline, so they're reachable from the TOC either way.
+% ============================================================
+
+\addcontentsline{toc}{chapter}{List of Figures}
+\listoffigures
+
+\addcontentsline{toc}{chapter}{List of Tables}
+\listoftables
+
+% ============================================================
+% CONTENT MAP -- additional appendix material, candidates from the repo:
+%   - The full defense-evaluation table (THESIS_MASTER_RECORD.md
+%     Sec.9.3, "Phase 3 -- Defense results, backend-corrected, final")
+%     if you want the complete table here rather than only the
+%     Evaluation chapter's summarized version
+%   - The mechanism-attribution table (Sec.9.4)
+%   - Selected code snippets (PLAN.md rule 7 -- link claims to code),
+%     e.g. the PoisonedRAG poison-generation prompt template, the
+%     Crescendo escalation-loop structure, or the 297-assertion
+%     cross-check design from notebooks/results_analysis.ipynb, as a
+%     reproducibility appendix -- use the `listings` or `minted`
+%     package for real syntax-highlighted snippets if you add code here
+%   - The full per-model Crescendo mechanism table from
+%     THESIS_MASTER_RECORD.md Sec.10.1, if you only summarized it in
+%     the Conclusion chapter's Practical Implications section
+% ============================================================

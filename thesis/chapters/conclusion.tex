@@ -1,24 +1,108 @@
 \chapter{Conclusion}
 
 % ============================================================
-% CONTENT MAP.
+% CONTENT MAP. NOTE: an earlier version of this map pointed to
+% THESIS_MASTER_RECORD.md "Sec.12" for limitations -- CORRECTED:
+% Limitations is Sec.11. Sec.12 is a SEPARATE "Open Items / Remaining
+% Work" list (genuinely unfinished engineering, not limitations of
+% completed work) -- use both, don't conflate them.
 %
-% Source material:
-%   - docs/PHASE4_EU_AI_ACT_MAPPING.md (contribution framing: this
-%     thesis documents a compliance-testing gap, it does NOT claim to
-%     fill it or perform a conformity assessment)
-%   - docs/THESIS_MASTER_RECORD.md Sec.12 (honest limitations: nq_open
-%     exclusion, output_filter-for-Crescendo built but not wired to
-%     enforce live, model poisoning / confidentiality attacks /
-%     Article 15(4) fault-resilience explicitly out of scope)
-%
-% Suggested sections:
 %   \section{Summary of Contributions}
-%   \section{Limitations} -- be specific and honest; a strong CDS
-%     conclusion names its own boundaries rather than implying
-%     completeness
-%   \section{Future Work} -- wiring output_filter to Crescendo is the
-%     clearest, most concrete next step
+%     - the three-attack, four-model, backend-controlled benchmark
+%       itself (THESIS_MASTER_RECORD.md Sec.1-2)
+%     - the backend-confound discovery as a citable methodological
+%       warning (Sec.8, PHASE4_EU_AI_ACT_MAPPING.md Sec.3.4's "the
+%       inference stack itself must be held constant, or a compliance
+%       test could certify a defense that does nothing")
+%     - the EU AI Act Article 15 technical mapping (PLAN.md rule 5 --
+%       present as a technical contribution, not a compliance claim).
+%       Reproduce PHASE4_EU_AI_ACT_MAPPING.md Sec.4's FOUR concrete
+%       contributions precisely, don't paraphrase into something vaguer:
+%         1. a demonstrated three-family RAG threat taxonomy that maps
+%            onto Article 15(5)'s illustrative list while also
+%            surfacing where that list's classical-ML framing doesn't
+%            cleanly cover a RAG-relevant threat (Crescendo)
+%         2. a demonstrated statistical testing discipline (paired exact
+%            tests, Holm-Bonferroni correction) that could inform what
+%            "adequate testing" means for Article 15(2)'s benchmark
+%            mandate, in a literature that inconsistently reports
+%            significance testing at all (per this project's own
+%            CITATIONS.md survey)
+%         3. a citable warning about the inference-backend confound as
+%            a specific class of testing error a compliance regime
+%            could walk into
+%         4. an honest demonstration of what current, real,
+%            off-the-shelf inference-time mitigations actually achieve
+%            -- one structurally wrong for its threat class
+%            (output_filter/PoisonedRAG), one costing severe utility
+%            for a real effect (spotlighting), one mechanism-confirmed
+%            but statistically underpowered (instruction_detection)
+%       AND the explicit "what this project does NOT claim" paragraph
+%       (Sec.4's own wording): not a legal compliance assessment, not a
+%       conformity assessment under Article 43, does not establish any
+%       deployed system's Annex III classification, does not test every
+%       15(5) vulnerability class (model poisoning, confidentiality
+%       attacks are named gaps) -- keep this paragraph, don't cut it for
+%       length; it is what keeps the mapping honest (PLAN.md rule 5)
+%
+%   \section{Practical Implications}
+%     -- reproduce THESIS_MASTER_RECORD.md Sec.10's own scope-note
+%     framing: every claim here is "this project's results show X for
+%     the models/attacks/defenses tested," never a general
+%     recommendation. Source: Sec.10.1-10.4:
+%     - 10.1: no single best model -- robustness ranking INVERTS
+%       depending on which attack: llama-3.1-8b is the strongest
+%       performer against injection and the WEAKEST against Crescendo
+%       (70.2\%, highest of the four)
+%     - 10.2: defense scorecard (reuse the precise per-defense numbers
+%       already written into the Evaluation chapter map -- don't
+%       re-derive a softer version here)
+%     - 10.3: efficiency was never measured -- named explicitly as a
+%       scope this project did not evaluate (latency, throughput,
+%       memory), not folded into the robustness conclusions
+%     - 10.4: don't assume one defense generalizes across attack types;
+%       match the defense to the actual threat model; test at realistic
+%       scale before trusting small-sample results; the EU AI Act
+%       compliance-testing gap is current and unresolved
+%
+%   \section{Limitations}
+%     -- THESIS_MASTER_RECORD.md Sec.11 (NOT Sec.12), full honest list,
+%     not softened. Reproduce these precisely rather than summarizing
+%     into vague hedges:
+%     - nq_open exclusion still pending explicit supervisor
+%       acknowledgment as of the source document -- confirm current
+%       status with your supervisor before final submission and update
+%       this framing if it's since been formally signed off
+%     - the n asymmetry within injection (40 vs. 1000) -- a real
+%       compute constraint, not a design choice
+%     - PoisonedRAG's matched-subset reduction (n=90-96 baseline vs.
+%       n=14-18 matched defended subset per cell)
+%     - Crescendo's Phase 3 behavior-pool mismatch -- only 9 of 20
+%       Phase 3 behaviors per model appear in the Phase 2 baseline,
+%       usable paired n is 9 not 20
+%     - ASR scoring is rule-based substring matching for all three
+%       attacks -- confirmed to conflate genuinely different phenomena
+%       under one binary flag
+%     - is\_refusal()'s false-positive rate confirmed for
+%       ministral-3-8b only, individually audited; plausibly affects an
+%       unquantified fraction of the other 3 models' flagged rows
+%     - one attacker/judge model (DeepSeek V4 Pro) for Crescendo, one
+%       poison-generator model for PoisonedRAG -- cannot distinguish
+%       "these models resist similarly" from "this specific
+%       attacker/generator happens to land similarly"
+%
+%   \section{Future Work}
+%     -- THESIS_MASTER_RECORD.md Sec.12 (Open Items), separate from
+%     Limitations above:
+%     - output_filter-for-Crescendo: built, guard verdict logged, but
+%       deliberately never wired to enforce live in the conversation --
+%       the clearest, most concrete next step (this is unfinished
+%       engineering, not a limitation of a completed test)
+%     - a robustness-efficiency trade-off study (Sec.10.3) -- named as
+%       a well-motivated direction, not attempted here
+%     - model poisoning and confidentiality attacks (Article 15(5)'s
+%       other named vulnerability classes) as a natural extension of
+%       this project's threat taxonomy
 %
 % Suggested word target: ~1,500 words
 % ============================================================
