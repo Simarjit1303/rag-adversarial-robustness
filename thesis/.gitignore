@@ -6,3 +6,9 @@
 *.fdb_latexmk
 *.synctex.gz
 main.pdf
+main.bbl
+main.blg
+main.lof
+main.lot
+*.bcf
+*.run.xml

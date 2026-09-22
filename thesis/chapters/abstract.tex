@@ -1,11 +1,16 @@
 \chapter*{Abstract}
 
-% ============================================================
-% Write this LAST, after every other chapter is finished -- an abstract
-% summarizes results you have, not results you plan to have.
-% GISMA's own guidance (Module Handbook Sec.9, CDS abstract bullets):
-%   - motivation, problem statement, methodology, evaluation, key results
-%   - emphasize the contribution and significance
-%   - must stand alone as a summary of the whole dissertation
-% Target: ~250-300 words.
-% ============================================================
+RAG systems are now in production, but their robustness against adversarial manipulation remains largely untested, while Article 15 of the EU AI Act requires this kind of testing for sensitive and high-risk systems. This research benchmarks four open-source and open-weight LLMs, Llama-3.1-8B, Ministral-3-8B, Phi-4-mini, and Qwen3-8B, run across three corpora
+hotpot\_qa, ms\_marco, and nq\_open against three attack families (indirect prompt injection, PoisonedRAG, and Crescendo) and three defenses (instruction\_detection, spotlighting, and output\_filter). Later the pipeline drops nq\_open from every attack, defense and cross-corpus comparison because the corpus was leaking gold answers into its own retrieved context which led to every model scores reaching near roof on it regardless of proper retrieval or reasoning quality.
+
+Every reported metrics rests on paired statistical testing like McNemar's test for paired model comparisons, Fisher's test for independent model comparisons and Finally Holm Bonferroni correction within each family of hypotheses.
+Baselines for defended runs match the inference backend of the runs they  compare against and every generation runs on real GPU hardware rather than any vague numbers. A dedicated verification process has been created to cross-checks these results.
+
+The three attacks later split along three different dimensions. Model identity drives injection success, Corpus identity drives PoisonedRAG Success, Crescendo produces no significant results across all models at all.
+A backend-confound investigation resulted in changing one defense's headline number: output\_filter's apparent effect, significant in 6 of 19 cells, dropped to 0 of 19 once the analysis controlled for a mismatch between the inference backends used in the baseline and defended runs.
+Three defenses close out the scorecard. output\_filter shows no significant effect on injection (0 of 19 cells) and a 0.0000 flag rate against PoisonedRAG across all 160 scored responses.
+Spotlighting had cut down the injection in 9 of 16 cells, but resulting in costing a mean $\Delta F_1$ of $-0.283$ against the no-attack baseline. 
+Instruction\_detection reaches 0 of 16 significant cells at its capped $n=40$ samples, though its classifier mechanism had shown up behind all 10 confirmed blocks.
+
+These findings map onto Article 15(5) of the European Union's Artificial Intelligence Act (Regulation (EU) 2024/1689) as a technical contribution: no harmonised standards yet exists for testing RAG-specific robustness under this regulation, so this benchmark represents what that testing looks like at real effect sizes.
+The mapping stops short of any legal claims or conformity-assessment claim and names its own gaps directly, including model-poisioning, confidentiality and sensitiv attacks that fall outside this research's three attack families.
