@@ -1,15 +1,17 @@
-__pycache__/
+﻿__pycache__/
 *.pyc
 data/cache/
 data/indices/
-results/*.jsonl
-results/*.csv
+*.jsonl
+*.csv
+*.log
 .env
 *.egg-info/
 .ipynb_checkpoints/
 venv/
 .venv/
+.vscode/
 
-# graft's local graph cache — regenerable, not committed (run `graft build`).
+# graft's local graph cache — regenerable, not committed (run graft build).
 /graft/
 rag-adversarial-robustness/
