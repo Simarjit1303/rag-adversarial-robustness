@@ -4,13 +4,16 @@
 \usepackage[T1]{fontenc}
 \usepackage[a4paper, margin=2cm]{geometry}
 \usepackage{graphicx}
-\usepackage{url}
+\usepackage[hyphens]{url}
 \usepackage{tikz}
+\usetikzlibrary{arrows.meta}
+\usetikzlibrary{positioning}
 \usepackage{eso-pic}
 \usepackage{booktabs}
 \usepackage{longtable}
 \usepackage{parskip}
 \usepackage{hyperref}
+\usepackage[expansion=false]{microtype}
 \graphicspath{{attachments/}{../results/figures/}}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -47,6 +50,7 @@
 	}
 }
 \begin{document}
+\sloppy
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
@@ -78,6 +82,7 @@
 \renewcommand{\bibname}{References}
 \nocite{*}
 \bibliography{attachments/bibliography}
+\addcontentsline{toc}{chapter}{References}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 

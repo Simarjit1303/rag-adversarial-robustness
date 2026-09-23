@@ -1,39 +1,111 @@
 \chapter{Introduction}
+\section{Context and Motivation}
 
-% ============================================================
-% CONTENT MAP -- outline only. See PLAN.md "Ground rules" for the 12
-% rigor requirements that apply to every chapter, not repeated here.
-%
-% Handbook structure (CDS): context -> problem/objectives -> justify
-% importance -> challenges & scope -> contributions -> point to the
-% GitHub repo -> roadmap of the dissertation.
-%
-% Source material:
-%   - README.md (project description, motivation)
-%   - THESIS_MASTER_RECORD.md Sec.1 (Executive Summary), Sec.2 (Project
-%     Scope & Research Design -- the locked 4x2x3x3 matrix)
-%   - PHASE4_EU_AI_ACT_MAPPING.md Sec.1-2 (regulatory framing -- present
-%     as the TECHNICAL problem Article 15(5) poses, not a legal argument;
-%     see PLAN.md rule 5)
-%
-% Must include:
-%   - explicit link to https://github.com/Simarjit1303/rag-adversarial-robustness
-%     (CDS technical-contribution requirement, Handbook Sec.8)
-%   - the four target models named up front: Llama-3.1-8B-Instruct,
-%     Qwen3-8B, Phi-4-mini-instruct, Ministral-3-8B-Instruct-2512
-%     (\cite{grattafiori2024llama3}, \cite{yang2025qwen3},
-%      \cite{abouelenin2025phi4mini}, \cite{mistralai2025ministral3})
-%   - one paragraph naming all three attack families (indirect prompt
-%     injection, PoisonedRAG knowledge poisoning, Crescendo multi-turn
-%     jailbreak) and all three defenses (instruction_detection,
-%     spotlighting, output_filter)
-%   - a one-sentence preview of the headline finding: robustness is not
-%     one property -- each attack family has a different dominant axis
-%     (model identity for injection, corpus identity for PoisonedRAG,
-%     neither for Crescendo) -- THESIS_MASTER_RECORD.md Sec.5.4
-%   - note that Related Work (next chapter) IS this dissertation's
-%     literature review, per the CDS structure's own naming (PLAN.md rule 9)
-%   - a short "structure of this dissertation" paragraph at the end
-%
-% Suggested word target: ~1,300 words
-% ============================================================
+Retrieval-Augmented Generation (RAG) has become a default way to give large language models an access to information beyond their initial training data.
+Instead of relying solely on parametric knowledge, a RAG based model retrieves relevant data from an external corpus at inference time and adjusts its responses based on that retrieved context.
+This pattern is now used in a variety of production systems across search, customer support and enterprise knowledge tools.
+
+Retrieval has also opened a new attack pattern. An adversary who can influence the retrieved content or the conversations built around it, can manipulate the model's output without ever touching its model weights.
+The European Union's Artificial Intelligence Act (Regulation (EU) 2024/1689) has given this question a regulatory importance: Article 15 requires high-risk AI systems to display
+"an appropriate level of accuracy, robustness, and cybersecurity" and to be resilient against attempts to exploit system vulnerabilities. This dissertation treats Article 15(5) as a technical specification to test against, not a legal claim to argue, a distinction maintained throughout the rest of the dissertation.
+
+\section{Problem Statement}
+
+Three distinct mechanisms exist for a sole purpose of manipulating a RAG system's output through its retrieval layer: 
+planting a malicious instruction inside retrieved text, known as indirect prompt injection \cite{greshake2023not}; 
+planting a false fact into the model's corpus itself, known as knowledge poisoning \cite{zou2025poisonedrag}; and
+manipulating the model across multiple conversational turns, exploiting its conversational memory state rather than any single retrieved document \cite{russinovich2025great}. 
+Each targets a genuine vulnerability in the pipeline rather than a variation on a single idea, 
+so a defense effective against one model doesn't guarantee against another.
+
+Existing RAG security benchmarks tend to cover a broader set of attacks within a single attack category or one narrow slice of the threat surface, 
+rather than all three families side by side under one shared, controlled environment.
+SafeRAG \cite{liang2025saferag} evaluates four RAG-specific attack tasks (noise, conflict, toxicity, denial-of-service) across fourteen RAG components, 
+but its safety framework has no multi-turn conversational attacks and it does not test or evaluate the same four target models this research studies. 
+RSB \cite{zhang2025rsb} benchmarks thirteen poisoning attacks and seven defenses at far greater scale than this research's single poisoning method, but covers poisoning exclusively, with no injection or multi-turn attack family at all. 
+RSB remains an arXiv preprint at the time of writing this, with no other trusted version found regardless of deep searches across the web. 
+It is included here as an explicit exception to this dissertation's peer-review sourcing standard, both because it was one of three benchmark works confirmed directly with the supervisor. 
+Crucially, its own primary finding shows that its strongest defense reduces poisoning success but at an accuracy drop exceeding 20\% in most settings which parallels this dissertation's own finding that 
+spotlighting is the only defense with a confirmed real effect on injection, at a mean $\Delta F_1$ of $-0.283$.
+Hidden-in-Plain-Text \cite{guo2026hidden} reports attack-success confidence intervals for indirect prompt injection specifically, but is scoped to web-carrier delivery mechanisms and doesn't cover knowledge poisoning or multi-turn jailbreaking.
+No existing work to this dissertation's knowledge evaluates all three attack families against the same set of models under a single backend-controlled harness;
+the backend-confound discovery detailed in Chapter 5 is itself a methodological consideration most of this literature doesn't appear to control for.
+
+\section{Research Questions}
+
+This dissertation explores two research questions:
+
+\begin{itemize}
+    \item \textbf{RQ1:} How vulnerable are small-to-mid-size (4--12B parameters) open-source, open-weight, instruction-tuned language models to indirect prompt injection, knowledge poisoning and multi-turn adversarial manipulation when deployed in a retrieval-augmented generation pipeline?
+    \item \textbf{RQ2:} How effective are practical, low-cost defenses at reducing attack success and at what cost to the system's underlying answer utility?
+\end{itemize}
+
+A third, narrower question follows from the first two: how do the answers to RQ1 and RQ2 map onto Article 15(5)'s specific vulnerability classes and 
+where does that mapping expose gaps in what a benchmark of this kind can and cannot demonstrate?
+
+\section{Contributions}
+
+This dissertation contributes:
+
+\begin{enumerate}
+    \item A reproducible, statistically rigorous, real-hardware benchmark spanning four open-source language models, two retrieval corpora, three attack families and three defenses.
+    \item A documented account of an inference-backend confound discovered mid-analysis, which overturned two of the three defenses' apparent headline effects once corrected, offering a citable methodological warning for anyone building a similar evaluation.
+    \item A mapping of these results onto Article 15(5)'s vulnerability classes, offered as a concrete technical contribution to a compliance-testing gap that currently has no harmonised standard.
+\end{enumerate}
+
+The central empirical finding running through all three contributions is that robustness is not one factor.
+Model identity dominates injection success. Corpus identity dominates knowledge-poisoning success.
+The multi-turn attack produces no statistically significant ranking across models at all.
+
+\section{Implementation and Reproducibility}
+
+This dissertation evaluates four open-source, instruction-tuned language
+models: Llama-3.1-8B-Instruct \cite{grattafiori2024llama3}, Qwen3-8B
+\cite{yang2025qwen3}, Phi-4-mini-instruct \cite{abouelenin2025phi4mini}, and
+Ministral-3-8B-Instruct-2512 \cite{mistralai2025ministral3}. Every result
+rests on real generations run on real GPU hardware
+\cite{runpod2024platform}, not simulated or estimated output. The full
+implementation, an open-source Python framework, is available at
+\url{https://github.com/Simarjit1303/rag-adversarial-robustness}
+\cite{singh2026ragrepo}; it satisfies this module's technical-contribution
+requirement.
+
+\section{Scope and Limitations}
+
+This dissertation uses two retrieval corpora, HotpotQA \cite{yang2018hotpotqa} and MS MARCO \cite{nguyen2016msmarco}, 
+across every comparison. It also evalauted a third corpus, Natural Questions Open \cite{kwiatkowski2019natural} 
+and excluded it after it became structurally unsuiatble for testing retrieval-dependent robustness. The supervisor
+confirmed this decision. This dissertation exculdes model poisoning and confidentaility 
+attacks from its scope: every attack it studies operates at inference time and none touch training data or model weights. 
+It doesn't determine whether any specific deployed RAG systems counts as high-risk under Annex III of the AI Act; that 
+determination depends on deployment context outside this benchmark's scope.
+
+\section{Structure of the Dissertation}
+
+This chapter has laid out the motivation, problem, research questions, and
+contributions guiding this work. Figure~\ref{fig:dissertation-structure}
+outlines the chapters that follow.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  box/.style={rectangle, draw, rounded corners, align=center, minimum width=2.1cm, minimum height=1.3cm, font=\small},
+  arr/.style={-Stealth, thick}
+]
+\node[box] (c1) {Ch.~1\\Introduction};
+\node[box, right=0.5cm of c1] (c2) {Ch.~2\\Foundations};
+\node[box, right=0.5cm of c2] (c3) {Ch.~3\\Related Work};
+\node[box, right=0.5cm of c3] (c4) {Ch.~4\\Approach};
+\node[box, right=0.5cm of c4] (c5) {Ch.~5\\Evaluation};
+\node[box, right=0.5cm of c5] (c6) {Ch.~6\\Conclusion};
+\draw[arr] (c1) -- (c2);
+\draw[arr] (c2) -- (c3);
+\draw[arr] (c3) -- (c4);
+\draw[arr] (c4) -- (c5);
+\draw[arr] (c5) -- (c6);
+\end{tikzpicture}
+\caption{Structure of the dissertation, chapters in reading order.}
+\label{fig:dissertation-structure}
+\end{figure}
+
+Chapter 2
