@@ -5,45 +5,72 @@
 \usepackage[a4paper, margin=2cm]{geometry}
 \usepackage{graphicx}
 \usepackage[hyphens]{url}
+\usepackage{natbib}
+\usepackage{amssymb}
 \usepackage{tikz}
+\usepackage{xcolor}
 \usetikzlibrary{arrows.meta}
 \usetikzlibrary{positioning}
+\usetikzlibrary{shapes.geometric}
 \usepackage{eso-pic}
 \usepackage{booktabs}
 \usepackage{longtable}
 \usepackage{parskip}
 \usepackage{hyperref}
 \usepackage[expansion=false]{microtype}
+\usepackage{placeins}
 \graphicspath{{attachments/}{../results/figures/}}
+
+\makeatletter
+\renewcommand\@makechapterhead[1]{%
+  \vspace*{10\p@}%
+  {\parindent \z@ \raggedright \normalfont
+    \huge\bfseries \@chapapp\space \thechapter
+    \par\nobreak
+    \vskip 15\p@
+    \interlinepenalty\@M
+    \Huge \bfseries #1\par\nobreak
+    \vskip 20\p@
+  }}
+\renewcommand\@makeschapterhead[1]{%
+  \vspace*{10\p@}%
+  {\parindent \z@ \raggedright \normalfont
+    \interlinepenalty\@M
+    \Huge \bfseries #1\par\nobreak
+    \vskip 20\p@
+  }}
+\makeatother
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \newcommand{\dissertationtitle}{Adversarial Robustness of Open-Source RAG Pipelines: A Cross-Model Benchmark of Prompt Injection, Knowledge Poisoning, and Multi-Turn Attacks Under EU AI Act Article 15}
 \newcommand{\student}{Simarjit Singh}
-\newcommand{\degree}{Master of Data Science, AI, and Digital Business}
+\newcommand{\ghnumber}{GH1037512}
+\newcommand{\degree}{MSc Data Science, AI, and Digital Business}
 \newcommand{\supervisor}{Dr.-Ing. Loui Al Sardy}
 \newcommand{\submissiontime}{September 2026}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \renewcommand\maketitle{
 	{
 		\center
-		\includegraphics[width=0.6\textwidth]{logo}\par
+		\includegraphics[width=0.55\textwidth]{logo}\par
 		{\scshape\LARGE\bf Gisma University of Applied Sciences \par}
 		{\scshape\Large\bf Department of Computer and Data Sciences \par}
-		\vspace{2cm}
+		\vspace{1.2cm}
 		\rule{\linewidth}{0.5mm}\par
 		{\huge\bfseries\dissertationtitle\par}
 		\rule{\linewidth}{0.5mm}\par
 		\vspace{0.2cm}
 		{\Large\bf\student\par}
-		\vspace{2cm}
+		{\large\ghnumber\par}
+		\vspace{1.2cm}
 		{\large Submitted in partial fulfillment of the requirements for the degree of\par}
 		{\Large\bf\degree\par}
-		\vspace{1cm}
+		\vspace{0.8cm}
 		{\large Under supervision of\par}
 		{\large\bf\supervisor\par}
-		\vspace{1cm}
+		\vspace{0.8cm}
 		{\large\submissiontime\par}
 		\thispagestyle{empty}
 		\newpage

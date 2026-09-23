@@ -1,44 +1,230 @@
 \chapter{Foundations}
 
-% ============================================================
-% CONTENT MAP -- the one chapter with the least existing prose to draw
-% on. Background knowledge a reader needs before Related Work and
-% Approach make sense -- NOT a literature review (that's the next
-% chapter). See PLAN.md "Ground rules" -- rule 1 (cite every claim)
-% applies especially hard here since it's the chapter written closest
-% to a blank page.
-%
-%   \section{Retrieval-Augmented Generation}
-%     - what RAG is, why it exists (grounding LLM outputs in retrieved
-%       text rather than parametric memory alone)
-%     - the retrieve-then-generate pipeline: embed query, similarity
-%       search over an index, concatenate retrieved passages into the
-%       prompt, generate an answer
-%     - cite: \cite{reimers2019sentencebert}, \cite{song2020mpnet}
-%       (embedding model), \cite{johnson2021billionscale} (FAISS,
-%       the index), \cite{kwon2023efficient} (vLLM, serving layer)
-%
-%   \section{Adversarial Robustness in Language Models}
-%     - what "attack success rate" (ASR) means as a metric
-%     - the difference between attacking the MODEL (jailbreaking) and
-%       attacking the CONTEXT the model is given (injection, poisoning)
-%       -- this distinction is the organizing idea of the whole thesis,
-%       and is exactly why the three attack families need three
-%       different treatments in Evaluation, not one blended ASR chart
-%
-%   \section{The Three Attack Families at a Glance}
-%     - one short paragraph each on indirect prompt injection, knowledge
-%       poisoning, and multi-turn jailbreaking, conceptually only
-%       (mechanics -- save specific attacks/papers for Related Work)
-%
-%   \section{Regulatory Context: the EU AI Act}
-%     - Regulation (EU) 2024/1689 (13 June 2024) -- correct citation,
-%       NOT 2026/1744 (the separate Digital Omnibus)
-%     - Article 15's accuracy/robustness/cybersecurity requirement, in
-%       plain technical terms -- this is background/context, NOT the
-%       mapping itself (that's Evaluation/Conclusion; see PLAN.md rule 5:
-%       present as a technical problem statement, not a legal claim)
-%     - source: PHASE4_EU_AI_ACT_MAPPING.md Sec.1-2
-%
-% Suggested word target: ~1,800 words
-% ============================================================
+\section{Retrieval-Augmented Generation}
+
+Retrieval-augmented generation (RAG) grounds a language model's output
+in text retrieved from an external corpus at inference time rather than
+relying solely on knowledge encoded in the model's parameters during
+training. This matters for two related reasons: parametric knowledge
+freezes at the training cutoff and cannot reflect anything after it, and
+a model reasoning purely from its own weights has no mechanism to point
+to a specific source for a claim it makes. A model asked a factual
+question can produce a fluent, confident answer regardless of whether
+that answer is actually correct, and without a retrieved passage backing
+it, there is no way to check the claim against anything other than the
+model's own internal state. Grounding generation in retrieved text
+addresses both problems at once, at the cost of introducing a new
+component into the pipeline, the corpus itself, that an adversary can
+try to influence.
+
+A RAG pipeline follows a consistent retrieve-then-generate pattern,
+illustrated in Figure~\ref{fig:rag-pipeline}. A sentence embedding model
+first encodes the user query into a dense vector
+\cite{reimers2019sentencebert,song2020mpnet}. An approximate
+nearest-neighbour search then compares this vector against a pre-built
+index of the corpus's passages \cite{johnson2021billionscale} and
+returns the top-\(k\) most similar passages. The pipeline integrates
+these passages with the original query to form a single prompt and
+passes it to the language model, served in this benchmark through a
+high-throughput inference engine \cite{kwon2023efficient}, to generate
+an answer. Each of these three stages, embedding, indexing, and serving,
+is a separate piece of infrastructure with its own failure modes, and
+this dissertation's later chapters return to that fact directly: an
+attack does not need to compromise the language model itself to change
+the system's output, it only needs to influence what the retrieval stage
+hands the model.
+
+Table~\ref{tab:rag-components} summarizes the specific implementation of
+each pipeline stage used in this benchmark.
+
+\begin{figure}[htbp]
+\centering
+\resizebox{\linewidth}{!}{%
+\begin{tikzpicture}[
+  box/.style={rectangle, draw, rounded corners, align=center, minimum width=2.4cm, minimum height=1.1cm, font=\small},
+  arr/.style={-Stealth, thick}
+]
+\node[box] (q) {User\\Query};
+\node[box, right=0.6cm of q] (e) {Embed\\Query};
+\node[box, right=0.6cm of e] (i) {Similarity\\Search};
+\node[box, right=0.6cm of i] (r) {Retrieved\\Passages};
+\node[box, right=0.6cm of r] (p) {Concatenate\\with Prompt};
+\node[box, right=0.6cm of p] (g) {Language\\Model};
+\node[box, right=0.6cm of g] (a) {Generated\\Answer};
+\draw[arr] (q) -- (e);
+\draw[arr] (e) -- (i);
+\draw[arr] (i) -- (r);
+\draw[arr] (r) -- (p);
+\draw[arr] (p) -- (g);
+\draw[arr] (g) -- (a);
+\end{tikzpicture}%
+}
+\caption{The retrieve-then-generate pipeline used throughout this dissertation.}
+\label{fig:rag-pipeline}
+\end{figure}
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lll}
+\toprule
+\textbf{Component} & \textbf{Implementation} & \textbf{Source} \\
+\midrule
+Embedding model & \texttt{all-mpnet-base-v2} & \cite{reimers2019sentencebert, song2020mpnet} \\
+Vector index & FAISS & \cite{johnson2021billionscale} \\
+Inference engine & vLLM & \cite{kwon2023efficient} \\
+\bottomrule
+\end{tabular}
+\caption{Core RAG pipeline components used in this benchmark.}
+\label{tab:rag-components}
+\end{table}
+
+\section{Adversarial Robustness in Language Models}
+
+Robustness research in this space typically reports an attack success
+rate (ASR): the proportion of attempts in which an adversary achieves
+their stated objective, whether that objective is eliciting a specific
+answer, bypassing a safety filter, or causing a refusal. ASR is a useful
+summary metric precisely because it abstracts away from any single
+attack's mechanics, but that abstraction can also obscure a distinction
+that matters a great deal for a RAG system specifically: an attack can
+target the model itself, or it can target the context the model is
+given.
+
+An attack on the model, commonly called jailbreaking, manipulates the
+conversation or the prompt directly, without needing the model to be
+retrieving anything at all. An attack on the context instead exploits
+the retrieval step: it plants something in the corpus or the retrieved
+passages themselves, so that the model behaves as attacked without any
+direct manipulation of its own weights or its own conversational input.
+The practical consequence of this split is significant for anyone
+building a defense. A safeguard that inspects the user's conversation
+for suspicious phrasing does nothing to stop a poisoned passage sitting
+quietly in the corpus, and a safeguard that filters retrieved content
+does nothing to stop a multi-turn escalation that never touches
+retrieval at all. This model-versus-context distinction is the
+organising idea behind this dissertation's entire attack taxonomy, and
+it is the reason the three attack families studied here receive three
+separate treatments in Chapter 5 rather than being collapsed into a
+single blended ASR figure: a defense that works against one surface
+carries no logical guarantee against the other.
+
+\section{The Three Attack Families at a Glance}
+
+\textbf{Indirect prompt injection} \cite{greshake2023not} plants a
+malicious instruction inside content the model will later retrieve. The
+model has no reliable way to distinguish an instruction written by its
+system prompt from one embedded in a retrieved passage, so a
+sufficiently convincing injected instruction can redirect the model's
+behaviour even though the user's own query never mentioned it. The
+attack requires no access to the corpus's construction process, only
+the ability to get one crafted document indexed alongside legitimate
+content, which is a low bar for any system that ingests documents from
+a source an adversary can write to.
+
+\textbf{Knowledge poisoning} \cite{zou2025poisonedrag} instead targets
+the corpus itself rather than any single retrieved passage's
+instructions. An adversary inserts a small number of crafted documents
+into the knowledge base such that, for a chosen query, the poisoned
+documents are retrieved and cause the model to state a specific false
+answer as though it were grounded fact. Unlike injection, this attack
+does not rely on the model following an embedded instruction at all; it
+relies on the model doing exactly what it is designed to do, trusting
+retrieved content, against content that was never legitimate in the
+first place.
+
+\textbf{Multi-turn jailbreaking} \cite{russinovich2025great} operates
+differently again: rather than attacking a single retrieved document, it
+exploits the model's growing conversational state across several turns,
+gradually escalating a benign-seeming conversation toward a harmful or
+policy-violating output that the model would have refused if asked
+directly in a single turn. This attack touches neither the corpus nor
+any retrieved passage, which is precisely why a defense built around
+inspecting retrieved content offers it no resistance at all.
+
+\section{Where the Attacks Intervene in the Pipeline}
+
+Returning to Figure~\ref{fig:rag-pipeline} makes the model-versus-context
+distinction easier to see. Indirect prompt injection intervenes late in
+the pipeline, at the point where retrieved passages are concatenated
+with the query to form a single prompt: the malicious instruction rides
+inside a passage that has already survived retrieval, and by the time it
+reaches the language model it is indistinguishable, in form, from any
+other piece of retrieved text. The attack does nothing to the embedding
+step, the similarity search, or the index itself; it only needs one
+crafted document to already be sitting in the corpus, waiting to be
+picked up by an ordinary query.
+
+Knowledge poisoning intervenes earlier and more fundamentally: it
+corrupts the index that the similarity-search stage draws from, before
+anyone ever issues a specific query. Injection waits for retrieval to
+happen and then exploits what gets concatenated; poisoning shapes what
+is available to be retrieved in the first place. This distinction
+carries directly into this dissertation's results, detailed fully in
+Chapter 5: injection's success turns on which model receives the crafted
+instruction, since different models parse and act on embedded
+instructions differently, while poisoning's success hinges on which
+corpus the poisoned passage competes against for retrieval, since a
+corpus with denser, more redundant coverage of a topic makes it harder
+for one poisoned document to win the top-\(k\) ranking.
+
+Multi-turn jailbreaking does not map onto a single stage of
+Figure~\ref{fig:rag-pipeline} at all. The attack operates across
+repeated invocations of the whole pipeline rather than at any one node
+inside it: each turn is its own retrieve-then-generate cycle, and the
+vulnerability lies in the conversational history accumulating around
+those cycles, not in the retrieval or generation of any single turn. A
+defense implemented purely as a filter on retrieved passages, wherever
+it sits in the diagram, has nothing to inspect for this attack, since
+nothing about a Crescendo-style escalation depends on what the corpus
+contains.
+
+\section{Regulatory Context: The EU AI Act}
+
+The European Union's Artificial Intelligence Act, Regulation (EU)
+2024/1689,\footnote{This dissertation verified this citation
+specifically against a 2026 amendment, the Digital Omnibus, Regulation
+(EU) 2026/1744, which could otherwise be mistaken for the AI Act itself
+given its proximity in both subject matter and numbering; Article 15's
+substantive requirements discussed throughout this dissertation belong
+to Regulation (EU) 2024/1689, not its later amendment.} adopted 13 June
+2024, sets binding requirements for high-risk AI systems. Article 15
+requires such systems to achieve an appropriate level of accuracy,
+robustness, and cybersecurity, and, more specifically under Article
+15(5), to remain resilient against attempts by unauthorised third
+parties to exploit system vulnerabilities. The Article's own text names
+several vulnerability classes this resilience requirement targets: data
+poisoning, model poisoning, adversarial examples, and confidentiality
+attacks, each named as an illustrative example of the kind of
+exploitation the general clause is meant to catch, not as an exhaustive
+list closed to anything else. The Article also qualifies its own
+cybersecurity requirement directly: the technical solutions used to meet
+it must be "appropriate to the relevant circumstances and the risks," a
+proportionality standard, not a fixed technical bar, which leaves open
+exactly the kind of empirical question this dissertation investigates:
+what counts as an appropriate mitigation, in practice, against a
+specific attack family.
+
+At the technical level this dissertation operates at, these
+vulnerability classes correspond closely to the attack families
+introduced above. Knowledge poisoning maps onto the Article's
+data-poisoning class directly, since both describe an adversary
+inserting false material into a system's knowledge source. Indirect
+prompt injection functions as an adversarial-examples attack against the
+model's input: an adversarial example is deliberately crafted to trigger
+a mistake, not something that arises by chance, and an injected
+instruction is exactly that, a targeted construction aimed at making the
+model behave incorrectly. Multi-turn jailbreaking is not named
+explicitly in the Article's illustrative list, a point this dissertation
+returns to directly in Chapter 5, but it plausibly falls under the
+Article's general resilience clause regardless, since escalating a
+conversation to bypass a system's safeguards is a form of exploiting a
+system vulnerability even when that vulnerability is conversational
+rather than architectural. Whether a specific mitigation counts as
+"appropriate" under the Article's own proportionality standard is an
+empirical question this dissertation's results speak to directly: a
+mitigation's appropriateness is hard to judge without first measuring
+what it actually does and does not achieve against each attack family.
+This dissertation treats Article 15(5) throughout as a technical
+specification to test the benchmark's findings against, not as a legal
+claim about any deployed system's regulatory status, a distinction
+established in Chapter 1 and maintained here.

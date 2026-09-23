@@ -1,53 +1,233 @@
 \chapter{Related Work}
 
-% ============================================================
-% CONTENT MAP -- this chapter IS the literature review the CDS
-% structure requires (PLAN.md rule 9); it's just named "Related Work"
-% in the handbook's own list. The sources here are already real and
-% peer-reviewed (docs/CITATIONS.md, 33 entries now in
-% attachments/bibliography.bib). The work remaining is synthesis:
-% group and compare, don't just list (PLAN.md rule 1).
-%
-%   \section{Indirect Prompt Injection}
-%     \cite{greshake2023not} (foundational -- establishes the attack class),
-%     \cite{liu2024formalizing} (formalization/benchmarking methodology --
-%     compare your ASR methodology against this explicitly),
-%     \cite{zhan2024injecagent} (tool-integrated agents -- adjacent/context
-%     work, not directly used, say so)
-%
-%   \section{Knowledge Poisoning of RAG Systems}
-%     \cite{zou2025poisonedrag} (the attack this thesis implements),
-%     \cite{moradi2026defending} (2026 defense benchmarked against
-%     PoisonedRAG -- evidence the attack remains the field's active
-%     reference point)
-%
-%   \section{Multi-Turn Jailbreaking}
-%     \cite{russinovich2025great} (Crescendo, implemented directly),
-%     \cite{chao2024jailbreakbench}, \cite{mazeika2024harmbench}
-%     (sources of the stratified behavior pool -- 20\%/80\% split),
-%     \cite{nakka2026bitbypass} (contemporaneous 2026 work)
-%
-%   \section{Defenses}
-%     \cite{hines2024defending} (spotlighting, implemented directly),
-%     \cite{he2023debertav3} (architecture behind the instruction-
-%     detection classifier), \cite{liu2025datasentinel} (closest
-%     peer-reviewed comparator -- explain why a DIFFERENT classifier,
-%     protectai/deberta-v3-base-prompt-injection-v2, was used in
-%     practice), \cite{metaai2025llamaguard4} (output filter -- cite as
-%     a released model, not a study), \cite{cui2025orbench},
-%     \cite{rottger2024xstest} (over-refusal / false-positive
-%     benchmarking used in Phase 3)
-%
-%   \section{Gap This Thesis Addresses}
-%     - no existing work evaluates all three attack families against
-%       the SAME four models under a SHARED, backend-controlled harness
-%       (the backend-confound discovery itself, Approach/Evaluation
-%       chapters, is a methodological point most of this literature
-%       does not control for -- worth saying explicitly here)
-%     - no existing work connects empirical RAG robustness results to
-%       a concrete EU AI Act Article 15 compliance-testing gap
-%       (PHASE4_EU_AI_ACT_MAPPING.md Sec.4's four contribution points --
-%       preview here, full mapping goes in Evaluation/Conclusion)
-%
-% Suggested word target: ~3,200 words
-% ============================================================
+\section{Indirect Prompt Injection}
+
+\citet{greshake2023not} established indirect prompt injection as a
+distinct attack class, demonstrating that real-world LLM-integrated
+applications could be compromised by instructions embedded in content
+the model retrieves or processes, not in the user's own input. Their
+work was the first to frame this as a structurally different threat from
+a jailbreak, since the attacker never interacts with the system at all;
+the malicious content simply waits in a document, a webpage, or an email
+for the model to encounter it during normal operation. \citet{liu2024formalizing}
+built on this by formalising prompt injection attacks and defenses into
+a shared benchmarking methodology, published at USENIX Security 2024,
+with explicit attack-success metrics that later work could compare
+against directly rather than each paper inventing its own measurement
+convention. This dissertation's own attack-success-rate methodology,
+detailed in Chapter 4, follows a comparable measurement approach, applied
+specifically to the RAG retrieval surface rather than to the general
+LLM-integrated applications Liu et al. study, a narrower scope chosen
+deliberately so that every result in this dissertation can be attributed
+to the retrieval pipeline itself rather than to some other integration
+point. \citet{zhan2024injecagent} extends the injection threat model to
+tool-integrated LLM agents, where an injected instruction can trigger
+unintended tool calls, not just an unintended text response. This is
+adjacent context for the threat landscape, not something this
+dissertation builds on directly, since the benchmark here targets a
+plain retrieve-then-generate pipeline without agentic tool use; an
+injected instruction in this dissertation's setting can only ever change
+what text the model produces, never trigger an external action.
+
+\section{Knowledge Poisoning of RAG Systems}
+
+\citet{zou2025poisonedrag} introduced PoisonedRAG, the knowledge-poisoning
+attack implemented directly in this dissertation: an adversary inserts a
+small number of crafted documents into the knowledge base such that, for
+a chosen query, the poisoned documents are retrieved and guide the model
+toward a specific false answer. The attack's original formulation splits
+each poisoned document into a retrieval component, designed to win the
+similarity search, and a generation component, designed to steer the
+model's answer once retrieved, a two-part structure this dissertation's
+own implementation preserves. \citet{moradi2026defending} proposes a
+2026 defense benchmarked directly against PoisonedRAG, using
+cross-encoder activation signals to detect poisoned passages before they
+reach the generation stage; its continued use of PoisonedRAG as the
+reference attack, more than two years after the original paper, is
+evidence that the attack remains the field's active benchmark for
+knowledge poisoning rather than having been superseded by something
+newer.
+
+\section{Multi-Turn Jailbreaking}
+
+\citet{russinovich2025great} introduced Crescendo, the multi-turn
+jailbreak attack implemented directly in this dissertation, which
+escalates a benign-seeming conversation gradually across several turns
+toward a harmful or policy-violating output that a model would refuse if
+asked directly in a single turn. The attack's core insight is that a
+model's safety training is calibrated against single-turn requests, so a
+goal broken into a sequence of individually innocuous-looking steps can
+slip past defenses tuned for the more obvious, one-shot version of the
+same request. The behaviour pool used to instantiate Crescendo's
+escalation targets in this dissertation draws on two established
+sources: \citet{chao2024jailbreakbench}'s JBB-Behaviors, contributing
+100 behaviours and 20\% of the stratified pool, and \citet{mazeika2024harmbench}'s
+HarmBench, contributing 510 behaviours and the remaining 80\%. Combining
+the two sources this way follows current practice in the guardrail
+literature, where a single behaviour set is generally considered too
+narrow to represent the diversity of real harmful-request categories on
+its own. \citet{nakka2026bitbypass} is contemporaneous 2026 work,
+published at EACL 2026, that jailbreaks aligned models through bitstream
+camouflage rather than conversational escalation; its existence
+confirms that jailbreak research against aligned models remains an
+active publishing area alongside this dissertation's own timeline, not a
+closed or settled topic with one dominant attack family.
+
+\section{Defenses}
+
+\citet{hines2024defending} introduced spotlighting, the defense
+implemented directly in this dissertation, in its encoding-mode variant,
+which the original paper reports as the strongest configuration against
+indirect prompt injection, closer to a 0\% attack success rate than the
+paper's alternative datamarking variant achieves. For the
+instruction-detection defense, this dissertation uses a classifier
+fine-tuned from the DeBERTaV3 architecture \citep{he2023debertav3},
+published at ICLR 2023, specifically \citet{protectai2024deberta}'s
+released \texttt{deberta-v3-base-prompt-injection-v2} model. The closest
+peer-reviewed comparator for this style of defense is
+\citet{liu2025datasentinel}'s DataSentinel, published at IEEE Symposium
+on Security and Privacy 2025, a game-theoretic detection method that
+models the interaction between attacker and defender explicitly rather
+than training a static classifier; a different, pre-trained classifier
+was used in this dissertation in practice, for the practical reason that
+fine-tuning a comparable detector from scratch was outside this
+project's compute and time budget. The output-filter defense uses
+\citet{metaai2025llamaguard4}'s Llama Guard 4, cited here as a released
+model rather than a peer-reviewed study. Finally, \citet{cui2025orbench}'s
+OR-Bench, from ICML 2025, and \citet{rottger2024xstest}'s XSTest, from
+NAACL 2024, provide the over-refusal and false-positive benchmarking
+used to evaluate whether these defenses reject legitimate, benign
+queries, a concern distinct from, but as important as, their
+effectiveness against genuine attacks. XSTest's 450 prompts, 250 marked
+safe and 200 marked unsafe, are paired in this dissertation with
+OR-Bench's harder-but-still-safe prompt set specifically because XSTest's
+own safe-prompt coverage is comparatively narrow; the two together give
+a broader picture of whether a defense over-triggers on ordinary,
+non-malicious input than either benchmark provides alone.
+
+Figure~\ref{fig:literature-landscape} groups the sources discussed above
+by which part of the threat surface they address.
+
+\begin{figure}[htbp]
+\centering
+\resizebox{\linewidth}{!}{%
+\begin{tikzpicture}[
+  hdr/.style={rectangle, draw, thick, fill=gray!15, align=center, minimum width=3.4cm, minimum height=0.9cm, font=\small\bfseries},
+  itm/.style={rectangle, draw, align=center, minimum width=3.4cm, minimum height=0.7cm, font=\footnotesize},
+  node distance=0.25cm
+]
+\node[hdr] (h1) {Injection};
+\node[itm, below=of h1] (h1a) {Greshake et al., 2023};
+\node[itm, below=of h1a] (h1b) {Liu et al., 2024};
+\node[itm, below=of h1b] (h1c) {Zhan et al., 2024};
+
+\node[hdr, right=1.1cm of h1] (h2) {Poisoning};
+\node[itm, below=of h2] (h2a) {Zou et al., 2025};
+\node[itm, below=of h2a] (h2b) {Moradi et al., 2026};
+
+\node[hdr, right=1.1cm of h2] (h3) {Multi-Turn};
+\node[itm, below=of h3] (h3a) {Russinovich et al., 2025};
+\node[itm, below=of h3a] (h3b) {Chao et al., 2024};
+\node[itm, below=of h3b] (h3c) {Mazeika et al., 2024};
+\node[itm, below=of h3c] (h3d) {Nakka \& Saxena, 2026};
+
+\node[hdr, right=1.1cm of h3] (h4) {Defenses};
+\node[itm, below=of h4] (h4a) {Hines et al., 2024};
+\node[itm, below=of h4a] (h4b) {He et al., 2023};
+\node[itm, below=of h4b] (h4c) {Liu et al., 2025};
+\node[itm, below=of h4c] (h4d) {Meta AI, 2025};
+\node[itm, below=of h4d] (h4e) {Cui et al., 2025};
+\node[itm, below=of h4e] (h4f) {R\"{o}ttger et al., 2024};
+\end{tikzpicture}%
+}
+\caption{Literature landscape: sources grouped by attack family and defense mechanism.}
+\label{fig:literature-landscape}
+\end{figure}
+
+\section{Reference Implementations Consulted}
+
+Beyond the published papers discussed above, this dissertation's own
+attack implementations are original code, not adaptations of an
+existing codebase. A repository-wide search of the source tree and its
+full commit history found no verbatim external code, no vendored files,
+and no third-party license headers anywhere in the attack modules. This
+dissertation nonetheless consulted two external implementations during
+development, not as a source of code to copy, but to check
+methodological fidelity against each paper's own description of its
+algorithm.\footnote{Neither repository serves as a source of copied
+code; this dissertation discloses both as implementations it read for
+methodological correctness while reproducing each paper's described
+algorithm, consistent with standard practice for reimplementing a
+published attack.} For PoisonedRAG, the paper's own official reference
+implementation, \texttt{sleeepeer/PoisonedRAG} on GitHub, informed this
+dissertation's implementation of the attack's two-part poisoned-document
+structure. For Crescendo, Microsoft's PyRIT toolkit provides a
+\texttt{CrescendoOrchestrator} that serves as the reference
+implementation of the paper's escalation-and-backtrack strategy; this
+dissertation originally consulted it at its earlier repository location,
+\texttt{Azure/PyRIT}, since archived and redirected to its current
+canonical location, \texttt{microsoft/PyRIT}. Consulting a paper's own
+reference implementation where one exists is standard practice when
+reimplementing a published attack, since it reduces the risk of a
+subtle misreading of the paper's prose diverging from what the original
+authors actually built and evaluated.
+
+\section{Gap This Thesis Addresses}
+
+Two gaps in the existing literature motivate this dissertation's design,
+summarized in Table~\ref{tab:gap-comparison} against the three named
+comparator benchmarks introduced in Chapter 1.
+
+First, no existing work evaluates all three attack families against the
+same set of models under a single, backend-controlled harness. SafeRAG
+\citep{liang2025saferag} covers a broader attack taxonomy but omits
+multi-turn attacks and does not test this dissertation's four target
+models. RSB \citep{zhang2025rsb} covers poisoning at far greater scale,
+but exclusively, with no injection or multi-turn family in its design at
+all. Hidden-in-Plain-Text \citep{guo2026hidden} covers injection
+specifically but not poisoning or multi-turn jailbreaking. None of the
+three, individually or together, offers what this dissertation's design
+provides: the same four models, the same infrastructure, and the same
+statistical methodology applied across all three attack families at
+once, which is precisely what makes a genuine cross-attack comparison,
+like the one presented in Chapter 5, possible in the first place. The
+backend-confound discovery detailed in Chapters 4 and 5, where an
+inference-backend mismatch between baseline and defended runs produced a
+misleading defense result until corrected, is itself evidence that this
+kind of infrastructure-level control is a methodological consideration
+most of this literature does not appear to address explicitly; a
+benchmark that never tests multiple defenses under a matched
+infrastructure setup has no occasion to discover a confound of this
+particular kind.
+
+Second, no existing work bridges the gap between practical RAG
+robustness evaluations and concrete compliance-testing requirements
+under Article 15 of the EU AI Act. SafeRAG, RSB, and Hidden-in-Plain-Text
+were all built as security benchmarks in their own right, and none frame
+their results against a specific regulatory text. This dissertation's
+mapping of its own findings onto Article 15(5)'s vulnerability classes,
+developed fully in Chapters 5 and 6, is offered as a first step toward
+closing that gap, rather than a claim that a finalised, harmonised
+technical standard for this kind of testing yet exists; the mapping is
+explicitly a technical exercise applied after the fact to results that
+were designed as a security benchmark first, not a compliance-testing
+tool designed from the ground up.
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Dimension} & \textbf{SafeRAG} & \textbf{RSB} & \textbf{Hidden-in-} & \textbf{This} \\
+ & & & \textbf{Plain-Text} & \textbf{Dissertation} \\
+\midrule
+Injection & \checkmark & & \checkmark & \checkmark \\
+Poisoning & \checkmark & \checkmark & & \checkmark \\
+Multi-turn & & & & \checkmark \\
+Shared 4-model harness & & & & \checkmark \\
+Backend-confound control & & & & \checkmark \\
+Article 15 mapping & & & & \checkmark \\
+\bottomrule
+\end{tabular}
+\caption{Positioning this dissertation against its three named comparator benchmarks.}
+\label{tab:gap-comparison}
+\end{table}
