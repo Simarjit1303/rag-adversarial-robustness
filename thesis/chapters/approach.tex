@@ -71,12 +71,12 @@ model at an ICLR 2026 workshop.
 
 This benchmark runs every generation through one of two inference
 engines, selected per sweep via a single environment variable:
-HuggingFace's \texttt{transformers} library, the default, used for
-every Phase 3 defended run and for two of the three attacks' Phase 2
-baselines, and vLLM, used for the Phase 1 baseline sweep and the
-injection attack's Phase 2 baseline. These two engines are not
-numerically interchangeable on the same hardware. vLLM auto-selects
-bf16 precision on the project's A100 GPUs and auto-detects
+HuggingFace's \texttt{transformers} library \citep{huggingface2016hub},
+the default, used for every Phase 3 defended run and for two of the
+three attacks' Phase 2 baselines, and vLLM, used for the Phase 1
+baseline sweep and the injection attack's Phase 2 baseline. These two
+engines are not numerically interchangeable on the same hardware. vLLM
+auto-selects bf16 precision on the project's A100 GPUs and auto-detects
 Ministral-3-8B's native fp8 checkpoint through its own optimized kernel
 path, while the plain HuggingFace path dequantizes that same checkpoint
 to bf16 regardless of GPU generation. This mismatch is the concrete
@@ -156,26 +156,28 @@ basis on which every other model was chosen or excluded.
 
 This benchmark matches every significance test to a specific comparison
 structure rather than applying one default test uniformly. McNemar's
-exact test, a paired hypergeometric test, handles every
-model-versus-model comparison within a fixed corpus or behavior set,
-since every model here is evaluated on the identical seeded item sample
-for a given corpus, a genuinely paired design. Fisher's exact test, an
-unpaired test on independent proportions, covers cases where two
-conditions have no item-to-item correspondence, most notably
-corpus-versus-corpus comparisons, since HotpotQA and MS MARCO are
-different question sets entirely; treating them as paired would violate
-McNemar's core assumption. Holm-Bonferroni correction operates within
-one family per genuinely distinct condition, one family per injection
-template rather than one pooled family across all templates, since each
-template is a mechanistically distinct delivery method and pooling would
-dilute statistical power between hypotheses that are not actually
-testing the same thing. A paired bootstrap with 10,000 resamples
-produces every utility-drop confidence interval; this benchmark keeps
-that calculation structurally separate from the binary-outcome
-significance tests, so that "which models or corpora differ in
-vulnerability" and "how much utility does this attack cost" remain two
-cleanly separated statistical questions rather than one conflated
-metric.
+exact test \citep{mcnemar1947note}, a paired hypergeometric test,
+handles every model-versus-model comparison within a fixed corpus or
+behavior set, since every model here is evaluated on the identical
+seeded item sample for a given corpus, a design where each observation
+has a natural counterpart in every other condition. Fisher's exact test
+\citep{fisher1922interpretation}, an unpaired test on independent
+proportions, covers cases where two conditions have no item-to-item
+correspondence, most notably corpus-versus-corpus comparisons, since
+HotpotQA and MS MARCO are different question sets entirely; treating
+them as paired would violate McNemar's core assumption. Holm-Bonferroni
+correction \citep{holm1979simple} operates within one family per
+genuinely distinct condition, one family per injection template rather
+than one pooled family across all templates, since each template is a
+mechanistically distinct delivery method and pooling would dilute
+statistical power between hypotheses that are not actually testing the
+same thing. A paired bootstrap \citep{efron1979bootstrap} with 10,000
+resamples produces every utility-drop confidence interval; this
+benchmark keeps that calculation structurally separate from the
+binary-outcome significance tests, so that "which models or corpora
+differ in vulnerability" and "how much utility does this attack cost"
+remain two cleanly separated statistical questions rather than one
+conflated metric.
 
 The backend-confound isolation described in Chapter 5 called for a
 different choice again: pairwise McNemar tests with Holm-Bonferroni
@@ -210,14 +212,15 @@ instruction inside retrieved content rather than the user's own query.
 
 \citet{zou2025poisonedrag}'s PoisonedRAG is the knowledge-poisoning
 attack used here, shown in Figure~\ref{fig:poisonedrag-mechanism}: an
-auxiliary generation call through the NVIDIA NIM API against
-Nemotron-3-Ultra \citep{nvidia2025nemotron3ultra} crafts five adversarial
-passages per target query (the \texttt{adv5} configuration). This
-implementation inserts these passages into the FAISS index alongside
-genuine corpus content, where they compete for retrieval; poisoned
-passages reach 99.3\% retrieval precision on HotpotQA and 88.96\% on MS
-MARCO. Scoring checks whether the model's generated answer matches the
-poisoned target answer rather than the correct one.
+auxiliary generation call against Nemotron-3-Ultra
+\citep{nvidia2025nemotron3ultra}, made through the NVIDIA NIM API
+\citep{nvidia2024nim}, crafts five adversarial passages per target query
+(the \texttt{adv5} configuration). This implementation inserts these
+passages into the FAISS index alongside genuine corpus content, where
+they compete for retrieval; poisoned passages reach 99.3\% retrieval
+precision on HotpotQA and 88.96\% on MS MARCO. Scoring checks whether
+the model's generated answer matches the poisoned target answer rather
+than the correct one.
 
 \begin{figure}[htbp]
 \centering
