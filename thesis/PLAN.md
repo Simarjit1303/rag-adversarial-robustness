@@ -106,6 +106,15 @@ otherwise, and that hasn't been confirmed in writing.
 12. **Architecture diagrams from `docs/THESIS_ARCHITECTURE.md`** belong in
     Approach, not Foundations — see that chapter's map for which specific
     sections to reproduce.
+13. **Figure and table captions all follow one plain-descriptive style — no
+    punchy or title-style captions.** State what the figure/table shows,
+    under what condition or method, and its scope, in one flat sentence
+    (e.g., "Structure of the dissertation, chapters in reading order." for
+    `fig:dissertation-structure`, the only one written so far). Never mix
+    a colon-led headline style ("Chapter roadmap: ...") in for some
+    captions and plain description for others — consistency across the
+    List of Figures / List of Tables matters more than any single
+    caption's phrasing.
 
 ## What's here
 
