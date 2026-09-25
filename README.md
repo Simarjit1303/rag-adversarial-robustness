@@ -1,37 +1,139 @@
 # Adversarial Robustness of Open-Source RAG Pipelines
 
-A dissertation project benchmarking the adversarial robustness of
-small-to-mid-size (4–12B parameter) open-source LLMs deployed in a
-retrieval-augmented generation (RAG) pipeline, under the EU AI Act's
-Article 15 robustness requirements. Four models (`llama-3.1-8b`,
-`ministral-3-8b`, `phi-4-mini`, `qwen3-8b`) × two real corpora
-(`hotpot_qa`, `ms_marco`) are evaluated against three structurally
-distinct attacks — indirect prompt injection, knowledge-corrupting corpus
-poisoning (PoisonedRAG), and multi-turn conversational jailbreaking
-(Crescendo) — and three structurally distinct defenses —
-`instruction_detection`, `spotlighting`, `output_filter` — with every
-number backed by real generations on real hardware (RunPod A100,
-HuggingFace `transformers` and vLLM), not simulated or estimated.
+**MSc dissertation (GISMA University of Applied Sciences) benchmarking the
+adversarial robustness of small-to-mid-size (4–12B parameter) open-source
+LLMs deployed in a retrieval-augmented generation (RAG) pipeline, mapped
+onto the EU AI Act's Article 15 robustness requirements.**
 
-**Status: Phases 1–3 (baseline, attacks, defenses) are complete with
-final, backend-corrected results.** See [Current project status](#current-project-status)
-below.
+If you are an examiner or supervisor, start here — this section tells you
+what the project is, what it found, and where to read the full write-up.
+Everything after "Repo structure" below is technical detail for anyone
+who wants to reproduce or extend the work.
+
+## What this dissertation does
+
+Four open-source, instruction-tuned language models (`llama-3.1-8b`,
+`qwen3-8b`, `phi-4-mini`, `ministral-3-8b`) are benchmarked across two
+retrieval corpora (`hotpot_qa`, `ms_marco`) against three structurally
+distinct attack families — indirect prompt injection, knowledge-corrupting
+corpus poisoning (PoisonedRAG), and multi-turn conversational jailbreaking
+(Crescendo) — and three low-cost defenses (`instruction_detection`,
+`spotlighting`, `output_filter`). Every reported number comes from real
+generations on real GPU hardware (RunPod A100, HuggingFace `transformers`
+and vLLM), never simulated or estimated, and every significance test is a
+paired exact test with Holm-Bonferroni correction, not an approximation.
+
+The two questions the dissertation answers:
+
+1. **How vulnerable are these four models to each attack family?**
+   Vulnerability is real and substantial everywhere, but its shape is
+   attack-specific: indirect injection is dominated by *model identity*,
+   PoisonedRAG by *corpus identity*, and Crescendo by neither at the
+   aggregate level, though each model reaches a similar attack-success
+   rate through a distinct behavioral mechanism.
+2. **How effective are practical, low-cost defenses, and at what cost?**
+   Exactly one of three defenses tested, `spotlighting` against injection,
+   clears the bar of a confirmed, backend-isolated real effect, and it
+   does so at a severe utility cost. No defense tested here achieves both
+   a confirmed effect and full utility preservation at once.
+
+## Where to read the full dissertation
+
+The complete dissertation source lives in this repository, under
+[`thesis/`](thesis/). `thesis/main.tex` is the entry point; the six body
+chapters are under `thesis/chapters/`, and the bibliography (41
+peer-reviewed-first references) is under `thesis/attachments/`. Compile
+with any standard LaTeX toolchain (`pdflatex` → `bibtex` → `pdflatex` ×2,
+or `latexmk -pdf thesis/main.tex`) to produce the submitted PDF.
+
+A pre-compiled copy of the final submitted PDF is also included directly
+in the repository for convenience, at
+[`thesis/M599_GH1037512_Simarjit_Singh_Dissertation.pdf`](thesis/M599_GH1037512_Simarjit_Singh_Dissertation.pdf)
+— open this directly if you don't want to compile the LaTeX source
+yourself. (This is a copy of `main.pdf` under the submission's required
+filename; it will be removed or kept up to date manually going forward,
+since it is not regenerated automatically by the build.)
+
+For a narrative, prose account of the whole project without compiling
+anything, read [`docs/THESIS_MASTER_RECORD.md`](docs/THESIS_MASTER_RECORD.md)
+— it is self-contained and covers the research design, every phase's
+final results, the real-hardware engineering story, the backend-confound
+discovery and resolution, methodology, and limitations, in the same
+depth as the dissertation itself.
+
+**Status: the dissertation is complete.** All four phases (baseline,
+attacks, defenses, EU AI Act Article 15 mapping) are finished with final,
+backend-corrected results, and the full write-up is committed on `main`.
+
+---
+
+## Key findings
+
+![Injection ASR by model and template](results/figures/fig03_injection_asr_model_template.png)
+*Indirect injection: ministral-3-8b is the outlier; corpus identity, not model choice, drives PoisonedRAG success (see below).*
+
+![PoisonedRAG ASR by model and corpus](results/figures/fig04_poisonedrag_asr_model_corpus.png)
+
+Nine result figures in total (baseline quality, `nq_open` exclusion
+evidence, all three attacks, the backend-confound before/after,
+defense-utility trade-off, and the `instruction_detection` false-positive
+check) are captioned inline in
+[`docs/THESIS_MASTER_RECORD.md`](docs/THESIS_MASTER_RECORD.md) and, in
+full statistical detail with formal report/interpretation separation, in
+the dissertation's Chapter 5.
+
+- **The three attacks are each dominated by a different axis** — indirect
+  injection by *model identity* (large, model-specific mechanism
+  differences), PoisonedRAG by *corpus identity* (all four models
+  statistically indistinguishable), and Crescendo by neither (outcome
+  doesn't separate the four models, but the *mechanism* each one uses to
+  get there is a strong per-model signature). No single "robustness
+  score" summarizes all three.
+- **A real inference-backend confound (`hf` vs `vllm`) was found
+  mid-analysis and fully resolved, not just flagged.** Two of three
+  defenses' headline results were overturned once corrected: see the next
+  point.
+- **Defense effectiveness, final and backend-corrected:** `spotlighting`
+  is the only defense with a confirmed real effect on injection ASR (9/16
+  cells), at a severe utility cost. `output_filter` shows **no**
+  significant backend-isolated effect on injection (0/19) — its apparent
+  effect was almost entirely the backend switch — and is a **structural
+  architectural mismatch** against PoisonedRAG (a safety classifier flags
+  0/160 factually-wrong-but-safe-sounding responses). `instruction_detection`
+  shows 0/16 significant cells at n=40, but is **real, just underpowered**
+  — mechanism attribution confirms 100% of genuinely-blocked items have a
+  classifier flag behind them.
+- **Real-hardware verification was not optional.** Eight distinct,
+  genuinely blocking bugs in the two production defense modules were
+  invisible to the mocked test suite and were only found running on real
+  hardware against real model weights — a citable finding about testing
+  this class of system, not incidental engineering trivia.
+- **`nq_open` is excluded from every real comparison in this project** —
+  its "retrieved context" is unfixable-by-construction gold-answer leakage,
+  confirmed by both direct inspection and a near-ceiling, near-invariant
+  F1 pattern across all four models.
+- **This dissertation maps its own findings onto EU AI Act Article
+  15(5)** as a technical exercise, not a legal compliance claim, and
+  documents that no harmonised testing standard for this kind of
+  robustness evidence exists yet (`prEN 18229-2` and `prEN 18282` both
+  remain in draft as of this writing).
+
+Full detail, numbers, and statistical tests for every point above:
+`docs/THESIS_MASTER_RECORD.md`, or Chapters 4–5 of the dissertation
+itself.
 
 ---
 
 ## Quick links
 
-**Start here:**
-
+- **[`thesis/`](thesis/)** — the dissertation itself: LaTeX source,
+  chapters, bibliography. Compile `thesis/main.tex` for the submitted PDF.
 - **[`THESIS_MASTER_RECORD.md`](docs/THESIS_MASTER_RECORD.md)** — the full
-  narrative record: research design, every phase's final results, the
-  real-hardware engineering story, the backend-confound discovery and
-  resolution, methodology, limitations, and open items. Self-contained —
-  read this one document to understand the whole project.
+  narrative record, self-contained, no compilation needed.
 - **[`THESIS_ARCHITECTURE.md`](docs/THESIS_ARCHITECTURE.md)** — visual
   companion: Mermaid diagrams of the project flow, experimental design
   matrix, infrastructure/pipeline, attack and defense mechanisms, and the
-  bug-discovery timeline. For seeing the shape of the project at a glance.
+  bug-discovery timeline.
 - **[`CITATIONS.md`](docs/CITATIONS.md)** — the peer-reviewed reference list
   (see [Citation policy](#citation-policy) below).
 
@@ -46,9 +148,16 @@ below.
 ---
 
 ## Repo structure
+---
 
 ```
 rag-adversarial-robustness/
+├── thesis/                            # the dissertation itself
+│   ├── main.tex                       # entry point; compile this
+│   ├── chapters/                      # Introduction, Foundations, Related Work,
+│   │                                   # Approach, Evaluation, Conclusion
+│   └── attachments/
+│       └── bibliography.bib           # 41 references, peer-reviewed-first policy
 ├── config.py                          # models, corpora, pinned revisions, seeds
 ├── harness/
 │   ├── model_loader.py                # per-model load + chat-template rendering
@@ -106,6 +215,7 @@ rag-adversarial-robustness/
 └── README.md                          # this file
 ```
 
+
 (A handful of task-brief `.md` files and per-bug fix write-ups also live
 under `docs/archive/task-briefs/` — real engineering narrative, consolidated
 into `THESIS_MASTER_RECORD.md` Sections 3 and 7 rather than duplicated here.)
@@ -141,6 +251,9 @@ touch those unless you're deliberately re-pinning.
 | `NVIDIA_NIM_API_KEY` | PoisonedRAG poison generation, Crescendo attacker/judge | `nemotron-3-ultra-550b-a55b` and `deepseek-v4-pro-0813` both served via NIM |
 | `OPENROUTER_API_KEY` | Crescendo (fallback transport) | `attacks/crescendo.py`; used when NIM's ~40 req/min limit is exhausted mid-sweep, via `CRESCENDO_LLM_PROVIDER` |
 | `RUNPOD_API_KEY` | Not user-set | RunPod auto-injects this into the pod environment itself |
+
+`.env.example` documents all four; copy it to `.env` and fill in the
+ones you need.
 
 ### Core environment variables (all optional, sensible defaults)
 
@@ -183,7 +296,8 @@ scripts — set `RAG_DEFENSE` before running `run_attack_injection.py` /
 (`output_filter` only — Crescendo has no retrieved content for
 `instruction_detection`/`spotlighting` to act on, and its guard verdict is
 logged but deliberately never enforced; see
-`THESIS_MASTER_RECORD.md` Section 6.3).
+`THESIS_MASTER_RECORD.md` Section 6.3, or the dissertation's Chapter 5,
+Section "Defense Evaluation and the Backend-Confound Discovery").
 
 ### Results notebook
 
@@ -228,83 +342,67 @@ silently billing forever or erasing its own evidence. See
 
 ## Current project status
 
-- **Phase 1 (baseline):** Complete. 4 models × 3 corpora, n=1000 each.
+- **Phase 1 (baseline):** Complete. 4 models × 2 corpora used in every
+  real comparison (`nq_open` collected but excluded — see below), n=1000
+  each.
 - **Phase 2 (attacks):** Complete. All three attacks swept and written up.
 - **Phase 3 (defenses):** Complete, with final backend-corrected results.
   An inference-backend confound (`hf` vs `vllm`) was discovered
-  mid-analysis and fully resolved; see
-  [Key findings](#key-findings) below and `THESIS_MASTER_RECORD.md`
-  Section 8.
+  mid-analysis and fully resolved; see [Key findings](#key-findings) above
+  and `THESIS_MASTER_RECORD.md` Section 8.
 - **Phase 4 (EU AI Act Article 15 mapping):** Complete —
   see [`docs/PHASE4_EU_AI_ACT_MAPPING.md`](docs/PHASE4_EU_AI_ACT_MAPPING.md),
   which verifies the regulatory context directly, quotes Article 15's real
   requirements, and maps them against this project's final Phase 1–3
-  results. See `docs/NQ_OPEN_SCOPE_DECISION.md` Section 3 for the
-  `PHASE2_ROADMAP.md` provenance note.
-- **Thesis write-up:** Not part of this repository's committed material.
-  `THESIS_MASTER_RECORD.md` is explicitly positioned as the backbone for
-  writing it, not a substitute for it.
-- **Branch:** `defense/wire-sweep-runners` has been merged into `main`;
-  current work lives on `main`.
-
-(Status pulled from `THESIS_MASTER_RECORD.md` Section 12 and this
-repository's own commit history — no separate status-tracking file exists
-to check against.)
-
----
-
-## Key findings
-
-![Injection ASR by model and template](results/figures/fig03_injection_asr_model_template.png)
-*Indirect injection: ministral-3-8b is the outlier; corpus identity, not model choice, drives PoisonedRAG success (see below).*
-
-![PoisonedRAG ASR by model and corpus](results/figures/fig04_poisonedrag_asr_model_corpus.png)
-
-Nine result figures in total (baseline quality, nq_open exclusion evidence, all three attacks, the backend-confound before/after, defense-utility trade-off, and the instruction_detection false-positive check) are captioned inline in [`docs/THESIS_MASTER_RECORD.md`](docs/THESIS_MASTER_RECORD.md).
-
-- **The three attacks are each dominated by a different axis** — indirect
-  injection by *model identity* (large, model-specific mechanism
-  differences), PoisonedRAG by *corpus identity* (all four models
-  statistically indistinguishable), and Crescendo by neither (outcome
-  doesn't separate the four models, but the *mechanism* each one uses to
-  get there is a strong per-model signature). No single "robustness
-  score" summarizes all three.
-- **A real inference-backend confound (`hf` vs `vllm`) was found
-  mid-analysis and fully resolved, not just flagged.** Two of three
-  defenses' headline results were overturned once corrected: see the next
-  point.
-- **Defense effectiveness, final and backend-corrected:** `spotlighting`
-  is the only defense with a confirmed real effect on injection ASR (9/16
-  cells), at a severe utility cost. `output_filter` shows **no**
-  significant backend-isolated effect on injection (0/19) — its apparent
-  effect was almost entirely the backend switch — and is a **structural
-  architectural mismatch** against PoisonedRAG (a safety classifier flags
-  0/160 factually-wrong-but-safe-sounding responses). `instruction_detection`
-  shows 0/16 significant cells at n=40, but is **real, just underpowered**
-  — mechanism attribution confirms 100% of genuinely-blocked items have a
-  classifier flag behind them.
-- **Real-hardware verification was not optional.** Eight distinct,
-  genuinely blocking bugs in the two production defense modules were
-  invisible to the mocked test suite and were only found running on real
-  hardware against real model weights — a citable finding about testing
-  this class of system, not incidental engineering trivia.
-- **`nq_open` is excluded from every real comparison in this project** —
-  its "retrieved context" is unfixable-by-construction gold-answer leakage,
-  confirmed by both direct inspection and a near-ceiling, near-invariant
-  F1 pattern across all four models.
-
-Full detail, numbers, and statistical tests for every point above:
-`THESIS_MASTER_RECORD.md`.
+  results.
+- **Dissertation write-up:** Complete and committed under
+  [`thesis/`](thesis/). `docs/THESIS_MASTER_RECORD.md` was the backbone
+  used to write it and remains a faithful, self-contained companion to
+  the finished dissertation.
+- **Branch:** all work is merged into `main`; this is the current,
+  submitted state of the project.
 
 ---
 
 ## Citation policy
 
 Peer-reviewed venues only — ACM, IEEE, PMLR, USENIX, ACL Anthology,
-CEUR-WS — with bare arXiv preprints avoided except two explicitly-flagged
-model artifacts documented only via model card. See
-[`CITATIONS.md`](docs/CITATIONS.md) for the full reference list and its stated
-inclusion policy.
+CEUR-WS — with bare arXiv preprints avoided except where a technical
+report or model card is the only citable source for a specific model
+artifact, each flagged explicitly as such at the point of citation. See
+[`CITATIONS.md`](docs/CITATIONS.md) for the full reference list and its
+stated inclusion policy.
+
+---
+
+## How to cite this work
+
+If you use this benchmark, its results, or its methodology in your own
+work, please cite the dissertation directly.
+
+**Plain text:**
+
+> Singh, S. (2026). *Adversarial Robustness of Open-Source RAG Pipelines*.
+> MSc dissertation, GISMA University of Applied Sciences. Available at:
+> https://github.com/Simarjit1303/rag-adversarial-robustness
+
+**BibTeX:**
+
+```bibtex
+@mastersthesis{singh2026ragrobustness,
+  author = {Singh, Simarjit},
+  title  = {Adversarial Robustness of Open-Source RAG Pipelines},
+  school = {GISMA University of Applied Sciences},
+  year   = {2026},
+  type   = {MSc dissertation},
+  url    = {https://github.com/Simarjit1303/rag-adversarial-robustness}
+}
+```
+
+If you specifically build on the codebase, the benchmark design, or the
+backend-confound correction methodology rather than the dissertation's
+findings, please also link back to this repository directly so others
+can trace results to their exact source implementation and commit.
 
 ---
 
