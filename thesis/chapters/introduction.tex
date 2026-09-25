@@ -1,0 +1,293 @@
+\chapter{Introduction}
+
+\section{Context and Motivation}
+
+Retrieval-Augmented Generation (RAG) has become a default way to give
+large language models access to information beyond their initial
+training data. Instead of relying solely on parametric knowledge, a
+RAG-based model retrieves relevant data from an external corpus at
+inference time and adjusts its responses based on that retrieved
+context. This pattern is now used in a variety of production systems
+across search, customer support, and enterprise knowledge tools:
+enterprise assistants that answer questions against internal
+documentation, customer-support chatbots that ground replies in a
+company's own knowledge base, and consumer-facing assistants that cite
+sources for factual claims rather than relying purely on what a model
+memorized during training. The appeal is straightforward. Parametric
+knowledge freezes at a model's training cutoff and cannot reflect
+anything that happened afterward, and a model reasoning purely from its
+own weights has no built-in mechanism to point to a specific source for
+a claim it makes. Grounding generation in retrieved text addresses both
+problems at once, at the cost of introducing a new component into the
+pipeline that an adversary can target: the retrieval corpus itself.
+
+Retrieval has also opened a new attack pattern. An adversary who can
+influence the retrieved content or the conversations built around it can
+manipulate the model's output without ever touching its model weights,
+without needing any access to the model's training process, and often
+without the system's operators noticing anything unusual about the
+request itself. The European Union's Artificial Intelligence Act
+(Regulation (EU) 2024/1689) has given this question a regulatory
+importance: Article 15 requires high-risk AI systems to display "an
+appropriate level of accuracy, robustness, and cybersecurity" and to be
+resilient against attempts to exploit system vulnerabilities. This
+dissertation treats Article 15(5) as a technical specification to test
+against, not a legal claim to argue, a distinction maintained throughout
+the rest of the dissertation.
+
+\section{Problem Statement}
+
+Three distinct mechanisms exist for manipulating a RAG system's output
+through its retrieval layer, and treating them as variations on one idea
+rather than three separate threats is itself a methodological risk this
+dissertation avoids. The first, planting a malicious instruction inside
+retrieved text, known as indirect prompt injection \cite{greshake2023not},
+exploits the fact that a model has no reliable way to distinguish an
+instruction written by its system prompt from one embedded in a document
+it retrieves. The second, planting a false fact into the model's corpus
+itself, known as knowledge poisoning \cite{zou2025poisonedrag}, targets
+the corpus rather than the model's instruction-following behavior: an
+adversary inserts a small number of crafted documents into the knowledge
+base such that, for a chosen query, the poisoned documents are retrieved
+and steer the model toward a specific false answer. The third,
+manipulating the model across multiple conversational turns, exploiting
+its conversational memory state rather than any single retrieved
+document \cite{russinovich2025great}, escalates a benign-seeming
+conversation gradually toward an output the model would refuse if asked
+directly in a single turn. Each targets a genuine vulnerability in the
+pipeline rather than a variation on a single idea, so a defense effective
+against one offers no guarantee against another.
+
+Existing RAG security benchmarks tend to cover a broader set of attacks
+within a single attack category or one narrow slice of the threat
+surface, rather than all three families side by side under one shared,
+controlled environment. SafeRAG \cite{liang2025saferag} evaluates four
+RAG-specific attack tasks (noise, conflict, toxicity, denial-of-service)
+across fourteen RAG components, but its safety framework has no
+multi-turn conversational attacks, and it does not test or evaluate the
+same four target models this research studies. RSB \cite{zhang2025rsb}
+benchmarks thirteen poisoning attacks and seven defenses at far greater
+scale than this research's single poisoning method, but covers poisoning
+exclusively, with no injection or multi-turn attack family at all. RSB
+remains an arXiv preprint at the time of writing this, and no other
+trusted version has emerged despite deep searches across the web. This
+dissertation includes it here as an explicit exception to its
+peer-review sourcing standard because it was one of three benchmark
+works confirmed directly with the supervisor. Crucially, its own primary
+finding shows that its strongest defense reduces poisoning success but
+at an accuracy drop exceeding 20\% in most settings, which parallels
+this dissertation's own finding that spotlighting is the only defense
+with a confirmed real effect on injection, at a mean $\Delta F_1$ of
+$-0.283$. Hidden-in-Plain-Text \cite{guo2026hidden} reports
+attack-success confidence intervals for indirect prompt injection
+specifically, but is scoped to web-carrier delivery mechanisms and
+doesn't cover knowledge poisoning or multi-turn jailbreaking. No
+existing work to this dissertation's knowledge evaluates all three
+attack families against the same set of models under a single
+backend-controlled harness; the backend-confound discovery detailed in
+Chapter 4 is itself a methodological consideration most of this
+literature doesn't appear to control for.
+
+\section{Research Questions}
+
+This dissertation explores two research questions:
+
+\begin{itemize}
+    \item \textbf{RQ1:} How vulnerable are small-to-mid-size (4--12B
+    parameters) open-source, open-weight, instruction-tuned language
+    models to indirect prompt injection, knowledge poisoning and
+    multi-turn adversarial manipulation when deployed in a
+    retrieval-augmented generation pipeline?
+    \item \textbf{RQ2:} How effective are practical, low-cost defenses
+    at reducing attack success and at what cost to the system's
+    underlying answer utility?
+\end{itemize}
+
+A third, narrower question follows from the first two and runs through
+the closing chapters of this dissertation rather than standing on its
+own: how do the answers to RQ1 and RQ2 map onto Article 15(5)'s specific
+vulnerability classes, and where does that mapping expose gaps in what a
+benchmark of this kind can and cannot demonstrate? This third question
+is framed deliberately as an open mapping exercise rather than a claim
+to be proven, since the goal of Chapter 5's regulatory discussion is
+honesty about where the benchmark's evidence is strong and where it is
+silent, not forcing every result into a compliance verdict it cannot
+support.
+
+\clearpage
+\section{Contributions}
+
+This dissertation contributes:
+
+\begin{enumerate}
+    \item A reproducible, statistically rigorous, real-hardware
+    benchmark spanning four open-source language models, two retrieval
+    corpora, three attack families and three defenses, built so that
+    every reported number traces back to a specific, re-runnable script
+    and a verified result file rather than a one-off measurement.
+    \item A documented account of an inference-backend confound
+    discovered mid-analysis, which overturned two of the three defenses'
+    apparent headline effects once corrected, offering a citable
+    methodological warning for anyone building a similar evaluation: a
+    defense's apparent effect can be, in whole or in part, an artifact
+    of which inference backend its baseline happened to run on, and this
+    is detectable only by deliberately building a backend-matched
+    comparison.
+    \item A mapping of these results onto Article 15(5)'s vulnerability
+    classes, offered as a concrete technical contribution to a
+    compliance-testing gap that currently has no harmonised standard,
+    together with an explicit account of which parts of Article 15 this
+    benchmark's design cannot speak to.
+\end{enumerate}
+
+The central empirical finding running through all three contributions is
+that robustness is not one factor. Model identity dominates injection
+success. Corpus identity dominates knowledge-poisoning success. The
+multi-turn attack produces no statistically significant ranking across
+models at all. A benchmark, defense, or compliance argument built around
+one blended notion of robustness would miss this structure entirely, and
+would risk recommending a defense calibrated to the wrong axis of
+vulnerability.
+
+\section{Implementation and Reproducibility}
+
+This dissertation evaluates four open-source, instruction-tuned language
+models: Llama-3.1-8B-Instruct \cite{grattafiori2024llama3}, Qwen3-8B
+\cite{yang2025qwen3}, Phi-4-mini-instruct \cite{abouelenin2025phi4mini},
+and Ministral-3-8B-Instruct-2512 \cite{mistralai2025ministral3}. These
+four models were selected against five explicit requirements, detailed
+further in Chapter 4: a permissive open license, self-hostable weights,
+instruction tuning, a parameter count in the roughly 4--12B range, and a
+dense, non-mixture-of-experts architecture. Every result rests on real
+generations run on real GPU hardware \cite{runpod2024platform}, not
+simulated or estimated output, a distinction that matters given how much
+of the adjacent literature relies on smaller samples or proxy
+measurements. The full implementation, an open-source Python framework,
+is available at
+\url{https://github.com/Simarjit1303/rag-adversarial-robustness}
+\cite{singh2026ragrepo}; it satisfies this module's technical-contribution
+requirement and lets another researcher reproduce, extend, or challenge
+any result reported here directly against the same code and data.
+
+\section{Scope and Limitations}
+
+This dissertation uses two retrieval corpora, HotpotQA
+\cite{yang2018hotpotqa} and MS MARCO \cite{nguyen2016msmarco}, across
+every comparison. It also evaluated a third corpus, Natural Questions
+Open \cite{kwiatkowski2019natural}, and excluded it after it became
+structurally unsuitable for testing retrieval-dependent robustness: its
+passage text is, by construction, the gold answer itself, a property
+detailed with full evidence in Chapter 5. The supervisor confirmed this
+decision as a settled scope choice. This dissertation excludes model
+poisoning and confidentiality attacks from its scope: every attack it
+studies operates at inference time, and none touch training data or
+model weights, a boundary worth stating plainly rather than stretching
+any of the three studied attacks to cover ground they were never
+designed for. It does not determine whether any specific deployed RAG
+system counts as high-risk under Annex III of the AI Act; that
+determination depends on deployment context outside this benchmark's
+scope, and this dissertation makes no claim about it in either
+direction.
+
+\section{Structure of the Dissertation}
+
+This chapter has presented the motivation, problem, research questions,
+and contributions towards this research. Figure~\ref{fig:dissertation-structure}
+outlines the chapters that follow.
+
+\begin{figure}[htbp]
+\centering
+\resizebox{\linewidth}{!}{%
+\begin{tikzpicture}[
+  box/.style={rectangle, draw, rounded corners, align=center, minimum width=2.1cm, minimum height=1.3cm, font=\small},
+  arr/.style={-Stealth, thick}
+]
+\node[box] (c1) {Ch.~1\\Introduction};
+\node[box, right=0.5cm of c1] (c2) {Ch.~2\\Foundations};
+\node[box, right=0.5cm of c2] (c3) {Ch.~3\\Related Work};
+\node[box, right=0.5cm of c3] (c4) {Ch.~4\\Approach};
+\node[box, right=0.5cm of c4] (c5) {Ch.~5\\Evaluation};
+\node[box, right=0.5cm of c5] (c6) {Ch.~6\\Conclusion};
+\draw[arr] (c1) -- (c2);
+\draw[arr] (c2) -- (c3);
+\draw[arr] (c3) -- (c4);
+\draw[arr] (c4) -- (c5);
+\draw[arr] (c5) -- (c6);
+\end{tikzpicture}%
+}
+\caption{Structure of the dissertation, chapters in reading order.}
+\label{fig:dissertation-structure}
+\end{figure}
+
+As Figure~\ref{fig:dissertation-structure} shows, five chapters follow
+after this one. Chapter 2 (Foundations) establishes the technical
+background needed to follow the rest of the dissertation: retrieval-
+augmented generation itself, the model-versus-context distinction that
+organizes this dissertation's whole attack taxonomy, and the regulatory
+context this dissertation tests against. Chapter 3 (Related Work)
+surveys the existing literature on RAG-specific adversarial attacks and
+defenses, organized by attack family and defense mechanism; under the
+framework set by the university's CDS structure, this chapter serves as
+the dissertation's literature review. Chapter 4 (Approach) describes the
+benchmark's design and implementation in detail, including the
+infrastructure it runs on and the real engineering failures encountered
+while building it. Chapter 5 (Evaluation and Results) presents the full
+statistical analysis across all three attack families and three
+defenses, and maps them onto Article 15. Chapter 6 (Conclusion)
+summarizes the findings, states their limitations honestly, and closes
+with a discussion of what this benchmark contributes to, and cannot
+resolve about, the compliance-testing question this dissertation opened
+with.
+
+\clearpage
+\section{Conceptual Framework}
+
+Figure~\ref{fig:conceptual-framework} maps how this dissertation's core constructs relate to one another, 
+the research design itself, not the chapter order 
+Figure~\ref{fig:dissertation-structure} shows or the operational pipeline Chapter 4 describes
+
+\begin{figure}[htbp]
+\centering
+\resizebox{\linewidth}{!}{%
+\begin{tikzpicture}[
+  box/.style={rectangle, draw, rounded corners, align=center, minimum width=3.2cm, minimum height=1cm, font=\small},
+  wide/.style={rectangle, draw, rounded corners, align=center, minimum width=10cm, minimum height=1cm, font=\small},
+  arr/.style={-Stealth, thick},
+  node distance=0.5cm
+]
+\node[box] (inj) {Indirect Prompt\\Injection};
+\node[box, right=0.4cm of inj] (poi) {PoisonedRAG};
+\node[box, right=0.4cm of poi] (cre) {Crescendo};
+
+\node[wide, below=0.7cm of poi] (pipeline) {RAG Pipeline Under Test\\(4 Models $\times$ 2 Corpora)};
+
+\node[box, right=2.2cm of pipeline] (def) {Defense Mechanism\\(3 Tested)};
+
+\node[wide, below=0.7cm of pipeline] (outcome) {Outcome Measures:\\Attack Success Rate (ASR) and Utility Cost ($\Delta F_1$)};
+
+\node[wide, below=0.7cm of outcome] (stats) {Statistical Validation:\\Paired Exact Tests, Holm-Bonferroni Correction, Bootstrap CIs};
+
+\node[wide, below=0.7cm of stats] (article15) {Mapping to EU AI Act Article 15(5)};
+
+\draw[arr] (inj) -- (pipeline);
+\draw[arr] (poi) -- (pipeline);
+\draw[arr] (cre) -- (pipeline);
+\draw[arr] (def) -- (pipeline);
+\draw[arr] (pipeline) -- (outcome);
+\draw[arr] (outcome) -- (stats);
+\draw[arr] (stats) -- (article15);
+\end{tikzpicture}%
+}
+\caption{Conceptual framework: how attacks, defenses, and outcomes connect through this dissertation's statistical methodology to its Article 15 mapping.}
+\label{fig:conceptual-framework}
+\end{figure}
+\FloatBarrier
+
+Three attack families target the RAG pipeline from the top of the figure, each exploiting a structurally distinct surface, 
+as Chapter 2 details: indirect prompt injection manipulates retrieved content, PoisonedRAG corrupts the retrieval index itself 
+and Crescendo exploits multi-turn conversational state independently of retrieval altogether. 
+A tested defense mechanism intervenes on the pipeline from the side, positioned deliberately as a moderating influence on the attack's effect rather than a fourth attack surface. 
+The pipeline's response under each attack-defense combination produces two outcome measures, attack success rate and utility cost, and neither is reported as a raw number on its own. 
+Every reported figure passes through a statistical validation stage first, paired exact testing appropriate to the comparison structure, Holm-Bonferroni correction within each hypothesis family and 
+bootstrap confidence intervals for utility-cost estimates, detailed fully in Chapter 4, before it counts as a finding. Only validated findings feed into the final stage, this dissertation's mapping onto Article 15(5), 
+which is why that mapping in Chapter 5 can speak to the compliance-testing question with statistically confirmed evidence rather than figures no correction has touched.

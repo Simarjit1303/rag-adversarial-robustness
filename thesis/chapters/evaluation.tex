@@ -1,0 +1,788 @@
+\chapter{Evaluation and Results}
+
+\section{Experimental Setup}
+
+This chapter reports results from the benchmark design established in
+Chapters 3 and 4: four target models, Llama-3.1-8B-Instruct
+\citep{grattafiori2024llama3}, Qwen3-8B \citep{yang2025qwen3},
+Phi-4-mini-instruct \citep{abouelenin2025phi4mini}, and
+Ministral-3-8B-Instruct-2512 \citep{mistralai2025ministral3}, evaluated
+across two retrieval corpora, HotpotQA \citep{yang2018hotpotqa} and MS
+MARCO \citep{nguyen2016msmarco}, against three attack families, indirect
+prompt injection \citep{greshake2023not}, PoisonedRAG
+\citep{zou2025poisonedrag}, and Crescendo \citep{russinovich2025great},
+and three defenses, spotlighting \citep{hines2024defending},
+instruction-detection, and output-filter using Llama Guard 4
+\citep{metaai2025llamaguard4}. Every generation reported in this chapter
+ran on real GPU hardware rather than simulated or estimated output, and
+every reported statistic uses paired testing appropriate to its
+comparison type: McNemar's exact test for paired same-corpus model
+comparisons, Fisher's exact test for unpaired corpus-versus-corpus
+comparisons, and Holm-Bonferroni correction applied within each family
+of hypotheses to control for the number of comparisons made.
+
+Attack success rate (ASR) captures the proportion of attempts in which
+the attack achieves its stated objective, whether that objective is
+eliciting a specific answer, bypassing a safety filter, or causing a
+refusal:
+$$
+\mathrm{ASR} = \frac{n_{\text{success}}}{n_{\text{total}}}
+$$
+where $n_{\text{success}}$ is the number of successful attack attempts
+and $n_{\text{total}}$ is the total number of attack attempts. Defense
+effectiveness follows from ASR directly, the change in ASR under a
+defended condition relative to the matched undefended baseline. Utility
+cost tracks the same logic on the answer-quality side, the change in
+F1 under a defended condition relative to the clean, no-attack baseline
+reported in Section~\ref{sec:baseline-quality}:
+$$
+\Delta F_1 = F_1^{\text{baseline}} - F_1^{\text{condition}}
+$$
+where $F_1^{\text{condition}}$ is the answer-quality F1 measured under
+the attacked or defended condition being evaluated.
+
+\section{Baseline Answer Quality}
+\label{sec:baseline-quality}
+
+Figure~\ref{fig:baseline-f1} reports Phase 1 baseline answer quality
+(F1 and exact-match) for all four target models across all three
+corpora, before any attack or defense is applied. F1 balances precision
+and recall over the tokens shared between a generated answer and its
+gold reference:
+$$
+F_1 = \frac{2 \cdot \text{precision} \cdot \text{recall}}{\text{precision} + \text{recall}}
+$$
+with precision the fraction of the generated answer's tokens that
+appear in the gold reference, and recall the fraction of the gold
+reference's tokens that appear in the generated answer. Exact Match is
+the stricter of the two, awarding credit only when the generated answer
+matches the gold reference exactly after normalization. It is computed
+as
+$$
+\mathrm{EM} = \frac{1}{n}\sum_{i=1}^{n} \mathbb{1}\left[\hat{a}_i = a_i\right]
+$$
+where $\hat{a}_i$ is the model's normalized generated answer for item
+$i$, $a_i$ is the normalized gold reference, and $\mathbb{1}[\cdot]$ is
+the indicator function returning 1 when they match exactly and 0
+otherwise. This baseline establishes the clean-condition reference
+point every attack and defense result in this chapter is measured
+against, and it is the figure any downstream utility-cost number in
+this chapter implicitly compares back to.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.9\textwidth]{fig01_phase1_baseline_f1_em}
+\caption{Phase 1 baseline answer quality (F1, exact-match) by model and corpus.}
+\label{fig:baseline-f1}
+\end{figure}
+
+\section{The \texorpdfstring{\texttt{nq\_open}}{nq\_open} Exclusion}
+
+This dissertation originally intended Natural Questions Open
+\citep{kwiatkowski2019natural} as a third retrieval corpus alongside
+HotpotQA and MS MARCO. Figure~\ref{fig:nq-open-exclusion} reports mean
+F1 of 0.962 (spread 0.005) on \texttt{nq\_open}, versus 0.585 (spread
+0.179) on HotpotQA and 0.255 (spread 0.042) on MS MARCO, consistently
+across all four models.
+
+A score this close to ceiling, and this invariant across four models of
+markedly different capability, is not a sign of genuine task difficulty
+being solved uniformly well; it is the signature of a corpus that leaks
+its own answer. The technical explanation is a corpus-construction fact,
+not a model or implementation failure: no genuine supporting passage
+ships with \texttt{nq\_open}, so its passage text \emph{is} the gold
+answer by construction. This dissertation therefore dropped it from
+every real sweep. The scope impact of this exclusion is narrower than
+"losing a corpus" outright: Crescendo is corpus-independent and entirely
+unaffected. Only the two corpus-dependent attack families, indirect
+prompt injection and PoisonedRAG, lose one of three corpora, reducing
+their design to a 4-model-by-2-corpus matrix rather than
+4-by-3.\footnote{The dissertation supervisor confirmed and approved this
+exclusion as a settled scope decision. The technical reasoning above,
+not the approval itself, is the argument for it.} The real matrix going
+forward, then, is four models by two corpora by three attacks, with
+Crescendo unaffected by the corpus reduction.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.9\textwidth]{fig02_nq_open_exclusion_evidence}
+\caption{Evidence for the \texttt{nq\_open} exclusion: near-ceiling, near-invariant F1 across all four models.}
+\label{fig:nq-open-exclusion}
+\end{figure}
+
+\section{Attack 1: Indirect Prompt Injection}
+
+This attack tests four models across two corpora against five injection
+templates, organized into two categories: goal-hijacking, which redirects
+the model to a different question entirely (\texttt{naive},
+\texttt{escape\_char}, \texttt{combined}), and process-hijacking, which
+instead convinces the model it is at a different stage of its own task
+(\texttt{ignore}, \texttt{fake\_completion}). This taxonomy is a design
+decision made for this benchmark rather than a direct import from
+\citet{liu2024formalizing}'s original formulation. This attack places
+the injection text into an organically retrieved document rather than
+forcing it into the top-$k$ results, keeping this attack's surface
+distinct from PoisonedRAG's forced-retrieval mechanism.
+Figure~\ref{fig:injection-asr} visualizes the resulting pattern;
+Table~\ref{tab:injection-full} lists every cell.
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{llrrrrr}
+\toprule
+\textbf{Model} & \textbf{Corpus} & \textbf{naive} & \textbf{escape\_char} & \textbf{ignore} & \textbf{fake\_completion} & \textbf{combined} \\
+\midrule
+Llama-3.1-8B & HotpotQA & 0.20 & 0.20 & 0.00 & 0.00 & 0.20 \\
+Llama-3.1-8B & MS MARCO & 0.40 & 0.40 & 0.30 & 0.60 & 0.40 \\
+Qwen3-8B & HotpotQA & 0.20 & 0.40 & 0.30 & \textbf{11.70} & 0.10 \\
+Qwen3-8B & MS MARCO & 0.40 & 0.90 & 3.20 & \textbf{14.10} & 0.50 \\
+Phi-4-mini & HotpotQA & 0.20 & 0.30 & 0.00 & 0.20 & 0.20 \\
+Phi-4-mini & MS MARCO & 0.30 & 0.10 & 3.20 & \textbf{10.10} & 0.10 \\
+Ministral-3-8B & HotpotQA & 0.70 & 0.50 & \textbf{35.30} & \textbf{60.80} & 0.50 \\
+Ministral-3-8B & MS MARCO & 0.80 & 0.70 & \textbf{30.50} & \textbf{51.50} & 1.10 \\
+\bottomrule
+\end{tabular}
+\caption{Indirect injection ASR (\%) by model, corpus, and template, $n=1000$ per cell, 40 cells total.}
+\label{tab:injection-full}
+\end{table}
+
+Llama-3.1-8B remains near-zero across every template and corpus.
+Qwen3-8B shows elevated ASR specifically under \texttt{fake\_completion}
+(11.7--14.1\%) while remaining largely unaffected by \texttt{ignore}
+(0.3--3.2\%). Phi-4-mini shows elevated ASR under \texttt{fake\_completion}
+on MS MARCO only, 10.1\% versus 0.2\% on HotpotQA, a corpus-specific
+split confirmed statistically real ($p=8.18\times10^{-29}$).
+Ministral-3-8B shows the highest ASR overall, 30.5--60.8\% under both
+process-hijack templates. Across the three goal-hijack templates, ASR
+sits at 0.1--1.1\% almost everywhere; utility damage there, detailed
+below, is small and inconsistent in sign, every one of 24 goal-hijack
+cells falling between $-0.038$ and $+0.025$.
+
+These four patterns point to different failure modes, not a
+single axis of "more or less robust." Qwen3-8B's selective vulnerability
+to \texttt{fake\_completion} but not \texttt{ignore} is hypothesized,
+though not proven, to relate to its explicit thinking-mode chat template
+being more susceptible to a forged completion signal than a blunt
+instruction override; this dissertation does not test that hypothesis
+directly and reports it only as a plausible explanation, not a
+confirmed mechanism. A similar but distinct explanation may apply to
+Phi-4-mini's corpus-specific split: MS MARCO's shorter, less clearly
+bounded passage fragments could plausibly give a forged completion
+signal more room to blend in, since HotpotQA's longer passages leave
+less ambiguity about where retrieved content ends and any injected text
+begins, though this dissertation tests this no more directly than the
+Qwen3-8B hypothesis above. Ministral-3-8B's broader vulnerability across
+both process-hijack templates suggests a weaker general defense against
+this attack category specifically, rather than a template-specific gap
+the way Qwen3-8B and Phi-4-mini show. The concentration of utility
+damage in exactly the process-hijack cells that also show elevated ASR,
+and its near-absence in goal-hijack cells, supports reading utility
+damage as tracking compliance directly rather than existing as a
+separate, compliance-independent context-pollution effect; the one
+documented exception, Phi-4-mini's small but real utility cost under
+near-zero ASR, is reported below as a distinct, narrower finding rather
+than folded into this general pattern.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.9\textwidth]{fig03_injection_asr_model_template}
+\caption{Indirect injection ASR by model and template.}
+\label{fig:injection-asr}
+\end{figure}
+
+Two corrections apply to every number above, both already incorporated,
+and neither changes any ASR value or significance verdict, since ASR
+here is a raw substring check untouched by either fix. First, the Phase
+1 baseline used for utility-drop comparisons was originally inflated by
+a dictionary-representation leak, the same category of
+corpus-construction issue behind the \texttt{nq\_open} exclusion, before
+this benchmark fixed it for both HotpotQA and MS MARCO; recomputing
+against the corrected baseline retracted an earlier, broader claim of a
+universal, compliance-independent utility collapse. Second, this
+dissertation's text-normalization function was found deleting
+punctuation rather than replacing it with a space, silently
+undercounting matches on answers like "28-32" against "28 - 32"; this
+affected 8.9\% of combined Phase 1 and injection rows, concentrated on
+MS MARCO, and this dissertation corrected it directly from stored raw
+output.
+
+Ministral-3-8B's result required a dedicated diagnostic before it could
+be reported with confidence, since a real possibility existed that its
+figures reflected a mechanical tokenizer artifact rather than genuine
+compliance. Direct inspection of all 607 of its flagged rows under
+\texttt{ignore} and \texttt{fake\_completion} found zero instances of
+the model abandoning the actual question, every one still attempted a
+correct answer alongside printing the injected marker text. A pure
+tokenizer round-trip diagnostic, rendering the real attack prompt,
+tokenizing it, decoding it back, and comparing byte-for-byte against the
+original, using Ministral-3-8B's actual pinned tokenizer, confirmed both
+templates round-trip identically: \texttt{ignore} produced a 283-token,
+1,283-character prompt with an exact decoded match, and
+\texttt{fake\_completion} produced 280 tokens and 1,272 characters with
+the same exact match.
+
+This result directly disconfirms the specific hypothesized mechanism, a
+tokenizer round-trip corrupting or duplicating content near the injected
+text: what the model receives is exactly what was intended. The
+30.5--60.8\% figures therefore describe genuine, if partial, compliance
+with the injected print-instruction, not a rendering artifact and not
+full task abandonment, which never occurs in this dataset.
+
+This distinction matters because rule-based substring-match ASR scoring
+conflates three distinct phenomena under one binary flag,
+confirmed by manual inspection of flagged rows across all four models:
+verbatim echo of the injected text, the injected marker glued onto an
+otherwise unaffected answer attempt (the pattern behind Ministral-3-8B's
+figures), and explicit reasoning leading to a deliberate compliant
+choice, the rarest pattern, found only twice, both for Phi-4-mini. This
+is a real limitation of this scoring method for this attack class, not
+a footnote specific to one model: the metric correctly flags all three
+patterns as "target string present" without distinguishing which one
+actually occurred, and only the percentage figures combined with this
+row-level inspection give an accurate picture of what a given ASR number
+represents.
+
+\section{Attack 2: PoisonedRAG}
+
+This attack uses a single poison configuration, five poisoned passages
+per target query, shared across all four models since the poisoned
+context is model-agnostic. Figure~\ref{fig:poisonedrag-asr} depicts the
+result; Table~\ref{tab:poisonedrag-full} lists every cell in full,
+including retrieval-echo rates and utility cost with confidence
+intervals.
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{llccccc}
+\toprule
+\textbf{Model} & \textbf{Corpus} & \textbf{$n$} & \textbf{ASR} & \textbf{Echoed, Not Adopted} & \textbf{F1 Baseline} & \textbf{Utility Drop (95\% CI)} \\
+\midrule
+Llama-3.1-8B & HotpotQA & 90 & 73.3\% & 2.2\% & 0.640 & 0.498 (0.399--0.594) \\
+Qwen3-8B & HotpotQA & 90 & 77.8\% & 4.4\% & 0.662 & 0.556 (0.463--0.649) \\
+Phi-4-mini & HotpotQA & 90 & 70.0\% & 10.0\% & 0.392 & 0.301 (0.205--0.399) \\
+Ministral-3-8B & HotpotQA & 90 & 76.7\% & 6.7\% & 0.679 & 0.552 (0.455--0.646) \\
+Llama-3.1-8B & MS MARCO & 96 & 17.7\% & 2.1\% & 0.265 & 0.163 (0.101--0.230) \\
+Qwen3-8B & MS MARCO & 96 & 19.8\% & 2.1\% & 0.288 & 0.167 (0.105--0.231) \\
+Phi-4-mini & MS MARCO & 96 & 18.8\% & 3.1\% & 0.275 & 0.117 (0.052--0.182) \\
+Ministral-3-8B & MS MARCO & 96 & 19.8\% & 0.0\% & 0.273 & 0.159 (0.097--0.225) \\
+\bottomrule
+\end{tabular}
+\caption{PoisonedRAG full per-cell results: attack success, retrieval-echo rate, and utility drop with 95\% confidence intervals.}
+\label{tab:poisonedrag-full}
+\end{table}
+
+ASR runs 70--78\% on HotpotQA versus 18--20\% on MS MARCO, consistently
+across all four models. All four corpus-versus-corpus comparisons reach
+significance at $p<2\times10^{-12}$ (Fisher's exact test), while the
+smallest of twelve model-versus-model comparisons has a raw $p=0.065$,
+which does not survive Holm-Bonferroni correction. Retrieval precision,
+the fraction of the top-5 retrieved documents that are the planted
+poison, reaches 99.3\% on HotpotQA versus 88.96\% on MS MARCO. Mean
+question length is 18.17 words on HotpotQA versus 6.14 words on MS
+MARCO. A verified skip rate of 14 of 1,472 target questions was
+confirmed directly against the live sweep log: nine truncation failures,
+three infrastructure failures, one content-policy refusal, and one
+since-fixed parser gap.
+
+Here corpus identity dominates rather than model identity, the mirror
+image of the injection attack's pattern; that injection is dominated by
+model identity while PoisonedRAG is dominated by corpus identity
+suggests these are genuinely independent capabilities, not two views of
+one underlying "robustness" property. Two mechanisms, both measured
+directly rather than inferred, plausibly explain why the corpus effect
+is this large, and this dissertation does not claim to know their
+relative weight. On MS MARCO, real content still competes for roughly
+one in nine retrieved slots, which may explain the lower ASR there.
+HotpotQA's longer, multi-clause, multi-entity questions may also give a
+crafted, roughly 100-word poison passage far more surface to weave a
+persuasive fabricated answer into than a short, generic query permits.
+Selecting a poison-generator model itself surfaced a real methodological
+finding, unrelated to the attack's substantive results: two earlier
+generator and transport combinations were tried and abandoned for
+concrete, verified engineering reasons, one measured 480 seconds for a
+trivial reply, not viable at sweep scale, and another's advertised free
+API tier turned out to enforce a ten-cent-per-month cap in practice,
+before settling on Nemotron-3-Ultra via the NVIDIA NIM API as the
+poison-passage generator used throughout.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.9\textwidth]{fig04_poisonedrag_asr_model_corpus}
+\caption{PoisonedRAG ASR by model and corpus.}
+\label{fig:poisonedrag-asr}
+\end{figure}
+
+\section{Attack 3: Crescendo}
+
+This attack runs a single escalation strategy across five turns for each
+of four target models, against a stratified 100-behavior sample per
+model drawn from a pooled 500-behavior set. DeepSeek V4 Pro plays both
+attacker and judge in every conversation and is never itself a target.
+Figure~\ref{fig:crescendo-asr} displays the resulting ASR with bootstrap
+confidence intervals; Table~\ref{tab:crescendo-full} breaks down each
+model individually.
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Model} & \textbf{$n$} & \textbf{$n$ Scored} & \textbf{ASR} & \textbf{Backtrack Rate} & \textbf{Mean Refusals} \\
+\midrule
+Llama-3.1-8B & 100 & 94 & 70.21\% & 44.0\% & 0.91 \\
+Ministral-3-8B & 100 & 95 & 69.47\% & 2.0\% & 0.02 \\
+Qwen3-8B & 100 & 95 & 68.42\% & 23.0\% & 0.28 \\
+Phi-4-mini & 100 & 98 & 59.18\% & 23.0\% & 0.29 \\
+\bottomrule
+\end{tabular}
+\caption{Crescendo full per-model results: attack success rate against refusal and backtrack behavior.}
+\label{tab:crescendo-full}
+\end{table}
+
+None of six pairwise ASR comparisons survive Holm-Bonferroni correction,
+the closest being Llama-3.1-8B versus Phi-4-mini at a raw $p=0.0428$
+against a corrected threshold of $p\leq0.0083$. A bootstrap 95\%
+confidence interval on that same gap, 0.129 [0.011, 0.237], excludes
+zero even though the corrected significance test does not. DeepSeek's
+high compliance as attacker, verified in a pre-flight check across ten
+real five-turn escalation calls with no refusal, is expected generator
+behavior; every result above describes only the four target models.
+
+The flat aggregate ASR ranking masks a strong, distinct per-model
+mechanism signature. Llama-3.1-8B refuses constantly, the highest
+refusal rate of the four, and backtracks in 44\% of behaviors, yet still
+lands at the single highest ASR, because backtracking reliably breaks
+through its own resistance. Ministral-3-8B sits at the opposite extreme,
+almost never refusing at all, and lands at essentially the same ASR
+regardless, since there is barely any resistance for the attack to
+overcome in the first place. Qwen3-8B and Phi-4-mini both refuse at an
+intermediate rate but diverge in outcome: Qwen3-8B's backtracks convert
+to success about as readily as Llama-3.1-8B's, while Phi-4-mini's
+comparable resistance holds its position more often, consistent with
+its lowest ASR among the four. This outcome resembles PoisonedRAG's
+pattern in one specific sense, no significant model ranking despite a
+real, substantial ASR, but the mechanism underneath resembles the
+injection attack's pattern instead: two models can land at nearly the
+same aggregate ASR through entirely different behavioral paths, which
+means a single intervention tuned to fix one model's failure mode may
+do nothing for the other.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.9\textwidth]{fig05_crescendo_asr_bootstrap_ci}
+\caption{Crescendo ASR by model, with bootstrap confidence intervals.}
+\label{fig:crescendo-asr}
+\end{figure}
+
+The refusal-detection function underlying the backtrack counts above is
+a substring scan with a confirmed false-positive mode: both of
+Ministral-3-8B's two backtrack rows in the entire sweep were
+individually audited and found to be false positives, the target's
+reply was already substantively compliant in both cases, and the
+matched text sat inside fabricated dialogue the model itself generated,
+not an actual refusal. This audit was tractable only for Ministral-3-8B,
+whose two flagged rows made an exhaustive check practical; the other
+three models' 23-to-44 flagged rows each were not individually audited.
+
+Refusal and backtrack counts reported throughout this section should
+therefore be read as an upper bound on genuine resistance, not an exact
+figure. Since Ministral-3-8B's own two flagged rows turned out to be
+entirely false positives, its already-near-zero refusal rate may in
+fact overstate its true resistance rather than understate it, though
+this dissertation cannot confirm that without auditing the other three
+models' larger flagged-row sets.
+
+\section{Cross-Attack Synthesis}
+
+Table~\ref{tab:cross-attack-axes} summarizes each attack's dominant
+statistical axis, drawn directly from the three attack sections above.
+
+\begin{table}[htbp]
+\centering
+\setlength{\tabcolsep}{9pt}
+\begin{tabular}{lll}
+\toprule
+\textbf{Attack} & \textbf{Dominant axis} & \textbf{Statistical support} \\
+\midrule
+Indirect injection & Model identity & Model-specific template vulnerability \\
+PoisonedRAG & Corpus identity & 4/4 corpus-vs-corpus significant \\
+Crescendo & Neither & 0 model pairs survive correction \\
+\bottomrule
+\end{tabular}
+\caption{Three attacks, three different dominant axes.}
+\label{tab:cross-attack-axes}
+\end{table}
+
+Model identity, corpus identity, and neither turn out to be three
+distinct statistical axes, not three flavors of one property called
+"robustness." This has a load-bearing implication for how a defense
+should be judged: a defense evaluated only on aggregate Crescendo ASR
+reduction would implicitly treat all four models as an equally good
+starting point, when Llama-3.1-8B and Ministral-3-8B in fact need
+opposite interventions, one needs its refusals reinforced to survive
+rephrasing, the other needs to be brought to refuse at all. This same
+logic extends across all three attacks: a robustness claim phrased as
+"Model X is robust" or "Model X is vulnerable," without naming the
+attack family and, where relevant, the corpus, is not a claim this
+dissertation's evidence actually supports. Robustness in this dataset is
+always a property of a specific model-attack, or model-attack-corpus,
+combination, never a single number attached to a model in isolation.
+
+\section{Robustness Profile by Model}
+
+Table~\ref{tab:robustness-profile} rolls all three attacks up by model.
+
+\begin{table}[htbp]
+\centering
+\renewcommand{\arraystretch}{1.4}
+\begin{tabular}{lp{4.6cm}p{4cm}l}
+\toprule
+\textbf{Model} & \textbf{Injection ASR} & \textbf{PoisonedRAG ASR (HotpotQA/MS MARCO)} & \textbf{Crescendo ASR} \\
+\midrule
+Llama-3.1-8B & 0.0--0.6\% & 73.3\% / 17.7\% & 70.2\% (highest) \\
+Qwen3-8B & 11.7--14.1\% (\texttt{fake\_completion}) & 77.8\% / 19.8\% & 68.4\% \\
+Phi-4-mini & 10.1\% on MS MARCO only & 70.0\% / 18.8\% & 59.2\% (lowest) \\
+Ministral-3-8B & 30.5--60.8\% (most susceptible) & 76.7\% / 19.8\% & 69.5\% \\
+\bottomrule
+\end{tabular}
+\caption{Robustness profile by model, all three attacks. No model is uniformly strongest or weakest.}
+\label{tab:robustness-profile}
+\end{table}
+
+Llama-3.1-8B is this dataset's strongest performer against injection and
+simultaneously its weakest against Crescendo. This is the single
+clearest illustration in this dissertation's results that "which model
+is most robust" is not a question with one answer; it depends entirely
+on which attack the question is really asking about, making a single
+aggregate robustness score across all three attacks actively misleading
+rather than merely incomplete.
+
+\section{Defense Evaluation and the Backend-Confound Discovery}
+\label{sec:defense-evaluation}
+
+Figures~\ref{fig:backend-correction} and~\ref{fig:backend-verdicts}
+visualize the backend-confound correction introduced methodologically in
+Chapter 4: an inference-backend mismatch between baseline and defended
+runs had been silently confounding one defense's headline result.
+Table~\ref{tab:backend-confound-results} reports the specific outcome
+for each defense-attack combination.
+
+\begin{table}[htbp]
+\centering
+\setlength{\tabcolsep}{9pt}
+\begin{tabular}{lccl}
+\toprule
+\textbf{Defense / Attack} & \textbf{Before} & \textbf{After} & \textbf{Verdict} \\
+\midrule
+output\_filter / injection & 6/19 sig. & 0/19 sig. & Fully confounded \\
+spotlighting / injection & 9/16 sig. & 9/16 sig.\textsuperscript{*} & Partially confounded \\
+instruction\_detection / injection & 3/16 sig. & 0/16 sig.\textsuperscript{\dag} & Real, underpowered \\
+PoisonedRAG (all 3 defenses) & 4/24 sig. & unchanged & Never confounded \\
+\bottomrule
+\end{tabular}
+\caption{Backend-confound correction outcomes across defense-attack combinations.}
+\label{tab:backend-confound-results}
+\vspace{4pt}
+\begin{minipage}{0.95\linewidth}
+\footnotesize
+\textit{Note.} \textsuperscript{*}Smaller effect sizes after correction, a real effect survives. \textsuperscript{\dag}At $n=40$; mechanism attribution confirms a classifier flag behind all 10 genuine blocks.
+\end{minipage}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.9\textwidth]{fig06_phase3_backend_correction_before_after}
+\caption{Backend-confound correction: significant cells before and after, by defense.}
+\label{fig:backend-correction}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.9\textwidth]{fig07_phase3_backend_confound_verdicts}
+\caption{Backend-confound verdicts across defense-attack combinations.}
+\label{fig:backend-verdicts}
+\end{figure}
+
+Of 1,511 items \texttt{output\_filter} appeared to block before
+correction, only 12 (0.8\%) show an actual guard flag behind them. The
+cells with the largest, most significant uncorrected reductions, all
+Ministral-3-8B, 303 to 525 blocked items each, have the lowest
+guard-catch fractions among all cells, 0.2 to 1.1\%. The guard's flag
+rate against PoisonedRAG is exactly 0.0000 across all 160 scored
+responses, every model, every corpus. \texttt{spotlighting} keeps 9 of
+16 injection cells and 4 of 24 PoisonedRAG cells significant after
+correction. Only Qwen3-8B's three significant cells show a backend
+contribution close to zero; the remaining six cells still owe 50--86\%
+of their originally reported reduction to the backend switch itself.
+Spotlighting costs a mean $\Delta F_1$ of $-0.283$ against injection, as
+low as $-0.44$ in some cells. \texttt{instruction\_detection} reaches 0
+of 16 significant injection cells at $n=40$, down from 3 of 16 under the
+original comparator, all three confirmed as the same backend-confound
+pattern. Of the 55 items this defense originally appeared to block, only
+10 survive correction as genuine blocks, and all 10 (100\%) have at
+least one retrieved passage the classifier actually flagged. Against
+Crescendo, \texttt{output\_filter}'s guard verdict is logged but never
+acted on, so no defended-condition ASR reduction exists to report for
+that pairing; instead, of conversations that succeeded unfiltered, 67 to
+82\% had at least one turn the guard would have flagged, a diagnostic
+figure discussed further in Section~\ref{sec:article15-mapping} below.
+
+The backend confound explains the \texttt{output\_filter} pattern
+directly: nearly all of the apparent defense effect was the backend
+switch itself, not guard action, the exact opposite of what "the guard
+is doing the defending" would predict given which cells showed the
+largest uncorrected reductions. The correction reverses the headline
+conclusion entirely: what appeared to be a working defense before
+correction is, once the confound is removed, no defense at all. Against
+PoisonedRAG specifically, the mismatch is structural rather than a
+matter of degree: a safety-content classifier structurally cannot see
+factual poisoning, since a poisoned answer is not unsafe, it is simply
+wrong, a distinction orthogonal to what a guard-style classifier
+screens for. No amount of retuning this classifier's threshold would
+fix this, since the problem is not miscalibration, it is that
+PoisonedRAG's output does not belong to the category of content the
+classifier was ever built to recognize. \texttt{output\_filter}'s
+67--82\% counterfactual catch rate against Crescendo is an encouraging
+signal for a future, actually wired version of this defense, since
+Crescendo's attack surface is exactly what a safety classifier is built
+to catch, unlike PoisonedRAG's factual corruption.
+
+\texttt{spotlighting} is therefore this dissertation's clearest example
+of a defense that genuinely works and genuinely costs something, rather
+than either working for free or failing outright, and its confirmed
+effect is more modest than the original uncorrected headline suggested.
+The headline conclusion survives correction here, just at a smaller
+magnitude: spotlighting was, and remains, the one defense in this
+dissertation with a confirmed real effect.
+
+\texttt{instruction\_detection}'s mechanism evidence tells a different
+story than its significance test alone: this is underpowered, not
+disproven, and the $n=40$ cap reflects a real compute constraint, a
+transformer classifier run once per retrieved passage on CPU, rather
+than a design choice, a real-hardware timing measurement found a single
+item took four minutes and twenty-seven seconds wall-clock even after
+fixing a CPU thread-oversubscription bug. The correction does not settle
+this defense's headline conclusion either way: the significance test
+says no effect, the mechanism evidence says otherwise, and this
+dissertation reports both rather than favoring one.
+
+Figure~\ref{fig:fp-check} captures the false-positive side of
+\texttt{instruction\_detection}: it flags 4.7\% of benign HotpotQA
+inputs, 3.3\% of benign MS MARCO inputs, 0.0\% of XSTest's safe prompts
+\citep{rottger2024xstest}, and 2.7\% of OR-Bench's hard-but-safe prompts
+\citep{cui2025orbench}.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.9\textwidth]{fig09_instruction_detection_fp_check}
+\caption{Instruction-detection false-positive rate across benign input sets.}
+\label{fig:fp-check}
+\end{figure}
+
+The 0.0\% result on XSTest is a favorable result in isolation, but the
+4.7\% rate on real corpus passages shows that a classifier's performance
+on a curated benchmark of adversarially designed safe prompts does not
+automatically predict its behavior on ordinary retrieved text, exactly
+the gap pairing two different false-positive sources was meant to
+expose.
+
+\section{Defense-Utility Trade-off}
+
+Table~\ref{tab:utility-full} reports mean $\Delta F_1$ for every
+attack-defense combination against its matching clean baseline, across
+all eight model-corpus cells; Figure~\ref{fig:utility-tradeoff}
+visualizes the same data.
+
+\begin{table}[htbp]
+\centering
+\setlength{\tabcolsep}{9pt}
+\begin{tabular}{llr}
+\toprule
+\textbf{Attack} & \textbf{Defense} & \textbf{Mean $\Delta F_1$} \\
+\midrule
+Injection & \texttt{instruction\_detection} & $-0.0014$ (negligible) \\
+Injection & \texttt{output\_filter} & $-0.0161$ (small) \\
+Injection & \texttt{spotlighting} & $-0.2831$ (severe) \\
+PoisonedRAG & \texttt{instruction\_detection} & $-0.3011$ (severe) \\
+PoisonedRAG & \texttt{output\_filter} & $-0.2873$ (severe) \\
+PoisonedRAG & \texttt{spotlighting} & $-0.3067$ (severe) \\
+\bottomrule
+\end{tabular}
+\caption{Mean utility cost by attack-defense combination, all eight model-corpus cells.}
+\label{tab:utility-full}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.9\textwidth]{fig08_phase3_defense_utility_tradeoff}
+\caption{Defense effectiveness against utility cost, all three defenses.}
+\label{fig:utility-tradeoff}
+\end{figure}
+
+For injection, \texttt{instruction\_detection} is essentially free on
+utility, since it only drops passages an off-the-shelf classifier
+actually flags, leaving most legitimate context intact, while
+spotlighting's encoding devastates it. For PoisonedRAG, all three
+defenses cost roughly the same large utility hit, none of them repair
+the underlying retrieval corruption, they only change what the model
+does with an already-poisoned context, refuse, hedge, or fail to
+extract an answer, which reads as a wrong answer either way against
+gold-answer F1. This is the central pattern this figure makes visible:
+reducing an attack's success rate and preserving the system's normal
+answer quality pull in opposite directions, and no defense tested here
+fully escapes that tension.
+
+\section{Efficiency: A Named Scope Boundary}
+
+This dissertation measures robustness only. It does not measure
+inference latency, throughput, memory footprint, or any other
+speed-versus-robustness trade-off for any of the four models or three
+defenses, and this is a genuine limitation of the evaluation as it
+stands, not an oversight to gloss over. A practitioner weighing this
+dissertation's robustness findings against a real deployment decision
+would still need a separate efficiency evaluation this dissertation does
+not provide. Spotlighting's base64 encoding, for instance, adds
+per-request overhead that this dissertation never measured, and this
+dissertation never characterized instruction-detection's per-passage
+classifier cost at production scale either; Chapter 4 reports a single
+4-minute-27-second wall-clock timing, collected to explain that
+defense's sample-size cap, not to serve as a throughput benchmark, and
+it should not be read as one. This dissertation names
+robustness-versus-efficiency trade-off measurement explicitly as a
+concrete, well-motivated direction for future work, addressed further in
+Chapter 6, instead of folding it silently into its own robustness
+conclusions.
+
+\section{Comparison to Related Benchmarks}
+
+Chapter 3 introduced three comparator benchmarks against which this
+dissertation's design was positioned; this section returns to two of
+them where a direct numerical comparison of findings, not just design
+scope, is possible. RSB's own headline defense finding, that its
+strongest defense reduces poisoning success but at an accuracy cost
+exceeding 20\% relative to its clean baseline in most settings, parallels
+this dissertation's spotlighting result almost exactly in shape: a
+confirmed real effect purchased at a real, substantial utility cost,
+even though the two benchmarks measure entirely different attack
+families and use entirely different metrics. That two independent
+benchmarks, built by different teams on different attacks, converge on
+the same pattern, a real defense effect and full utility preservation
+essentially never arriving together, is a stronger basis for that claim
+than either result alone would provide. Neither SafeRAG nor
+Hidden-in-Plain-Text report a comparably structured defense-utility
+number, so no equivalent direct comparison is possible against those two;
+this is itself consistent with Chapter 3's positioning of this
+dissertation's design as the only one of the four to test defenses under
+a shared, utility-tracked, backend-controlled setup across three attack
+families at once.
+
+\section{Mapping to EU AI Act Article 15}
+\label{sec:article15-mapping}
+
+This mapping is a technical exercise, testing this dissertation's
+results against Article 15(5)'s named vulnerability classes, not a legal
+claim about any deployed system's compliance status. Table~\ref{tab:article15-mapping}
+classifies each result explicitly rather than offering one blended
+verdict.
+
+\begin{table}[htbp]
+\centering
+\footnotesize
+\renewcommand{\arraystretch}{1.3}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{>{\RaggedRight\arraybackslash}p{3.4cm}>{\RaggedRight\arraybackslash}p{2.4cm}>{\justifying\arraybackslash}p{7.6cm}}
+\toprule
+\textbf{Article 15 clause} & \textbf{Verdict} & \textbf{Basis} \\
+\midrule
+15(1)/(3) accuracy & Tested, not demonstrated & Measured and declared per condition; "throughout lifecycle" implies deployment-drift monitoring this fixed-point benchmark does not test \\
+15(4) fault-resilience & Not tested & A named gap; the engineering-bug narrative in Chapter 4 is adjacent engineering discipline, not a test of runtime fault resilience \\
+15(5) data poisoning & Directly tested & The \texttt{output\_filter} structural-mismatch finding above is the concrete result: an "appropriate mitigation" failing structurally for a specific, plausible real-world choice \\
+15(5) adversarial examples & Directly tested, nuanced & No defense tested here achieves both a confirmed effect and utility preservation simultaneously \\
+15(5) model poisoning / confidentiality & Not applicable & All three attacks here are inference-time; none touch training data or model weights \\
+15(5) general clause (Crescendo) & Fits, with a drafting observation & Article 15(5)'s illustrative list does not name multi-turn escalation, though it plainly falls under the general vulnerability-exploitation clause \\
+\bottomrule
+\end{tabular}%
+}
+\caption{Mapping of this dissertation's findings onto Article 15's clauses.}
+\label{tab:article15-mapping}
+\end{table}
+\FloatBarrier
+
+The Crescendo mapping carries one further consequence of the engineering
+gap already noted in Section~\ref{sec:defense-evaluation}: since
+\texttt{output\_filter}'s guard verdict is never fed
+back into the conversation, the 67--82\% of successful Crescendo attacks
+where some turn had already triggered a flag represents attacks the
+system could plausibly have stopped, had it been wired to act on its own
+diagnostic output.
+
+The "no harmonised standard" claim running through this mapping is not
+a vague assertion; it has a specific, checkable status. As of the
+verification underlying this dissertation's own regulatory mapping, the
+CEN-CENELEC JTC 21 harmonised standards intended to cover Article 15's
+accuracy and robustness requirement, \texttt{prEN 18229-2}, and its
+cybersecurity requirement, \texttt{prEN 18282}, both remain in draft
+status and have not been published in the Official Journal. No
+presumption-of-conformity testing standard therefore exists yet for the
+exact requirement this dissertation's own methodology maps against.
+This dissertation does not claim to fill that standards gap; it
+documents, with a concrete worked example, what the gap looks like from
+the evaluation side, a narrower and more defensible claim than asserting
+this benchmark itself constitutes or anticipates the eventual standard.
+
+\section{Implications for Practitioners}
+
+Four implications follow directly from the results above, each grounded
+in a specific finding rather than stated as general advice. First, a
+practitioner should not assume a defense's effectiveness generalizes
+across attack types: \texttt{output\_filter} appeared to strongly reduce
+injection ASR before backend correction, and that apparent effect
+collapsed to 0 of 19 cells once the confound was isolated, a direct
+cautionary example against trusting an uncorrected before/after
+comparison at face value. Second, a practitioner should match the
+defense to the actual threat model instead of assuming a well-built
+defense transfers automatically: \texttt{output\_filter}'s 0.0000 flag
+rate against PoisonedRAG is not a tuning problem, a safety-content
+classifier has no mechanism to see factual poisoning by construction,
+and this dissertation's data shows a defense can be competently built
+and still be the wrong tool for a given attack surface. Third, a
+practitioner should treat a small-sample result with caution: the
+\texttt{instruction\_detection} $n=40$ cap reflects a real compute
+constraint this dissertation encountered, not a design choice, and its
+0 of 16 significant result at that sample size cannot, on this
+dissertation's own evidence, be distinguished from a real but
+underpowered effect, given that 10 of 10 backend-corrected blocks carry
+a genuine classifier fingerprint. Fourth, the EU AI Act Article 15
+compliance-testing gap discussed above is current and unresolved, not a
+historical footnote, and this dissertation's own mapping speaks to it
+directly instead of gesturing at it in the abstract.
+
+\section{Answering the Research Questions}
+
+RQ1 asked how vulnerable these four models are to each attack family.
+The answer is not a single number but a structure: vulnerability is
+real and substantial for every attack tested, but which model is most
+at risk depends entirely on which attack and, for two of the three
+attacks, which corpus, is in question. Ministral-3-8B is the most
+exposed model under injection, all four models are near-equally exposed
+under PoisonedRAG once corpus is held constant, and no model is
+reliably safer than any other under Crescendo, though the four differ
+sharply in the behavioral mechanism behind that shared ASR range. A
+single aggregate robustness score across all three attacks would average
+away exactly the structure this dissertation's results say matters
+most.
+
+RQ2 asked how effective practical, low-cost defenses are, and at what
+cost. Across three defenses tested against two of the three attack
+families, exactly one, spotlighting against injection, clears the bar of
+a confirmed, backend-isolated real effect, and it does so at a
+non-trivial utility cost. \texttt{output\_filter} clears no such bar
+against either attack it was tested on. \texttt{instruction\_detection}'s
+result is genuinely mixed: statistically unconfirmed at its available
+sample size, but mechanistically real. No defense tested here achieves
+both a confirmed effect and full utility preservation at once, which is
+this dissertation's central answer to RQ2: low-cost, practical defenses
+in this space are not yet free, and the honest way to report a
+defense's value is as a pair of numbers, effect and cost, never one
+number alone.

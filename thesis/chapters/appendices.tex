@@ -1,0 +1,112 @@
+\chapter*{Appendices}
+\addcontentsline{toc}{chapter}{Appendices}
+
+\section*{Full Baseline Results Table}
+
+Chapter 5's Figure~\ref{fig:baseline-f1} summarizes Phase 1 baseline
+answer quality visually; Table~\ref{tab:appendix-baseline} reproduces
+the complete underlying numbers for all four models across all three
+corpora, including \texttt{nq\_open}, retained here for completeness
+even though Chapter 5 excludes it from every comparison.
+
+\begin{table}[htbp]
+\centering
+\renewcommand{\arraystretch}{1.2}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llrrr}
+\toprule
+\textbf{Model} & \textbf{Corpus} & \textbf{F1 (clean)} & \textbf{Exact Match} & \textbf{Contains Answer} \\
+\midrule
+Llama-3.1-8B & HotpotQA & 0.6058 & 0.531 & 0.562 \\
+Llama-3.1-8B & MS MARCO & 0.2340 & 0.092 & 0.108 \\
+Llama-3.1-8B & \texttt{nq\_open}\textsuperscript{\dag} & 0.9608 & 0.909 & 0.989 \\
+Ministral-3-8B & HotpotQA & 0.6392 & 0.560 & 0.601 \\
+Ministral-3-8B & MS MARCO & 0.2572 & 0.088 & 0.123 \\
+Ministral-3-8B & \texttt{nq\_open}\textsuperscript{\dag} & 0.9599 & 0.910 & 0.993 \\
+Phi-4-mini & HotpotQA & 0.4600 & 0.371 & 0.471 \\
+Phi-4-mini & MS MARCO & 0.2539 & 0.074 & 0.146 \\
+Phi-4-mini & \texttt{nq\_open}\textsuperscript{\dag} & 0.9649 & 0.923 & 0.984 \\
+Qwen3-8B & HotpotQA & 0.6363 & 0.557 & 0.599 \\
+Qwen3-8B & MS MARCO & 0.2755 & 0.112 & 0.166 \\
+Qwen3-8B & \texttt{nq\_open}\textsuperscript{\dag} & 0.9623 & 0.921 & 0.991 \\
+\bottomrule
+\end{tabular}%
+}
+\caption{Complete Phase 1 baseline results, all model-corpus pairs, $n=1000$ each.}
+\label{tab:appendix-baseline}
+\vspace{4pt}
+\begin{minipage}{0.95\linewidth}
+\footnotesize
+\textit{Note.} \textsuperscript{\dag}\texttt{nq\_open} rows are retained for completeness only; Chapter 5 properly documents and  excludes this corpus from every comparison.
+\end{minipage}
+\end{table}
+\FloatBarrier
+
+\clearpage
+\section*{Mechanism Attribution Table}
+
+Table~\ref{tab:appendix-mechanism} reproduces, in full, the mechanism
+evidence Chapter 5 cites narratively when distinguishing a statistically
+significant effect from a mechanistically real one.
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.3}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{ll>{\RaggedRight\arraybackslash}p{5cm}r}
+\toprule
+\textbf{Defense} & \textbf{Attack} & \textbf{Mechanism Metric} & \textbf{Result} \\
+\midrule
+\texttt{output\_filter} & Injection & Guard-caught fraction of blocked items & 12/1,511 (0.8\%) \\
+\texttt{output\_filter} & PoisonedRAG & Guard flag rate, all scored responses & 0/160 (0.0000) \\
+\texttt{output\_filter} & Crescendo & Fraction of unfiltered successes the guard would have flagged & 67--82\% (counterfactual only) \\
+\texttt{instruction\_detection} & Injection & Fraction of backend-corrected blocks with at least one flagged passage & 10/10 (100\%) \\
+\bottomrule
+\end{tabular}%
+}
+\caption{Mechanism attribution across all three defenses, full underlying figures.}
+\label{tab:appendix-mechanism}
+\end{table}
+\FloatBarrier
+
+\clearpage
+\section*{List of Abbreviations}
+
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{ll}
+\toprule
+\textbf{Abbreviation} & \textbf{Full Term} \\
+\midrule
+AI & Artificial Intelligence \\
+API & Application Programming Interface \\
+ASR & Attack Success Rate \\
+CI (statistics) & Confidence Interval \\
+CI (engineering) & Continuous Integration \\
+CI/CD & Continuous Integration / Continuous Deployment \\
+CPU & Central Processing Unit \\
+CSV & Comma-Separated Values \\
+EU & European Union \\
+FAISS & Facebook AI Similarity Search \\
+GHCR & GitHub Container Registry \\
+GPU & Graphics Processing Unit \\
+HTTP & Hypertext Transfer Protocol \\
+JSONL & JSON Lines \\
+LLM & Large Language Model \\
+ML & Machine Learning \\
+MSc & Master of Science \\
+RAG & Retrieval-Augmented Generation \\
+SDK & Software Development Kit \\
+SSH & Secure Shell \\
+\bottomrule
+\end{tabular}%
+}
+
+\clearpage
+\phantomsection
+\addcontentsline{toc}{chapter}{List of Figures}
+\listoffigures
+
+\clearpage
+\phantomsection
+\addcontentsline{toc}{chapter}{List of Tables}
+\listoftables

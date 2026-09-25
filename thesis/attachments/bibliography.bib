@@ -1,0 +1,398 @@
+%% Bibliography for the RAG adversarial robustness thesis.
+%% Sorted alphabetically by key (author surname + year) for easier editing.
+%% apalike sorts entries alphabetically in the compiled References page
+%% regardless of source-file order, but keeping the file itself sorted
+%% makes it easier to find and update a specific entry by hand.
+%%
+%% Every entry transcribed from docs/CITATIONS.md (Simarjit1303/rag-adversarial-robustness),
+%% not invented. Re-verify DOI/URL links before final submission.
+%% Model artifacts, technical reports, and platform/infrastructure entries are marked
+%% as such -- cite them in prose as "a released model" / "a technical report" /
+%% "an infrastructure platform", never as a peer-reviewed study.
+
+@misc{abouelenin2025phi4mini,
+  author       = {Abouelenin, Abdelrahman and others},
+  title        = {{Phi-4-Mini} Technical Report: Compact yet Powerful Multimodal Language Models via Mixture-of-{LoRA}s},
+  year         = {2025},
+  howpublished = {arXiv:2503.01743},
+  note         = {\url{https://arxiv.org/abs/2503.01743}. Technical report, not peer-reviewed. Model: \url{https://huggingface.co/microsoft/Phi-4-mini-instruct}}
+}
+
+@inproceedings{chao2024jailbreakbench,
+  author    = {Chao, Patrick and Debenedetti, Edoardo and Robey, Alexander and Andriushchenko, Maksym and Croce, Francesco and Sehwag, Vikash and Dobriban, Edgar and Flammarion, Nicolas and Pappas, George J. and Tram{\`e}r, Florian and Hassani, Hamed and Wong, Eric},
+  title     = {{JailbreakBench}: An Open Robustness Benchmark for Jailbreaking Large Language Models},
+  booktitle = {Advances in Neural Information Processing Systems 37 (NeurIPS 2024), Datasets and Benchmarks Track},
+  year      = {2024},
+  note      = {\url{https://proceedings.neurips.cc/paper_files/paper/2024/hash/63092d79154adebd7305dfd498cbff70-Abstract.html}. Source of JBB-Behaviors, 20\% of the stratified behavior pool.}
+}
+
+@inproceedings{cui2025orbench,
+  author    = {Cui, Justin and Chiang, Wei-Lin and Stoica, Ion and Hsieh, Cho-Jui},
+  title     = {{OR-Bench}: An Over-Refusal Benchmark for Large Language Models},
+  booktitle = {Proceedings of the 42nd International Conference on Machine Learning (ICML 2025)},
+  series    = {Proceedings of Machine Learning Research},
+  volume    = {267},
+  pages     = {11515--11542},
+  year      = {2025},
+  publisher = {PMLR},
+  note      = {\url{https://proceedings.mlr.press/v267/cui25a.html}}
+}
+
+@misc{deepseekai2026deepseekv4,
+  author       = {{DeepSeek-AI}},
+  title        = {{DeepSeek-V4}: Towards Highly Efficient Million-Token Context Intelligence},
+  year         = {2026},
+  howpublished = {arXiv:2606.19348},
+  note         = {\url{https://arxiv.org/abs/2606.19348}. Technical report, not peer-reviewed. Used as Crescendo's attacker and judge model, never a target.}
+}
+
+@article{efron1979bootstrap,
+  author  = {Efron, Bradley},
+  title   = {Bootstrap Methods: Another Look at the Jackknife},
+  journal = {The Annals of Statistics},
+  volume  = {7},
+  number  = {1},
+  pages   = {1--26},
+  year    = {1979},
+  note    = {\url{https://doi.org/10.1214/aos/1176344552}}
+}
+
+@article{fisher1922interpretation,
+  author  = {Fisher, Ronald A.},
+  title   = {On the Interpretation of $\chi^2$ from Contingency Tables, and the Calculation of P},
+  journal = {Journal of the Royal Statistical Society},
+  volume  = {85},
+  number  = {1},
+  pages   = {87--94},
+  year    = {1922},
+  note    = {\url{https://doi.org/10.2307/2340521}}
+}
+
+@misc{grattafiori2024llama3,
+  author       = {Grattafiori, Aaron and others},
+  title        = {The {Llama} 3 Herd of Models},
+  year         = {2024},
+  howpublished = {arXiv:2407.21783},
+  note         = {\url{https://arxiv.org/abs/2407.21783}. Technical report, not peer-reviewed. Model: \url{https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct}}
+}
+
+@inproceedings{greshake2023not,
+  author    = {Greshake, Kai and Abdelnabi, Sahar and Mishra, Shailesh and Endres, Christoph and Holz, Thorsten and Fritz, Mario},
+  title     = {Not What You've Signed Up For: Compromising Real-World {LLM}-Integrated Applications with Indirect Prompt Injection},
+  booktitle = {Proceedings of the 16th ACM Workshop on Artificial Intelligence and Security (AISec '23)},
+  pages     = {79--90},
+  year      = {2023},
+  publisher = {Association for Computing Machinery},
+  note      = {\url{https://doi.org/10.1145/3605764.3623985}. Foundational paper establishing indirect prompt injection as an attack class.}
+}
+
+@inproceedings{guo2026hidden,
+  author    = {Guo, Haoze and Wei, Ziqi},
+  title     = {Hidden-in-Plain-Text: A Benchmark for Social-Web Indirect Prompt Injection in {RAG}},
+  booktitle = {Proceedings of the ACM Web Conference 2026 (WWW '26)},
+  year      = {2026},
+  address   = {Dubai, United Arab Emirates},
+  publisher = {Association for Computing Machinery},
+  note      = {\url{https://doi.org/10.1145/3774904.3792853}. Named competitor benchmark (Meeting 4, supervisor-confirmed) -- scoped to web-carrier indirect prompt injection only, not knowledge poisoning or multi-turn jailbreaking.}
+}
+
+@inproceedings{he2023debertav3,
+  author    = {He, Pengcheng and Gao, Jianfeng and Chen, Weizhu},
+  title     = {{DeBERTaV3}: Improving {DeBERTa} Using {ELECTRA}-Style Pre-Training with Gradient-Disentangled Embedding Sharing},
+  booktitle = {Proceedings of the Eleventh International Conference on Learning Representations (ICLR 2023)},
+  year      = {2023},
+  note      = {\url{https://openreview.net/forum?id=sE7-XhLxHA}. Architecture underlying the fine-tuned classifier used for the instruction-detection defense.}
+}
+
+@inproceedings{hines2024defending,
+  author    = {Hines, Keegan and Lopez, Gary and Hall, Matthew and Zarfati, Federico and Zunger, Yonatan and K{\i}c{\i}man, Emre},
+  title     = {Defending Against Indirect Prompt Injection Attacks With Spotlighting},
+  booktitle = {Proceedings of the Conference on Applied Machine Learning for Information Security (CAMLIS 2024)},
+  series    = {CEUR Workshop Proceedings},
+  volume    = {3920},
+  year      = {2024},
+  note      = {\url{https://ceur-ws.org/Vol-3920/paper03.pdf}. The defense implemented directly in this thesis; encoding-mode variant specifically evaluated.}
+}
+
+@article{holm1979simple,
+  author  = {Holm, Sture},
+  title   = {A Simple Sequentially Rejective Multiple Test Procedure},
+  journal = {Scandinavian Journal of Statistics},
+  volume  = {6},
+  number  = {2},
+  pages   = {65--70},
+  year    = {1979}
+}
+
+@misc{huggingface2016hub,
+  author       = {{Hugging Face}},
+  title        = {Hugging Face -- The {AI} Community Building the Future},
+  year         = {2016},
+  howpublished = {\url{https://huggingface.co}},
+  note         = {Model hosting and inference platform; hosts every model weight and dataset used in this project. Accessed September 2026.}
+}
+
+@article{johnson2021billionscale,
+  author  = {Johnson, Jeff and Douze, Matthijs and J{\'e}gou, Herv{\'e}},
+  title   = {Billion-Scale Similarity Search with {GPUs}},
+  journal = {IEEE Transactions on Big Data},
+  volume  = {7},
+  number  = {3},
+  pages   = {535--547},
+  year    = {2021},
+  note    = {\url{https://doi.org/10.1109/TBDATA.2019.2921572}. FAISS, used for dense retrieval indexing.}
+}
+
+@article{kwiatkowski2019natural,
+  author  = {Kwiatkowski, Tom and Palomaki, Jennimaria and Redfield, Olivia and Collins, Michael and Parikh, Ankur and Alberti, Chris and Epstein, Danielle and Polosukhin, Illia and Devlin, Jacob and Lee, Kenton and Toutanova, Kristina and Jones, Llion and Kelcey, Matthew and Chang, Ming-Wei and Dai, Andrew M. and Uszkoreit, Jakob and Le, Quoc and Petrov, Slav},
+  title   = {Natural Questions: A Benchmark for Question Answering Research},
+  journal = {Transactions of the Association for Computational Linguistics},
+  volume  = {7},
+  pages   = {453--466},
+  year    = {2019},
+  note    = {\url{https://doi.org/10.1162/tacl_a_00276}. Source of \texttt{nq\_open}; supports the corpus-construction finding behind its exclusion from real sweeps.}
+}
+
+@inproceedings{kwon2023efficient,
+  author    = {Kwon, Woosuk and Li, Zhuohan and Zhuang, Siyuan and Sheng, Ying and Zheng, Lianmin and Yu, Cody Hao and Gonzalez, Joseph and Zhang, Hao and Stoica, Ion},
+  title     = {Efficient Memory Management for Large Language Model Serving with {PagedAttention}},
+  booktitle = {Proceedings of the 29th ACM Symposium on Operating Systems Principles (SOSP '23)},
+  pages     = {611--626},
+  year      = {2023},
+  publisher = {Association for Computing Machinery},
+  note      = {\url{https://doi.org/10.1145/3600006.3613165}. vLLM, the inference engine used throughout the sweep harness.}
+}
+
+@inproceedings{liang2025saferag,
+  author    = {Liang, Xun and Niu, Simin and Li, Zhiyu and Zhang, Sensen and Wang, Hanyu and Xiong, Feiyu and Fan, Zhaoxin and Tang, Bo and Zhao, Jihao and Yang, Jiawei and Song, Shichao and Wang, Mengwei},
+  title     = {{SafeRAG}: Benchmarking Security in Retrieval-Augmented Generation of Large Language Model},
+  booktitle = {Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)},
+  pages     = {4609--4631},
+  year      = {2025},
+  address   = {Vienna, Austria},
+  publisher = {Association for Computational Linguistics},
+  note      = {\url{https://aclanthology.org/2025.acl-long.230/}. Named competitor benchmark (Meeting 4, supervisor-confirmed) -- a broad four-task RAG security taxonomy, not the same three-attack-family, four-model design this thesis uses.}
+}
+
+@inproceedings{liu2024formalizing,
+  author    = {Liu, Yupei and Jia, Yuqi and Geng, Runpeng and Jia, Jinyuan and Gong, Neil Zhenqiang},
+  title     = {Formalizing and Benchmarking Prompt Injection Attacks and Defenses},
+  booktitle = {Proceedings of the 33rd USENIX Security Symposium (USENIX Security 24)},
+  pages     = {1831--1847},
+  year      = {2024},
+  publisher = {USENIX Association},
+  note      = {\url{https://www.usenix.org/conference/usenixsecurity24/presentation/liu-yupei}}
+}
+
+@inproceedings{liu2025datasentinel,
+  author    = {Liu, Yupei and Jia, Yuqi and Jia, Jinyuan and Song, Dawn and Gong, Neil Zhenqiang},
+  title     = {{DataSentinel}: A Game-Theoretic Detection of Prompt Injection Attacks},
+  booktitle = {2025 IEEE Symposium on Security and Privacy (S\&P)},
+  pages     = {2190--2208},
+  year      = {2025},
+  publisher = {IEEE},
+  note      = {\url{https://doi.org/10.1109/SP61157.2025.00119}. Closest peer-reviewed comparator for instruction-detection-style defenses; a different classifier was used in this thesis for practical reasons.}
+}
+
+@inproceedings{mazeika2024harmbench,
+  author    = {Mazeika, Mantas and Phan, Long and Yin, Xuwang and Zou, Andy and Wang, Zifan and Mu, Norman and Sakhaee, Elham and Li, Nathaniel and Basart, Steven and Li, Bo and Forsyth, David and Hendrycks, Dan},
+  title     = {{HarmBench}: A Standardized Evaluation Framework for Automated Red Teaming and Robust Refusal},
+  booktitle = {Proceedings of the 41st International Conference on Machine Learning (ICML 2024)},
+  series    = {Proceedings of Machine Learning Research},
+  volume    = {235},
+  pages     = {35181--35224},
+  year      = {2024},
+  publisher = {PMLR},
+  note      = {\url{https://proceedings.mlr.press/v235/mazeika24a.html}. Source of HarmBench behaviors, 80\% of the stratified behavior pool.}
+}
+
+@article{mcnemar1947note,
+  author  = {McNemar, Quinn},
+  title   = {Note on the Sampling Error of the Difference Between Correlated Proportions or Percentages},
+  journal = {Psychometrika},
+  volume  = {12},
+  number  = {2},
+  pages   = {153--157},
+  year    = {1947},
+  note    = {\url{https://doi.org/10.1007/BF02295996}}
+}
+
+@misc{metaai2025llamaguard4,
+  author       = {{Meta AI}},
+  title        = {{Llama Guard 4} Model Card},
+  year         = {2025},
+  howpublished = {\url{https://huggingface.co/meta-llama/Llama-Guard-4-12B}},
+  note         = {Model artifact, not a peer-reviewed paper; cite as a released model, not a study. Used for the output-filter defense.}
+}
+
+@misc{mistralai2025ministral3,
+  author       = {{Mistral AI}},
+  title        = {Introducing {Mistral 3}},
+  year         = {2025},
+  howpublished = {\url{https://mistral.ai/news/mistral-3/}},
+  note         = {No technical report exists for this release; documented via announcement blog post and model card only. Model: \url{https://huggingface.co/mistralai/Ministral-3-8B-Instruct-2512}}
+}
+
+@inproceedings{moradi2026defending,
+  author    = {Moradi, Reza and {Alizadeh Noughabi}, Hossein and Zarrinkalam, Fattane and Dehghantanha, Ali},
+  title     = {Defending {RAG} Against Knowledge Poisoning Using Cross-Encoder Activation Signals},
+  booktitle = {Proceedings of the 39th Canadian Conference on Artificial Intelligence},
+  series    = {Proceedings of Machine Learning Research},
+  volume    = {318},
+  pages     = {366--376},
+  year      = {2026},
+  publisher = {PMLR},
+  note      = {\url{https://proceedings.mlr.press/v318/moradi26a.html}. 2026 follow-on defense work; confirms PoisonedRAG remains the field's reference threat model.}
+}
+
+@inproceedings{nakka2026bitbypass,
+  author    = {Nakka, Kalyan and Saxena, Nitesh},
+  title     = {{BitBypass}: A New Direction in Jailbreaking Aligned Large Language Models with Bitstream Camouflage},
+  booktitle = {Findings of the Association for Computational Linguistics: EACL 2026},
+  pages     = {3808--3834},
+  year      = {2026},
+  month     = {mar},
+  address   = {Rabat, Morocco},
+  publisher = {Association for Computational Linguistics},
+  note      = {\url{https://aclanthology.org/2026.findings-eacl.198/}. 2026 comparison work; confirms jailbreak research remains active and currently publishing, contemporaneous with this thesis.}
+}
+
+@inproceedings{nguyen2016msmarco,
+  author    = {Nguyen, Tri and Rosenberg, Mir and Song, Xia and Gao, Jianfeng and Tiwary, Saurabh and Majumder, Rangan and Deng, Li},
+  title     = {{MS MARCO}: A Human Generated MAchine Reading COmprehension Dataset},
+  booktitle = {Proceedings of the Workshop on Cognitive Computation: Integrating Neural and Symbolic Approaches 2016, co-located with NIPS 2016},
+  series    = {CEUR Workshop Proceedings},
+  volume    = {1773},
+  year      = {2016},
+  note      = {\url{https://ceur-ws.org/Vol-1773/CoCoNIPS_2016_paper9.pdf}}
+}
+
+@misc{nvidia2024nim,
+  author       = {{NVIDIA}},
+  title        = {{NVIDIA NIM}: Optimized Inference Microservices},
+  year         = {2024},
+  howpublished = {\url{https://build.nvidia.com}},
+  note         = {API platform used to access Nemotron-3-Ultra for PoisonedRAG's poison-passage generation. Accessed September 2026.}
+}
+
+@misc{nvidia2025nemotron3ultra,
+  author       = {{NVIDIA}},
+  title        = {{NVIDIA Nemotron 3 Ultra}: Open, Efficient Mixture-of-Experts Hybrid {Mamba}-Transformer Model for Agentic Reasoning},
+  year         = {2025},
+  howpublished = {\url{https://research.nvidia.com/labs/nemotron/files/NVIDIA-Nemotron-3-Ultra-Technical-Report.pdf}},
+  note         = {Company-published technical report, not a peer-reviewed venue. Used as PoisonedRAG's poison-passage generator. Model card: \url{https://build.nvidia.com/nvidia/nemotron-3-ultra-550b-a55b/modelcard}}
+}
+
+@misc{openrouter2024platform,
+  author       = {{OpenRouter}},
+  title        = {{OpenRouter}: A Unified Interface for {LLM}s},
+  year         = {2024},
+  howpublished = {\url{https://openrouter.ai}},
+  note         = {API routing platform used to access DeepSeek-V4 as Crescendo's attacker and judge model. Accessed September 2026.}
+}
+
+@misc{protectai2024deberta,
+  author       = {{Protect AI}},
+  title        = {\texttt{deberta-v3-base-prompt-injection-v2} Model Card},
+  year         = {2024},
+  howpublished = {\url{https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2}},
+  note         = {Industry-released classifier fine-tuned from the peer-reviewed DeBERTaV3 architecture (He et al., ICLR 2023); no accompanying paper.}
+}
+
+@inproceedings{reimers2019sentencebert,
+  author    = {Reimers, Nils and Gurevych, Iryna},
+  title     = {{Sentence-BERT}: Sentence Embeddings using {S}iamese {BERT}-Networks},
+  booktitle = {Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natural Language Processing (EMNLP-IJCNLP)},
+  pages     = {3982--3992},
+  year      = {2019},
+  publisher = {Association for Computational Linguistics},
+  note      = {\url{https://aclanthology.org/D19-1410/}. Foundational architecture underlying \texttt{sentence-transformers/all-mpnet-base-v2}, the embedder used to build the FAISS index for every corpus.}
+}
+
+@inproceedings{rottger2024xstest,
+  author    = {R{\"o}ttger, Paul and Kirk, Hannah Rose and Vidgen, Bertie and Attanasio, Giuseppe and Bianchi, Federico and Hovy, Dirk},
+  title     = {{XSTest}: A Test Suite for Identifying Exaggerated Safety Behaviours in Large Language Models},
+  booktitle = {Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (NAACL 2024)},
+  year      = {2024},
+  publisher = {Association for Computational Linguistics},
+  note      = {\url{https://aclanthology.org/2024.naacl-long.301/}. Hub handle retired; current handle is \texttt{Paul/XSTest} (same 450-prompt suite).}
+}
+
+@misc{runpod2024platform,
+  author       = {{RunPod}},
+  title        = {{RunPod}: Cloud {GPU} Rental for {AI} and {ML}},
+  year         = {2024},
+  howpublished = {\url{https://runpod.io}},
+  note         = {Cloud GPU infrastructure (A100 SXM 80GB pods) used for every real-hardware experiment in this thesis. Accessed September 2026.}
+}
+
+@inproceedings{russinovich2025great,
+  author    = {Russinovich, Mark and Salem, Ahmed and Eldan, Ronen},
+  title     = {Great, Now Write an Article About That: The {Crescendo} Multi-Turn {LLM} Jailbreak Attack},
+  booktitle = {Proceedings of the 34th USENIX Security Symposium (USENIX Security 25)},
+  year      = {2025},
+  publisher = {USENIX Association},
+  note      = {\url{https://www.usenix.org/conference/usenixsecurity25/presentation/russinovich}. The attack implemented directly in this thesis.}
+}
+
+@misc{singh2026ragrepo,
+  author       = {Singh, Simarjit},
+  title        = {{rag-adversarial-robustness}: Cross-Model Benchmark of Prompt Injection, Knowledge Poisoning, and Multi-Turn Attacks Under {EU AI Act} Article 15},
+  year         = {2026},
+  howpublished = {\url{https://github.com/Simarjit1303/rag-adversarial-robustness}},
+  note         = {This project's own implementation, the technical contribution required by the CDS module handbook (Section 8). Self-citation of the author's own artifact, not external literature.}
+}
+
+@inproceedings{song2020mpnet,
+  author    = {Song, Kaitao and Tan, Xu and Qin, Tao and Lu, Jianfeng and Liu, Tie-Yan},
+  title     = {{MPNet}: Masked and Permuted Pre-training for Language Understanding},
+  booktitle = {Advances in Neural Information Processing Systems 33 (NeurIPS 2020)},
+  year      = {2020},
+  note      = {\url{https://proceedings.neurips.cc/paper/2020/hash/c3a690be93aa602ee2dc0ccab5b7b67e-Abstract.html}. Pre-training objective underlying the base encoder of \texttt{all-mpnet-base-v2}.}
+}
+
+@inproceedings{yang2018hotpotqa,
+  author    = {Yang, Zhilin and Qi, Peng and Zhang, Saizheng and Bengio, Yoshua and Cohen, William W. and Salakhutdinov, Ruslan and Manning, Christopher D.},
+  title     = {{HotpotQA}: A Dataset for Diverse, Explainable Multi-hop Question Answering},
+  booktitle = {Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing (EMNLP)},
+  pages     = {2369--2380},
+  year      = {2018},
+  publisher = {Association for Computational Linguistics},
+  note      = {\url{https://aclanthology.org/D18-1259/}}
+}
+
+@misc{yang2025qwen3,
+  author       = {Yang, An and others},
+  title        = {{Qwen3} Technical Report},
+  year         = {2025},
+  howpublished = {arXiv:2505.09388},
+  note         = {\url{https://arxiv.org/abs/2505.09388}. Technical report, not peer-reviewed. Model: \url{https://huggingface.co/Qwen/Qwen3-8B}}
+}
+
+@inproceedings{zhan2024injecagent,
+  author    = {Zhan, Qiusi and Fang, Richard and Bindu, Rohan and Gupta, Akul and Hashimoto, Tatsunori and Kang, Daniel},
+  title     = {{InjecAgent}: Benchmarking Indirect Prompt Injections in Tool-Integrated Large Language Model Agents},
+  booktitle = {Findings of the Association for Computational Linguistics: ACL 2024},
+  pages     = {10471--10506},
+  year      = {2024},
+  publisher = {Association for Computational Linguistics},
+  note      = {\url{https://aclanthology.org/2024.findings-acl.624/}. Related benchmarking work, context/discussion only.}
+}
+
+@misc{zhang2025rsb,
+  author       = {Zhang, Baolei and Xin, Haoran and Li, Jiatong and Zhang, Dongzhe and Fang, Minghong and Liu, Zhuqing and Nie, Lihai and Liu, Zheli},
+  title        = {Benchmarking Poisoning Attacks against Retrieval-Augmented Generation},
+  year         = {2025},
+  howpublished = {arXiv:2505.18543},
+  note         = {\url{https://arxiv.org/abs/2505.18543}. Named competitor benchmark (Meeting 4, supervisor-confirmed) -- checked against multiple 2025-2026 papers citing it, all as an unpublished preprint; no accepted-venue version found as of this writing. Cited here as a preprint exception, not as peer-reviewed literature.}
+}
+
+@inproceedings{zou2025poisonedrag,
+  author    = {Zou, Wei and Geng, Runpeng and Wang, Binghui and Jia, Jinyuan},
+  title     = {{PoisonedRAG}: Knowledge Corruption Attacks to Retrieval-Augmented Generation of Large Language Models},
+  booktitle = {Proceedings of the 34th USENIX Security Symposium (USENIX Security 25)},
+  pages     = {3827--3844},
+  year      = {2025},
+  publisher = {USENIX Association},
+  note      = {\url{https://www.usenix.org/conference/usenixsecurity25/presentation/zou-poisonedrag}. The attack implemented directly in this thesis.}
+}

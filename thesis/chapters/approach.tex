@@ -1,0 +1,534 @@
+\chapter{Approach}
+
+\section{System Architecture}
+
+Figure~\ref{fig:infra-pipeline} shows the operational pipeline every
+sweep in this benchmark runs on. A push to the project's GitHub
+repository triggers a CI build that pushes a container image to GHCR; a
+RunPod A100 GPU pod then pulls that image, configured via environment
+variables selecting the target model, corpus, attack, and defense for
+that run. The pod executes the harness's model-loading, retrieval-index,
+attack, and defense modules against a persistent network volume, writes
+results as JSONL and CSV, and a watcher process verifies successful
+completion before terminating the pod, rather than terminating on any
+exit, successful or not, which would risk destroying an in-progress
+run's partial output. The researcher then commits verified results to
+the repository manually, as a permanent record.
+
+\begin{figure}[htbp]
+\centering
+\resizebox{\linewidth}{!}{%
+\begin{tikzpicture}[
+  box/.style={rectangle, draw, rounded corners, align=center, minimum width=2.6cm, minimum height=1.6cm, font=\footnotesize},
+  arr/.style={-Stealth, thick}
+]
+\node[box] (push) {GitHub\\Push};
+\node[box, right=0.7cm of push] (ci) {CI Build\\$\rightarrow$ GHCR};
+\node[box, right=0.7cm of ci] (pod) {RunPod\\A100 Pod};
+\node[box, minimum width=3.6cm, below=0.6cm of pod] (harness) {Harness:\\Loader, Index,\\Attacks, Defenses};
+\node[box, right=0.7cm of pod] (results) {Results\\(JSONL/CSV)};
+\node[box, minimum width=3.4cm, right=0.7cm of results] (watcher) {Watcher:\\Verify then\\Terminate};
+\node[box, below=0.6cm of results] (commit) {Committed\\to Repo};
+\draw[arr] (push) -- (ci);
+\draw[arr] (ci) -- (pod);
+\draw[arr] (pod) -- (harness);
+\draw[arr] (harness) -- (results);
+\draw[arr] (pod) -- (results);
+\draw[arr] (results) -- (watcher);
+\draw[arr] (results) -- (commit);
+\end{tikzpicture}%
+}
+\caption{Operational pipeline: from a GitHub push to a verified, committed result.}
+\label{fig:infra-pipeline}
+\end{figure}
+
+The watcher's self-terminating design matters more than it might appear
+at first glance. A GPU pod left running idle after a sweep finishes
+incurs real cost with nothing to show for it, and a pod that terminates
+automatically on any exit, whether the sweep actually succeeded or
+crashed halfway through, risks silently discarding a partially completed
+run's real, if incomplete, data. RunPod's start-command override runs
+independently of any attached SSH session, so a long sweep survives a
+terminal disconnect by construction; the watcher then verifies success
+before terminating, and idles rather than terminates on any ambiguous
+outcome, accepting a wasted compute cost as the safer failure mode
+compared to losing data outright. An earlier deployment path through
+Azure Container Apps Jobs was abandoned during development after a
+billing incident and a failed institutional verification step; the CI
+workflow steps for that path still exist and still run on every push,
+but fail harmlessly against a service that was never actually
+provisioned, since the GHCR build step above them succeeds and completes
+independently, which is all the RunPod deployment path actually depends
+on.
+
+Two judge models score attack outcomes throughout this benchmark:
+Llama-Guard-4-12B \citep{metaai2025llamaguard4} as the primary judge, an
+upgrade from an initially planned Llama-Guard-3-8B made at effectively
+zero switching cost, since the judge harness had not yet been built at
+the point the newer model became available, and Qwen3Guard-Gen-8B as a
+secondary judge, independently validated as a top-performing open guard
+model at an ICLR 2026 workshop.
+
+This benchmark runs every generation through one of two inference
+engines, selected per sweep via a single environment variable:
+HuggingFace's \texttt{transformers} library \citep{huggingface2016hub},
+the default, used for every Phase 3 defended run and for two of the
+three attacks' Phase 2 baselines, and vLLM, used for the Phase 1
+baseline sweep and the injection attack's Phase 2 baseline. These two
+engines are not numerically interchangeable on the same hardware. vLLM
+auto-selects bf16 precision on the project's A100 GPUs and auto-detects
+Ministral-3-8B's native fp8 checkpoint through its own optimized kernel
+path, while the plain HuggingFace path dequantizes that same checkpoint
+to bf16 regardless of GPU generation. This mismatch is the concrete
+mechanical root cause behind the inference-backend confound discovered
+during defense evaluation and detailed fully in Chapter 5, where
+comparing a vLLM-run baseline against an HuggingFace-run defended
+condition silently introduced a second, uncontrolled variable alongside
+the defense itself.
+
+\section{Target Models}
+
+Table~\ref{tab:target-models} lists the four target models this
+dissertation benchmarks. This dissertation cites all four as released
+models or technical reports, not peer-reviewed studies, since none
+underwent academic peer review prior to release.
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lll}
+\hline
+\textbf{Model} & \textbf{Source} & \textbf{Citation} \\
+\hline
+Llama-3.1-8B-Instruct & Meta AI & \citep{grattafiori2024llama3} \\
+Qwen3-8B & Alibaba & \citep{yang2025qwen3} \\
+Phi-4-mini-instruct & Microsoft & \citep{abouelenin2025phi4mini} \\
+Ministral-3-8B-Instruct-2512 & Mistral AI & \citep{mistralai2025ministral3} \\
+\hline
+\end{tabular}
+\caption{The four target language models benchmarked in this dissertation.}
+\label{tab:target-models}
+\end{table}
+
+Two architectural details matter for interpreting later results
+correctly. Ministral-3-8B loads as a
+\texttt{Mistral3ForConditionalGeneration} class, which internally routes
+through a vision tower; this dissertation confirmed that tower plays no
+role for the text-only inputs used throughout, so its presence has no
+bearing on any result reported in Chapter 5. Qwen3-8B's explicit
+thinking mode is disabled project-wide via a single configuration flag,
+so every Qwen3-8B result here reflects its standard generation path, not
+its extended-reasoning mode. Every model is also pinned to an exact
+HuggingFace commit hash, a discipline later extended to this benchmark's
+corpora once a comparable revision-drift risk surfaced there, so that
+every phase loads byte-identical weights regardless of when a given
+sweep actually ran.
+
+The benchmark's model-attack-defense matrix was designed specifically so
+that model identity, corpus identity, and defense mechanism could each
+be isolated as independent variables, rather than confounded together.
+This design choice paid off directly: Chapter 5 shows the three attacks
+are dominated by three genuinely different factors, model identity,
+corpus identity, and a mechanism that produces uniform outcomes through
+divergent per-model behavior, a distinction a design unable to isolate
+these variables independently would have missed entirely.
+
+Model selection followed five explicit requirements, applied uniformly
+rather than chosen after the fact to justify a preferred shortlist: a
+permissive open license, self-hostable weights rather than API-only
+access, instruction tuning out of the box, a parameter count in the
+roughly 3--14B range, and a dense architecture, excluding
+mixture-of-experts designs. Several candidate models failed these
+requirements and dropped out of consideration on that basis rather than
+on capability: Llama-4-Scout, despite strong benchmark performance, uses
+a mixture-of-experts architecture that the fourth requirement rules out
+regardless; Gemma 3's license did not meet the first requirement;
+Qwen3's 27B Apache-licensed variant exceeds the 14B size ceiling despite
+otherwise fitting every other requirement; and Llama-3.3-70B's size
+alone put it outside the range. These exclusions are worth stating
+explicitly because a natural objection to a benchmark using 8B-class
+models is that larger, more capable models would simply perform better;
+that may be true, but it is a different question from the one this
+dissertation asks, and admitting a larger model would have meant
+relaxing the size requirement for that model alone, undermining the
+basis on which every other model was chosen or excluded.
+
+\section{Statistical Testing Methodology}
+
+This benchmark matches every significance test to a specific comparison
+structure rather than applying one default test uniformly. 
+
+McNemar's exact test \citep{mcnemar1947note}, a paired hypergeometric test,
+handles every model-versus-model comparison within a fixed corpus or
+behavior set, since every model here is evaluated on the identical
+seeded item sample for a given corpus, a design where each observation
+has a natural counterpart in every other condition:
+$$
+\chi^2 = \frac{(b-c)^2}{b+c}
+$$
+where $b$ and $c$ are the discordant pair counts. 
+
+Fisher's exact test \citep{fisher1922interpretation}, an
+unpaired test on independent proportions, covers cases where two
+conditions have no item-to-item correspondence, most notably
+corpus-versus-corpus comparisons, since HotpotQA and MS MARCO are
+different question sets entirely; treating them as paired would violate
+McNemar's core assumption. The test computes
+$$
+p = \frac{\binom{a+b}{a}\binom{c+d}{c}}{\binom{n}{a+c}}
+$$ 
+directly from the four contingency-table cell counts $a, b, c,$ and $d$.
+
+Holm-Bonferroni correction \citep{holm1979simple} operates within one
+family per genuinely distinct condition, one family per injection
+template rather than one pooled family across all templates, since each
+template is a mechanistically distinct delivery method and pooling
+would dilute statistical power between hypotheses that are not actually
+testing the same thing. Within a family of size $m$, it requires each
+ordered $p$-value to satisfy
+$$
+p_{(i)} \leq \frac{\alpha}{m-i+1}, \qquad p_{(1)} \leq \dots \leq p_{(m)}.
+$$
+
+A paired bootstrap \citep{efron1979bootstrap} with 10,000 resamples
+produces every utility-drop confidence interval; this benchmark keeps
+that calculation structurally separate from the binary-outcome
+significance tests, so that "which models or corpora differ in
+vulnerability" and "how much utility does this attack cost" remain two
+cleanly separated statistical questions rather than one conflated
+metric. Each interval is computed as
+$$
+\mathrm{CI}_{95\%} = \left[\hat{\theta}^*_{(0.025)},\ \hat{\theta}^*_{(0.975)}\right]
+$$
+where $\hat{\theta}^*_{(q)}$ is the $q$-th percentile of the bootstrap
+resample distribution of the statistic $\hat{\theta}$.
+
+The backend-confound isolation described in Chapter 5 called for a
+different choice again: pairwise McNemar tests with Holm-Bonferroni
+correction, applied within each cell's own three-way comparison family,
+rather than an omnibus test like Cochran's Q. The reasoning is that the
+actual question at stake, which of three pairwise gaps a given reduction
+should be attributed to, backend or defense, is not answered by knowing
+merely that the three conditions differ somewhere; an omnibus test would
+still require a follow-up pairwise test to answer that question, making
+pairwise McNemar the more direct fit for this specific comparison, not
+simply a convenient reuse of an existing helper function. Every test in
+this benchmark computes an exact result directly from the hypergeometric
+or binomial distribution rather than a chi-square approximation, and
+none of them depend on \texttt{scipy} or \texttt{statsmodels}.
+
+\section{Attack Implementations}
+
+This benchmark deliberately selects three attacks that target
+structurally distinct surfaces rather than three variations on one
+underlying mechanism. Indirect prompt injection plants a wrong
+instruction; PoisonedRAG plants a wrong fact; Crescendo exploits
+multi-turn conversational state directly, with no corpus axis involved
+at all. Each attack's implementation below reflects that distinction.
+
+\subsection{Indirect Prompt Injection}
+
+This dissertation implements indirect prompt injection following
+\citet{greshake2023not}'s original attack class, embedding an
+instruction inside retrieved content rather than the user's own query.
+
+\subsection{Knowledge Poisoning}
+
+\citet{zou2025poisonedrag}'s PoisonedRAG is the knowledge-poisoning
+attack used here, shown in Figure~\ref{fig:poisonedrag-mechanism}: an
+auxiliary generation call against Nemotron-3-Ultra
+\citep{nvidia2025nemotron3ultra}, made through the NVIDIA NIM API
+\citep{nvidia2024nim}, crafts five adversarial passages per target query
+(the \texttt{adv5} configuration). This implementation inserts these
+passages into the FAISS index alongside genuine corpus content, where
+they compete for retrieval; poisoned passages reach 99.3\% retrieval
+precision on HotpotQA and 88.96\% on MS MARCO. Scoring checks whether
+the model's generated answer matches the poisoned target answer rather
+than the correct one.
+
+\begin{figure}[htbp]
+\centering
+\resizebox{\linewidth}{!}{%
+\begin{tikzpicture}[
+  box/.style={rectangle, draw, rounded corners, align=center, minimum width=2.6cm, minimum height=1cm, font=\footnotesize},
+  arr/.style={-Stealth, thick}
+]
+\node[box] (q) {Target\\Question};
+\node[box, right=0.6cm of q] (gen) {Poison-Gen.\\Call (NIM)};
+\node[box, right=0.6cm of gen] (pois) {5 Crafted\\Passages};
+\node[box, right=0.6cm of pois] (idx) {Injected into\\FAISS Index};
+\node[box, right=0.6cm of idx] (ret) {Retrieval};
+\node[box, right=0.6cm of ret] (score) {ASR\\Scoring};
+\draw[arr] (q) -- (gen);
+\draw[arr] (gen) -- (pois);
+\draw[arr] (pois) -- (idx);
+\draw[arr] (idx) -- (ret);
+\draw[arr] (ret) -- (score);
+\end{tikzpicture}%
+}
+\caption{PoisonedRAG attack mechanism as implemented in this dissertation.}
+\label{fig:poisonedrag-mechanism}
+\end{figure}
+
+\subsection{Multi-Turn Jailbreaking}
+
+\citet{russinovich2025great}'s Crescendo attack runs here as a five-turn
+escalation loop, shown in Figure~\ref{fig:crescendo-mechanism}. An
+attacker model opens with a benign-seeming first turn; after each target
+model reply, a refusal-detection check decides whether to generate the
+next escalating turn or, if a refusal is detected and a backtrack budget
+remains (capped at three attempts), regenerate the current turn with the
+refusal fed back as context. Once five turns complete or the backtrack
+budget runs out, a judge model, DeepSeek V4 Pro
+\citep{deepseekai2026deepseekv4}, scores the full conversation for
+attack success. Both the attacker and judge calls run through the NVIDIA
+NIM API, with a configuration-driven fallback to OpenRouter
+\citep{openrouter2024platform} when NIM's rate limit runs out, roughly
+40 requests per minute in practice, a limit reached often enough during
+real sweeps that the fallback path is exercised regularly rather than
+existing only as an unused safety net.
+
+\begin{figure}[htbp]
+\centering
+\resizebox{\linewidth}{!}{%
+\begin{tikzpicture}[
+  box/.style={rectangle, draw, rounded corners, align=center, minimum width=2.4cm, minimum height=0.9cm, font=\footnotesize},
+  dia/.style={diamond, draw, align=center, inner sep=1pt, font=\footnotesize},
+  arr/.style={-Stealth, thick}
+]
+\node[box] (start) {Turn 1:\\Benign Opener};
+\node[box, right=0.7cm of start] (reply) {Target\\Replies};
+\node[dia, right=0.9cm of reply] (check) {Refusal?};
+\node[box, above=0.7cm of check] (next) {Generate\\Next Turn};
+\node[box, below=0.7cm of check] (back) {Backtrack\\(max 3)};
+\node[box, right=0.9cm of check] (judge) {Judge:\\DeepSeek};
+\draw[arr] (start) -- (reply);
+\draw[arr] (reply) -- (check);
+\draw[arr] (check) -- node[right=2pt,font=\tiny]{No} (next);
+\draw[arr] (check) -- node[right=2pt,font=\tiny]{Yes, budget left} (back);
+\draw[arr] (next.west) -| (reply.north);
+\draw[arr] (back.west) -| (reply.south);
+\draw[arr] (check) -- node[above,font=\tiny]{5 turns} (judge);
+\end{tikzpicture}%
+}
+\caption{Crescendo multi-turn jailbreak mechanism as implemented in this dissertation.}
+\label{fig:crescendo-mechanism}
+\end{figure}
+
+\section{Defense Implementations}
+
+The three defenses tested here sample structurally different points in
+the pipeline rather than three settings of one idea: instruction-detection
+filters at the retrieval stage before a passage ever reaches the model,
+spotlighting restructures the prompt itself, and output-filter screens
+only after generation is already complete.
+
+This dissertation implements spotlighting \citep{hines2024defending} in
+its encoding-mode variant, which the original paper reports as the
+strongest configuration against indirect prompt injection. The
+instruction-detection defense uses \citet{protectai2024deberta}'s
+released \texttt{deberta-v3-base-prompt-injection-v2} classifier,
+fine-tuned from the DeBERTaV3 architecture \citep{he2023debertav3}; this
+is an industry release with no accompanying peer-reviewed paper of its
+own, and this dissertation maintains that distinction explicitly
+throughout. The output-filter defense uses Llama Guard 4
+\citep{metaai2025llamaguard4} to screen generated responses before they
+reach the user.
+
+\section{Infrastructure and Engineering Challenges}
+
+This dissertation's early development ran on Azure Container Apps,
+until that platform's own revision-update behavior caused a real
+billing incident: pushing to \texttt{main} automatically triggered a
+paid GPU deployment, producing an overnight restart-loop that consumed
+budget with no experiment attached to it. The fix required switching
+resource types entirely, to a Container Apps Job that does not
+auto-execute on image update, since no manual-trigger flag on the
+original resource type could prevent the automatic redeploy. A later
+audit found this fix had not yet actually reached the main branch at
+the point it was assumed complete; only reading the merged workflow
+file directly, rather than trusting the pull-request history, confirmed
+the fix had genuinely landed.
+
+The project subsequently moved to RunPod, which has no automatic
+CI/CD trigger at all; a pod only launches through a manual
+start-command override, confirmed by an explicit audit finding no
+RunPod reference anywhere in any CI workflow file. This introduced a
+different failure mode instead: a pod that finishes and never
+terminates continues billing indefinitely. The termination script
+written to prevent this surfaced five further real bugs during
+development, each found on a real pod rather than in a test. A pod
+that hung with zero utilization for over twelve minutes prompted a
+hard timeout wrapped around the whole process group, not just its
+direct child. A corpus-filtering environment variable that silently
+affected nothing required a fix, verified against real build output
+rather than a mock. A direct dependency conflict between the RunPod
+SDK and vLLM, incompatible \texttt{fastapi} version ranges that failed
+an actual Docker build, meant dropping the SDK entirely in favor of a
+plain HTTP call to RunPod's own termination endpoint. A termination
+call that itself failed and crashed the script, which RunPod's own
+orchestration then read as a signal to trigger a full, expensive
+re-run from scratch, established a rule that no failure path may exit
+the process; it idles instead, visibly, rather than triggering an
+unbounded retry loop. A follow-up smoke test then found this rule
+covered only the one failure site it was built for, not every failure
+path in the script, so a final refactor consolidated every failure
+into one required point, checked afterward with a line-by-line audit
+of the file.
+
+A separate integrity concern ran alongside these platform bugs:
+keeping cached retrieval indices and their metadata consistent with
+each other and with the data they were built from. Every cache write
+in this benchmark uses a temp-file-then-atomic-rename pattern, since
+an interrupted write must never leave a corpus's index and its
+metadata out of sync with each other. An initial attempt at closing
+this gap reordered which of the two files was written last, on the
+reasoning that this made a crash mid-write harmless; a follow-up
+review found this only relocated which file went stale on a crash
+rather than actually closing the window, and replaced it with a
+dedicated marker file written last, after both the index and metadata
+are already safely in place, so cache validity is checked against the
+marker's existence rather than either file's. That same marker was
+later extended to carry a corpus revision hash, closing a second gap
+the integrity audit itself surfaced: nothing had previously guaranteed
+that a cached index still matched a corpus if the upstream dataset
+snapshot changed. This sequence of platform and integrity bugs follows
+the same pattern as the defense-module bugs discussed next: each turned
+up only when real infrastructure ran under real conditions, at the
+platform-orchestration and data-integrity layer rather than the
+model-inference layer.
+
+Eight distinct, genuinely blocking bugs surfaced only when the defense
+modules ran against real model weights on real GPU hardware, six in the
+output-filter module and two in the instruction-detection module, every
+one of them invisible to this project's own automated test suite before
+that point.
+
+The first bug was a chat-template alternation crash: the output-filter
+module built its conversation for Llama-Guard-4-12B as a single,
+bare-string assistant turn, but the model's own chat template
+unconditionally requires the first message to come from a "user" role
+with content structured as a list of typed dictionaries, not a plain
+string. This failed on every call, deterministically, the first time the
+code path ran against the real tokenizer, because the project's test
+suite had stubbed out template application with a function that simply
+echoed the conversation back, never executing the real template logic
+that would have caught the mismatch. The second bug followed directly:
+once the chat template was fixed, a newer version of the
+\texttt{transformers} library changed a default so that requesting
+tokenized output with tensors returned a dictionary-like object rather
+than a bare tensor, and the existing code passed that object straight
+into generation, crashing deep inside the library on a missing
+\texttt{.shape} attribute. Both test stubs had been returning a bare
+tensor, masking the exact mismatch that broke on real hardware.
+
+Bugs three through six formed a single extended saga around the same
+underlying configuration mismatch: Llama-Guard-4-12B's published
+configuration disables a chunked-attention setting for long-context
+support, but the library's own config-processing logic computes
+per-layer attention types as though that setting were active regardless,
+producing three separate crashes at three different points in the
+generation path across successive attempted fixes. Each fix addressed
+one point of failure, and each turned out incomplete only when
+generation crashed again somewhere else: a version-fragile cache setting
+that worked locally but not in the actual Docker build, a copy of the
+model configuration that carried the right patch but that the model's
+own forward pass never actually read, and finally the model's live
+configuration object itself, patched once after loading, since the
+library's source shows this object is shared by reference through the
+entire model rather than copied. A fifth bug in this cluster surfaced
+immediately afterward: the guard model's own generation configuration
+bakes in a caching setting that silently overrides whatever the calling
+code passes, and the library's source shows an explicit override is the
+only way to actually clear a model-baked default.
+
+The instruction-detection module's two bugs were different in kind from
+the output-filter cluster. A real sweep against Llama-3.1-8B and
+HotpotQA appeared to hang for over fifty minutes with no log output,
+confirmed genuinely running rather than stalled; the classifier's
+tokenizer had no effective maximum length configured, which silently
+disabled truncation entirely whenever an explicit maximum was not also
+supplied, and HotpotQA's real passages, each concatenating an entire
+multi-document context, ran through the classifier's quadratic
+self-attention at full, unbounded length on CPU. After fixing this, a
+second bug remained: a single question still took over four minutes of
+wall-clock time but more than fifty-six minutes of aggregate CPU time, a
+ratio traced to an uncapped thread pool spawning far more threads than
+the classifier's small forward pass could actually use on a
+high-core-count host, fixed by capping the thread pool to one thread
+before the classifier was constructed.
+
+In every one of these eight cases, the project's existing test fixtures
+exercised the shape of the code path, confirming a function was called
+with roughly the right arguments, without ever running a real tokenizer,
+chat template, model configuration, or corpus passage through it,
+precisely the layer where each bug actually lived. This dissertation
+reports this as a citable methodological finding about testing
+LLM-adjacent infrastructure: a passing mocked test suite confirms that a
+system's control flow is correct, but says nothing about whether it will
+run correctly against the real artifacts, weights, tokenizers, chat
+templates, and hardware, it was written for. Several of these eight bugs
+would have produced a slow run rather than an obviously wrong one had
+they gone uncaught; the chat-template and cache-construction crashes,
+however, would have prevented the output-filter defense from producing
+any real defended-condition data at all, silently invalidating every
+number reported for that defense in Chapter 5 had they not been found
+before the real sweep ran.
+
+This same real-hardware discipline surfaced a second, statistically
+consequential problem: an inference-backend mismatch between baseline
+and defended runs that had been silently confounding one defense's
+headline result. Figure~\ref{fig:backend-confound} shows the general
+correction pattern applied to each defense-attack combination once the
+mismatch was identified, and Table~\ref{tab:backend-confound-results}
+reports the specific outcome for each.
+
+\begin{figure}[htbp]
+\centering
+\resizebox{0.85\linewidth}{!}{%
+\begin{tikzpicture}[
+  boxRed/.style={rectangle, draw, thick, rounded corners, align=center, minimum width=3.4cm, minimum height=1cm, font=\footnotesize},
+  boxAmber/.style={rectangle, draw, thick, rounded corners, align=center, minimum width=3.4cm, minimum height=1cm, font=\footnotesize},
+  arr/.style={-Stealth, thick}
+]
+\node[boxRed] (orig) {Original result\\(backend-mismatched)};
+\node[boxAmber, right=0.8cm of orig] (fix) {Backend-matched\\baseline built};
+\node[boxRed, right=0.8cm of fix] (corr) {Corrected result\\reported};
+\draw[arr] (orig) -- (fix);
+\draw[arr] (fix) -- (corr);
+\end{tikzpicture}%
+}
+\caption{General backend-confound correction pattern, applied per defense-attack combination.}
+\label{fig:backend-confound}
+\end{figure}
+
+% \begin{table}[htbp]
+% \centering
+% \setlength{\tabcolsep}{10pt}
+% \begin{tabular}{llll}
+% \toprule
+% \textbf{Defense / Attack} & \textbf{Before} & \textbf{After} & \textbf{Verdict} \\
+% \midrule
+% output\_filter / injection & 6/19 sig. & 0/19 sig. & Fully confounded \\
+% spotlighting / injection & 9/16 sig. & 9/16 sig.\textsuperscript{*} & Partially confounded \\
+% instruction\_detection / injection & 3/16 sig. & 0/16 sig.\textsuperscript{\dag} & Real, underpowered \\
+% PoisonedRAG (all 3 defenses) & 4/24 sig. & unchanged & Never confounded \\
+% \bottomrule
+% \end{tabular}
+% \caption{Backend-confound correction outcomes across defense-attack combinations.}
+% \label{tab:backend-confound-results}
+% \vspace{4pt}
+% \begin{minipage}{0.95\linewidth}
+% \footnotesize
+% \textit{Note.} \textsuperscript{*}Smaller effect sizes after correction, a real effect survives. \textsuperscript{\dag}At $n=40$; mechanism attribution confirms a classifier flag behind all 10 genuine blocks.
+% \end{minipage}
+% \end{table}
+
+Finally, a 297-assertion self-verification design in
+\texttt{notebooks/results\_analysis.ipynb} cross-checks every number
+reported in Chapter 5, recomputing each reported figure from the
+underlying result files and asserting it against the value transcribed
+into this dissertation's own working record, hard-failing with every
+mismatch listed together rather than stopping at the first, a safeguard
+intended to catch drift between the analysis code and the reported
+numbers automatically rather than relying on manual review.
+\FloatBarrier
