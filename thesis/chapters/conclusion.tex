@@ -2,16 +2,37 @@
 
 \section{Summary of Contributions}
 
-This dissertation set out to answer two questions: how vulnerable are
-small, open-source, instruction-tuned language models to indirect
-prompt injection, knowledge poisoning, and multi-turn jailbreaking when
-deployed in a retrieval-augmented generation pipeline, and how effective
-are practical, low-cost defenses at reducing that vulnerability, and at
-what cost. Chapter 5 answered both directly: vulnerability is real and
-substantial across every attack tested, but its shape depends entirely
-on which attack and, for two of three attacks, which corpus is in
-question, and exactly one of three defenses tested clears the bar of a
-confirmed, backend-isolated real effect, at a non-trivial utility cost.
+This dissertation set out to answer two questions. RQ1 asked how
+vulnerable small, open-source, instruction-tuned language models are to
+indirect prompt injection, knowledge poisoning, and multi-turn
+jailbreaking when deployed in a retrieval-augmented generation pipeline.
+RQ2 asked how effective practical, low-cost defenses are at reducing
+that vulnerability, and at what cost. Chapter 5 answered both directly:
+vulnerability is real and substantial across every attack tested, but
+its shape depends entirely on which attack and, for two of three
+attacks, which corpus is in question, and exactly one of three defenses
+tested clears the bar of a confirmed, backend-isolated real effect, at a
+non-trivial utility cost.
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.3}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{>{\RaggedRight\arraybackslash}p{2.9cm}>{\justifying\arraybackslash}p{10cm}}
+\toprule
+\textbf{Contribution} & \textbf{Summary} \\
+\midrule
+1. Threat taxonomy & Three-attack-family benchmark mapped onto Article 15(5), surfacing where the Article's illustrative list does not cleanly name a RAG-specific threat \\
+2. Testing discipline & Paired exact testing with Holm-Bonferroni correction, informing what adequate testing could mean under Article 15(2) \\
+3. Methodological warning & The backend-confound discovery, a citable caution against certifying a defense without holding its inference backend constant \\
+4. Mitigation reality check & An honest account of what three real, low-cost defenses achieve and fail to achieve against three distinct attacks \\
+\bottomrule
+\end{tabular}%
+}
+\caption{This dissertation's four contributions, summarized.}
+\label{tab:contributions}
+\end{table}
+\FloatBarrier
 
 Four contributions follow from that answer, summarized in
 Table~\ref{tab:contributions}. First, this dissertation establishes a
@@ -38,22 +59,6 @@ attack families: one mitigation structurally wrong for its threat class
 (\texttt{output\_filter} against PoisonedRAG), one costing severe
 utility for a real effect (spotlighting), and one mechanism-confirmed
 but statistically underpowered (\texttt{instruction\_detection}).
-
-\begin{table}[htbp]
-\centering
-\begin{tabular}{p{2.4cm}p{10.5cm}}
-\toprule
-\textbf{Contribution} & \textbf{Summary} \\
-\midrule
-1. Threat taxonomy & Three-attack-family benchmark mapped onto Article 15(5), surfacing where the Article's illustrative list does not cleanly name a RAG-specific threat \\
-2. Testing discipline & Paired exact testing with Holm-Bonferroni correction, informing what adequate testing could mean under Article 15(2) \\
-3. Methodological warning & The backend-confound discovery, a citable caution against certifying a defense without holding its inference backend constant \\
-4. Mitigation reality check & An honest account of what three real, low-cost defenses achieve and fail to achieve against three distinct attacks \\
-\bottomrule
-\end{tabular}
-\caption{This dissertation's four contributions, summarized.}
-\label{tab:contributions}
-\end{table}
 
 This dissertation does not claim more than this. It is not a legal
 compliance assessment, it is not a conformity assessment under Article
@@ -111,6 +116,42 @@ concrete worked example rather than a general assertion.
 The list below appears in full, not softened into vague hedges, since a
 reader evaluating this dissertation's evidence needs to see exactly
 where that evidence is thinner than the headline results might suggest.
+
+This dissertation's external validity is bounded by four design
+choices, and none of its findings should be read as claims about
+LLM/RAG robustness in general. The four target models were selected
+against five explicit criteria, a permissive open license, self-hostable
+weights, instruction tuning, a 4-12B parameter range, and a dense,
+non-mixture-of-experts architecture, which means every result here
+describes small, densely-parameterized, openly licensed models and no
+others; whether a substantially larger model, a mixture-of-experts
+architecture, or a closed, API-only model would show the same
+vulnerability patterns, the same model-versus-corpus-versus-neither
+axis structure, or the same defense trade-offs is an open question this
+dissertation does not test. The RAG configuration itself,
+FAISS similarity search over sentence-transformer embeddings, top-5
+retrieval, a plain retrieve-then-generate pipeline with no agentic tool
+use or multi-hop retrieval, is one architecture among several common
+ones; a different retrieval strategy, chunking approach, or embedding
+model could plausibly change how much surface indirect injection or
+PoisonedRAG actually finds to exploit. The two retrieval corpora,
+HotpotQA and MS MARCO, are general-domain question-answering datasets;
+specialized domains, medical, legal, or code-focused RAG deployments,
+were not tested here, and their answer structure, passage length, and
+factual density differ enough from these two corpora that the
+corpus-identity effect this dissertation found in PoisonedRAG cannot be
+assumed to hold, or fail to hold, in either direction on a domain this
+design never touched. Finally, each attack and defense is implemented
+as one version of a broader technique, this dissertation's injection
+templates, poison-generation prompt, and escalation strategy are not the
+only reasonable implementations of their respective attack families, and
+a differently engineered version of any of them might well produce
+different numbers on the same four models. Taken together, these four
+boundaries mean this dissertation's findings describe one benchmark's
+four models, one RAG architecture, two corpora, and three attack
+implementations, and generalizing beyond that combination is an
+empirical question for future work, not a conclusion this
+dissertation's own evidence supports.
 
 The \texttt{nq\_open} exclusion, confirmed and approved as a settled
 scope decision, still reduces this dissertation's corpus coverage for
@@ -179,5 +220,5 @@ boundary Chapter 5 names explicitly. Finally, model poisoning and
 confidentiality attacks, the two vulnerability classes Article 15(5)
 names that this dissertation does not test, are a natural extension of
 this dissertation's own threat taxonomy, since both operate on the model
-or its training data rather than at inference time, a genuinely
+or its training data rather than at inference time, an entirely
 different attack surface from all three families studied here.

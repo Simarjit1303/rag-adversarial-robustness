@@ -114,6 +114,7 @@ honesty about where the benchmark's evidence is strong and where it is
 silent, not forcing every result into a compliance verdict it cannot
 support.
 
+\clearpage
 \section{Contributions}
 
 This dissertation contributes:
@@ -237,3 +238,56 @@ summarizes the findings, states their limitations honestly, and closes
 with a discussion of what this benchmark contributes to, and cannot
 resolve about, the compliance-testing question this dissertation opened
 with.
+
+\clearpage
+\section{Conceptual Framework}
+
+Figure~\ref{fig:conceptual-framework} maps how this dissertation's core constructs relate to one another, 
+the research design itself, not the chapter order 
+Figure~\ref{fig:dissertation-structure} shows or the operational pipeline Chapter 4 describes
+
+\begin{figure}[htbp]
+\centering
+\resizebox{\linewidth}{!}{%
+\begin{tikzpicture}[
+  box/.style={rectangle, draw, rounded corners, align=center, minimum width=3.2cm, minimum height=1cm, font=\small},
+  wide/.style={rectangle, draw, rounded corners, align=center, minimum width=10cm, minimum height=1cm, font=\small},
+  arr/.style={-Stealth, thick},
+  node distance=0.5cm
+]
+\node[box] (inj) {Indirect Prompt\\Injection};
+\node[box, right=0.4cm of inj] (poi) {PoisonedRAG};
+\node[box, right=0.4cm of poi] (cre) {Crescendo};
+
+\node[wide, below=0.7cm of poi] (pipeline) {RAG Pipeline Under Test\\(4 Models $\times$ 2 Corpora)};
+
+\node[box, right=2.2cm of pipeline] (def) {Defense Mechanism\\(3 Tested)};
+
+\node[wide, below=0.7cm of pipeline] (outcome) {Outcome Measures:\\Attack Success Rate (ASR) and Utility Cost ($\Delta F_1$)};
+
+\node[wide, below=0.7cm of outcome] (stats) {Statistical Validation:\\Paired Exact Tests, Holm-Bonferroni Correction, Bootstrap CIs};
+
+\node[wide, below=0.7cm of stats] (article15) {Mapping to EU AI Act Article 15(5)};
+
+\draw[arr] (inj) -- (pipeline);
+\draw[arr] (poi) -- (pipeline);
+\draw[arr] (cre) -- (pipeline);
+\draw[arr] (def) -- (pipeline);
+\draw[arr] (pipeline) -- (outcome);
+\draw[arr] (outcome) -- (stats);
+\draw[arr] (stats) -- (article15);
+\end{tikzpicture}%
+}
+\caption{Conceptual framework: how attacks, defenses, and outcomes connect through this dissertation's statistical methodology to its Article 15 mapping.}
+\label{fig:conceptual-framework}
+\end{figure}
+\FloatBarrier
+
+Three attack families target the RAG pipeline from the top of the figure, each exploiting a structurally distinct surface, 
+as Chapter 2 details: indirect prompt injection manipulates retrieved content, PoisonedRAG corrupts the retrieval index itself 
+and Crescendo exploits multi-turn conversational state independently of retrieval altogether. 
+A tested defense mechanism intervenes on the pipeline from the side, positioned deliberately as a moderating influence on the attack's effect rather than a fourth attack surface. 
+The pipeline's response under each attack-defense combination produces two outcome measures, attack success rate and utility cost, and neither is reported as a raw number on its own. 
+Every reported figure passes through a statistical validation stage first, paired exact testing appropriate to the comparison structure, Holm-Bonferroni correction within each hypothesis family and 
+bootstrap confidence intervals for utility-cost estimates, detailed fully in Chapter 4, before it counts as a finding. Only validated findings feed into the final stage, this dissertation's mapping onto Article 15(5), 
+which is why that mapping in Chapter 5 can speak to the compliance-testing question with statistically confirmed evidence rather than figures no correction has touched.

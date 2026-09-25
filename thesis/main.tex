@@ -19,6 +19,10 @@
 \usepackage{hyperref}
 \usepackage[expansion=false]{microtype}
 \usepackage{placeins}
+\usepackage{array}
+\usepackage{ragged2e}
+\usepackage{float}
+\usepackage{amsmath}
 \graphicspath{{attachments/}{../results/figures/}}
 
 \makeatletter
@@ -48,7 +52,7 @@
 \newcommand{\student}{Simarjit Singh}
 \newcommand{\ghnumber}{GH1037512}
 \newcommand{\degree}{MSc Data Science, AI, and Digital Business}
-\newcommand{\supervisor}{Dr.-Ing. Loui Al Sardy}
+\newcommand{\supervisor}{Prof. Dr.-Ing. Loui Al Sardy}
 \newcommand{\submissiontime}{September 2026}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \renewcommand\maketitle{
@@ -77,6 +81,7 @@
 	}
 }
 \begin{document}
+\raggedbottom
 \sloppy
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -85,9 +90,10 @@
 \pagestyle{plain}
 \pagenumbering{roman}
 \maketitle
-\include{chapters/declaration}
-\include{chapters/dedication}
 \include{chapters/abstract}
+\include{chapters/declaration}
+\include{chapters/acknowledgments}
+\include{chapters/dedication}
 \tableofcontents
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 

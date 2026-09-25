@@ -19,15 +19,15 @@ the repository manually, as a permanent record.
 \centering
 \resizebox{\linewidth}{!}{%
 \begin{tikzpicture}[
-  box/.style={rectangle, draw, rounded corners, align=center, minimum width=2.6cm, minimum height=1cm, font=\footnotesize},
+  box/.style={rectangle, draw, rounded corners, align=center, minimum width=2.6cm, minimum height=1.6cm, font=\footnotesize},
   arr/.style={-Stealth, thick}
 ]
 \node[box] (push) {GitHub\\Push};
 \node[box, right=0.7cm of push] (ci) {CI Build\\$\rightarrow$ GHCR};
 \node[box, right=0.7cm of ci] (pod) {RunPod\\A100 Pod};
-\node[box, below=0.6cm of pod] (harness) {Harness:\\Loader, Index,\\Attacks, Defenses};
+\node[box, minimum width=3.6cm, below=0.6cm of pod] (harness) {Harness:\\Loader, Index,\\Attacks, Defenses};
 \node[box, right=0.7cm of pod] (results) {Results\\(JSONL/CSV)};
-\node[box, right=0.7cm of results] (watcher) {Watcher:\\Verify then\\Terminate};
+\node[box, minimum width=3.4cm, right=0.7cm of results] (watcher) {Watcher:\\Verify then\\Terminate};
 \node[box, below=0.6cm of results] (commit) {Committed\\to Repo};
 \draw[arr] (push) -- (ci);
 \draw[arr] (ci) -- (pod);
@@ -95,15 +95,15 @@ underwent academic peer review prior to release.
 
 \begin{table}[htbp]
 \centering
-\begin{tabular}{llc}
-\toprule
+\begin{tabular}{lll}
+\hline
 \textbf{Model} & \textbf{Source} & \textbf{Citation} \\
-\midrule
+\hline
 Llama-3.1-8B-Instruct & Meta AI & \citep{grattafiori2024llama3} \\
 Qwen3-8B & Alibaba & \citep{yang2025qwen3} \\
 Phi-4-mini-instruct & Microsoft & \citep{abouelenin2025phi4mini} \\
 Ministral-3-8B-Instruct-2512 & Mistral AI & \citep{mistralai2025ministral3} \\
-\bottomrule
+\hline
 \end{tabular}
 \caption{The four target language models benchmarked in this dissertation.}
 \label{tab:target-models}
@@ -155,29 +155,52 @@ basis on which every other model was chosen or excluded.
 \section{Statistical Testing Methodology}
 
 This benchmark matches every significance test to a specific comparison
-structure rather than applying one default test uniformly. McNemar's
-exact test \citep{mcnemar1947note}, a paired hypergeometric test,
+structure rather than applying one default test uniformly. 
+
+McNemar's exact test \citep{mcnemar1947note}, a paired hypergeometric test,
 handles every model-versus-model comparison within a fixed corpus or
 behavior set, since every model here is evaluated on the identical
 seeded item sample for a given corpus, a design where each observation
-has a natural counterpart in every other condition. Fisher's exact test
-\citep{fisher1922interpretation}, an unpaired test on independent
-proportions, covers cases where two conditions have no item-to-item
-correspondence, most notably corpus-versus-corpus comparisons, since
-HotpotQA and MS MARCO are different question sets entirely; treating
-them as paired would violate McNemar's core assumption. Holm-Bonferroni
-correction \citep{holm1979simple} operates within one family per
-genuinely distinct condition, one family per injection template rather
-than one pooled family across all templates, since each template is a
-mechanistically distinct delivery method and pooling would dilute
-statistical power between hypotheses that are not actually testing the
-same thing. A paired bootstrap \citep{efron1979bootstrap} with 10,000
-resamples produces every utility-drop confidence interval; this
-benchmark keeps that calculation structurally separate from the
-binary-outcome significance tests, so that "which models or corpora
-differ in vulnerability" and "how much utility does this attack cost"
-remain two cleanly separated statistical questions rather than one
-conflated metric.
+has a natural counterpart in every other condition:
+$$
+\chi^2 = \frac{(b-c)^2}{b+c}
+$$
+where $b$ and $c$ are the discordant pair counts. 
+
+Fisher's exact test \citep{fisher1922interpretation}, an
+unpaired test on independent proportions, covers cases where two
+conditions have no item-to-item correspondence, most notably
+corpus-versus-corpus comparisons, since HotpotQA and MS MARCO are
+different question sets entirely; treating them as paired would violate
+McNemar's core assumption. The test computes
+$$
+p = \frac{\binom{a+b}{a}\binom{c+d}{c}}{\binom{n}{a+c}}
+$$ 
+directly from the four contingency-table cell counts $a, b, c,$ and $d$.
+
+Holm-Bonferroni correction \citep{holm1979simple} operates within one
+family per genuinely distinct condition, one family per injection
+template rather than one pooled family across all templates, since each
+template is a mechanistically distinct delivery method and pooling
+would dilute statistical power between hypotheses that are not actually
+testing the same thing. Within a family of size $m$, it requires each
+ordered $p$-value to satisfy
+$$
+p_{(i)} \leq \frac{\alpha}{m-i+1}, \qquad p_{(1)} \leq \dots \leq p_{(m)}.
+$$
+
+A paired bootstrap \citep{efron1979bootstrap} with 10,000 resamples
+produces every utility-drop confidence interval; this benchmark keeps
+that calculation structurally separate from the binary-outcome
+significance tests, so that "which models or corpora differ in
+vulnerability" and "how much utility does this attack cost" remain two
+cleanly separated statistical questions rather than one conflated
+metric. Each interval is computed as
+$$
+\mathrm{CI}_{95\%} = \left[\hat{\theta}^*_{(0.025)},\ \hat{\theta}^*_{(0.975)}\right]
+$$
+where $\hat{\theta}^*_{(q)}$ is the $q$-th percentile of the bootstrap
+resample distribution of the statistic $\hat{\theta}$.
 
 The backend-confound isolation described in Chapter 5 called for a
 different choice again: pairwise McNemar tests with Holm-Bonferroni
@@ -463,8 +486,8 @@ reports the specific outcome for each.
 \centering
 \resizebox{0.85\linewidth}{!}{%
 \begin{tikzpicture}[
-  boxRed/.style={rectangle, draw=red!70!black, thick, fill=red!15, rounded corners, align=center, minimum width=3.4cm, minimum height=1cm, font=\footnotesize},
-  boxAmber/.style={rectangle, draw=orange!70!black, thick, fill=orange!15, rounded corners, align=center, minimum width=3.4cm, minimum height=1cm, font=\footnotesize},
+  boxRed/.style={rectangle, draw, thick, rounded corners, align=center, minimum width=3.4cm, minimum height=1cm, font=\footnotesize},
+  boxAmber/.style={rectangle, draw, thick, rounded corners, align=center, minimum width=3.4cm, minimum height=1cm, font=\footnotesize},
   arr/.style={-Stealth, thick}
 ]
 \node[boxRed] (orig) {Original result\\(backend-mismatched)};
@@ -478,21 +501,27 @@ reports the specific outcome for each.
 \label{fig:backend-confound}
 \end{figure}
 
-\begin{table}[htbp]
-\centering
-\begin{tabular}{lccl}
-\toprule
-\textbf{Defense / Attack} & \textbf{Before} & \textbf{After} & \textbf{Verdict} \\
-\midrule
-output\_filter / injection & 6/19 sig. & 0/19 sig. & Fully confounded \\
-spotlighting / injection & 9/16 sig. & 9/16 sig.\textsuperscript{*} & Partially confounded \\
-instruction\_detection / injection & 3/16 sig. & 0/16 sig.\textsuperscript{\dag} & Real, underpowered \\
-PoisonedRAG (all 3 defenses) & 4/24 sig. & unchanged & Never confounded \\
-\bottomrule
-\end{tabular}
-\caption{Backend-confound correction outcomes across defense-attack combinations. \textsuperscript{*}Smaller effect sizes after correction, a real effect survives. \textsuperscript{\dag}At n=40; mechanism attribution confirms a classifier flag behind all 10 genuine blocks.}
-\label{tab:backend-confound-results}
-\end{table}
+% \begin{table}[htbp]
+% \centering
+% \setlength{\tabcolsep}{10pt}
+% \begin{tabular}{llll}
+% \toprule
+% \textbf{Defense / Attack} & \textbf{Before} & \textbf{After} & \textbf{Verdict} \\
+% \midrule
+% output\_filter / injection & 6/19 sig. & 0/19 sig. & Fully confounded \\
+% spotlighting / injection & 9/16 sig. & 9/16 sig.\textsuperscript{*} & Partially confounded \\
+% instruction\_detection / injection & 3/16 sig. & 0/16 sig.\textsuperscript{\dag} & Real, underpowered \\
+% PoisonedRAG (all 3 defenses) & 4/24 sig. & unchanged & Never confounded \\
+% \bottomrule
+% \end{tabular}
+% \caption{Backend-confound correction outcomes across defense-attack combinations.}
+% \label{tab:backend-confound-results}
+% \vspace{4pt}
+% \begin{minipage}{0.95\linewidth}
+% \footnotesize
+% \textit{Note.} \textsuperscript{*}Smaller effect sizes after correction, a real effect survives. \textsuperscript{\dag}At $n=40$; mechanism attribution confirms a classifier flag behind all 10 genuine blocks.
+% \end{minipage}
+% \end{table}
 
 Finally, a 297-assertion self-verification design in
 \texttt{notebooks/results\_analysis.ipynb} cross-checks every number
