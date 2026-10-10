@@ -1,0 +1,72 @@
+name: Build Docker image (GHCR)
+
+# Manual-only since the dissertation was submitted (October 2026).
+# During the experiments this ran on every push to main and produced the
+# image each RunPod sweep pulled. The research code is now frozen, and
+# rebuilding a ~10 GB image for documentation-only commits wastes runner
+# time and registry storage, so the push trigger is switched off.
+#
+# Rebuild for any branch or tag: Actions tab -> "Build Docker image (GHCR)" ->
+# Run workflow (or: gh workflow run build-image.yml --ref <branch>).
+# To restore automatic builds, add back under `on:`:
+#   push:
+#     branches: [main]
+# All dependencies, model revisions and corpus revisions are pinned, so a
+# rebuild from a given commit reproduces the environment of that commit.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout to the branch
+        uses: actions/checkout@v4
+
+      # 2026-09-04: the build failed with "No space left on device" during
+      # pip install (torch+vllm+transformers+datasets+sentence-transformers
+      # is several GB even after removing the unused langchain dependency
+      # tree -- see requirements.txt's removal note). Larger GitHub-hosted
+      # runners aren't an option here: confirmed via `gh api
+      # repos/.../actions/hosted-runners` (404) that they require an
+      # organization on GitHub Team/Enterprise Cloud, not available for a
+      # personal-account repo. Hand-written rather than a third-party
+      # action (e.g. jlumbroso/free-disk-space): this repo already prefers
+      # owning the exact mechanism over a dependency with its own trust/
+      # maintenance surface -- see scripts/run_and_terminate.py's direct
+      # `requests.delete` call instead of the `runpod` SDK, for the same
+      # reason. These are ubuntu-latest's standard large preinstalled
+      # toolchains, all unrelated to this Python/Docker build.
+      - name: Free disk space (remove unrelated preinstalled toolchains)
+        run: |
+          echo "Before cleanup:"
+          df -h /
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          docker image prune -af || true
+          echo "After cleanup:"
+          df -h /
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image to GHCR
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ghcr.io/simarjit1303/rag-adversarial-robustness/thesis:${{ github.sha }}

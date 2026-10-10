@@ -332,13 +332,10 @@ as a result — only once, as excluded leakage evidence (fig02).
 
 ### Cloud deployment (RunPod A100 + GHCR)
 
-This is how the project actually runs at scale, not just local execution.
-Pushing to `main` builds a Docker image and pushes it to GHCR — nothing
-more (the workflow also contains an Azure Container-Apps-Job update step
-left over from an earlier deployment target; it's dead — it fails
-harmlessly since that Job was never provisioned, and the GHCR build above
-it succeeds independently). A human then pulls that image on a RunPod A100
-pod and sets the pod template's **"Start command" override** to:
+This is how the project ran at scale during the experiments, not just
+local execution. Each push to `main` built a Docker image and pushed it to
+GHCR. A human then pulled that image on a RunPod A100 pod and set the pod
+template's **"Start command" override** to:
 
 ```bash
 python -m scripts.run_and_terminate
@@ -349,6 +346,26 @@ files exist and are non-empty, and terminates the pod **only on confirmed
 success** — a failed or hung run is left alive for inspection rather than
 silently billing forever or erasing its own evidence. See
 `THESIS_ARCHITECTURE.md` Section 3 for the full infrastructure diagram.
+
+### Reproducing or extending this work
+
+The dissertation is submitted and the research code is frozen, so the
+image build no longer runs on every push (documentation-only commits
+don't need a new ~10 GB image). Nothing about reproducibility changes:
+
+- **Rebuild the image for any branch or tag:** Actions tab → **Build Docker image
+  (GHCR)** → *Run workflow*, or `gh workflow run build-image.yml --ref <branch>`.
+  Python, torch, vLLM and every other dependency are pinned in
+  `requirements.txt` and the `Dockerfile`; models and corpora are pinned to
+  exact HuggingFace revisions in `config.py`, so a rebuild reproduces the
+  environment of that commit.
+- **Use the existing image:** the image built from the final code is kept
+  in the registry as
+  `ghcr.io/simarjit1303/rag-adversarial-robustness/thesis:62a4a09ac1c578da05f7b8804bfba9e7b395a6be`
+  (the research code is identical to the submitted version).
+- **Restore automatic builds** if you continue development: add
+  `push: branches: [main]` back under `on:` in
+  `.github/workflows/build-image.yml` (the file's header comment shows how).
 
 ---
 

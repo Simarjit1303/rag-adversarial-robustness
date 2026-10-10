@@ -19,9 +19,11 @@ on:
         description: "Number of most recent image versions to keep"
         required: false
         default: "5"
-  schedule:
-    # Weekly is plenty for a repo with a handful of deploys a day at most.
-    - cron: "0 3 * * 0"
+  # Weekly schedule removed after submission (October 2026): image builds
+  # are now manual-only, and the GHCR_CLEANUP_TOKEN secret this needs was
+  # never created, so the scheduled run only failed. To restore, add:
+  #   schedule:
+  #     - cron: "0 3 * * 0"
 
 permissions:
   packages: write
