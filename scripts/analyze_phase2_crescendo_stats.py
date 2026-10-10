@@ -1,7 +1,7 @@
 """
 Phase 2 Attack 3 (Crescendo) statistical analysis.
 
-Reads phase2_crescendo_real_sweep/ directly by path -- same pattern as
+Reads phase2_crescendo_results/ directly by path -- same pattern as
 scripts/analyze_phase2_injection_stats.py and
 scripts/analyze_phase2_poisonedrag_stats.py. Unlike those two attacks,
 Crescendo has no RAG retrieval step and no per-corpus dimension: one
@@ -32,7 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from config import MODELS  # noqa: E402
 from evaluation.stats import holm_bonferroni, mcnemar_exact, paired_bootstrap_ci  # noqa: E402
 
-RESULTS_DIR = Path("phase2_crescendo_real_sweep")
+RESULTS_DIR = Path("phase2_crescendo_results")
 MAX_TURNS = 5
 ENGINE = "hf"
 

@@ -5,7 +5,7 @@ n=100 behaviors per model (sampled once from the combined `jbb_behaviors`
 (100) + `harmbench` (400) pool, `sample_behaviors(pool, sample_size=100,
 seed=SEED)` — the identical 100 behaviors, in the identical order, for
 every model, since the sampling call is seeded and runs once per model
-against the same pool). Raw data: `phase2_crescendo_real_sweep/`. Analysis
+against the same pool). Raw data: `phase2_crescendo_results/`. Analysis
 script: `scripts/analyze_phase2_crescendo_stats.py` (re-runnable, prints
 the full per-model table, every significance test below, and the sample
 backtrack sequences).
