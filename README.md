@@ -220,6 +220,18 @@ rag-adversarial-robustness/
 under `docs/archive/task-briefs/` — real engineering narrative, consolidated
 into `THESIS_MASTER_RECORD.md` Sections 3 and 7 rather than duplicated here.)
 
+> **Content notice: harmful model outputs in the Crescendo results.**
+> `phase2_crescendo_results/crescendo_raw_*.jsonl` and the Crescendo files
+> in `phase3_defense_results/` contain full, unredacted multi-turn
+> conversations generated from harmful-behaviour prompts (JailbreakBench
+> JBB-Behaviors and HarmBench). Many of these conversations were judged
+> successful jailbreaks, so the assistant turns can include harmful text.
+> They are kept only so the reported attack-success rates can be
+> reproduced and checked. The dissertation itself reports only rates,
+> confidence intervals and behaviour categories, and quotes no harmful
+> completion. Use these files for safety research only, and do not
+> redistribute their contents outside that context.
+
 ---
 
 ## Setup / running instructions
