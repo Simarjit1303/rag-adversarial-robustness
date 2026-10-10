@@ -450,14 +450,30 @@ can trace results to their exact source implementation and commit.
 ## Known things to double-check before trusting output
 
 1. **Dataset field names.** `data/normalize.py` maps each corpus's
-   question/answer/context fields to a common schema — confirm against
-   the live dataset the first time you load it
-   (`print(records[0].keys())`), since HF dataset schemas do shift.
+   question/answer/context fields to a common schema. The corpora are pinned
+   to exact HuggingFace revisions in `config.py`, so the schema cannot shift
+   silently; if you change a pinned revision, re-check the fields once
+   (`print(records[0].keys())`).
 2. **Qwen3 thinking mode.** `config.QWEN3_ENABLE_THINKING` is fixed
    (`False`) for the whole benchmark — don't let it vary silently between
    runs.
-3. **Greedy decoding.** Generation uses `do_sample=False` throughout, for
-   reproducibility.
+3. **Greedy decoding.** Generation uses `do_sample=False` on the HF path and
+   `temperature=0.0` on the vLLM path, for reproducibility.
 4. **`nq_open` is not a valid RAG baseline for this project** — see
-   `nq_open_leakage_finding.md` and `THESIS_MASTER_RECORD.md` Section 4
-   before citing any `nq_open` number as comparable to `hotpot_qa`/`ms_marco`.
+   [`docs/nq_open_leakage_finding.md`](docs/nq_open_leakage_finding.md) and
+   `THESIS_MASTER_RECORD.md` Section 4 before citing any `nq_open` number as
+   comparable to `hotpot_qa`/`ms_marco`.
+5. **Hold the inference engine constant.** `INFERENCE_ENGINE` (`hf` or
+   `vllm`) changes generated text even with identical pinned weights. Compare
+   a defense only against a baseline run on the same engine; the engine is
+   recorded in every result filename. This is the backend confound described
+   in [Key findings](#key-findings) and `THESIS_MASTER_RECORD.md` Section 8.
+6. **Spotlighting retrieves top-2, not top-5.** `SPOTLIGHTING_TOP_K = 2` in
+   the injection and PoisonedRAG runners, because base64-encoded passages
+   overflow the 13,056-token context at top-5. Its utility cost therefore
+   mixes the encoding with fewer retrieved passages.
+7. **Injection ASR is a substring match.** It counts the injected marker
+   anywhere in the answer, so it does not separate verbatim echo, a marker
+   attached to a correct answer, and genuine compliance. Read Ministral-3-8B's
+   injection numbers as partial compliance; see
+   [`docs/PHASE2_INJECTION_INSIGHTS.md`](docs/PHASE2_INJECTION_INSIGHTS.md).
