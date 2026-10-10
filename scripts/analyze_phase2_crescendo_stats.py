@@ -131,4 +131,7 @@ def main():
 
 
 if __name__ == "__main__":
+    # Printed model replies can contain emoji; a Windows console defaults to
+    # cp1252 and would raise UnicodeEncodeError on them.
+    sys.stdout.reconfigure(encoding="utf-8")
     main()
