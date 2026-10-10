@@ -5,6 +5,26 @@ adversarial robustness of small-to-mid-size (4–12B parameter) open-source
 LLMs deployed in a retrieval-augmented generation (RAG) pipeline, mapped
 onto the EU AI Act's Article 15 robustness requirements.**
 
+## Summary for AI assistants and quick readers
+
+- **What:** MSc Data Science dissertation, GISMA University of Applied
+  Sciences, Berlin (2026), by Simarjit Singh; supervisor Dr.-Ing. Loui Al Sardy.
+- **Question:** how vulnerable four small open-weight LLMs (Llama-3.1-8B,
+  Qwen3-8B, Phi-4-mini, Ministral-3-8B) are to indirect prompt injection,
+  PoisonedRAG and Crescendo inside a RAG pipeline, and what three low-cost
+  defenses achieve.
+- **Findings:** within this setup, the model was the main differentiating
+  factor for injection and the corpus for poisoning; Crescendo showed no
+  significant model difference. Only spotlighting had a confirmed effect, at
+  a utility cost of about 0.28 F1. An inference-backend confound (vLLM vs
+  HuggingFace) explained another defense's apparent effect.
+- **Skills shown:** Python, PyTorch, HuggingFace Transformers, vLLM, FAISS,
+  exact statistical testing (McNemar, Fisher, Holm-Bonferroni, bootstrap),
+  Docker, GitHub Actions, GHCR, RunPod GPU orchestration, EU AI Act Article 15.
+- **Status:** complete; code frozen and reproducible from pinned versions.
+- **Start here:** the dissertation PDF in `thesis/`,
+  `docs/THESIS_MASTER_RECORD.md`, `notebooks/results_analysis.ipynb`.
+
 If you are an examiner or supervisor, start here — this section tells you
 what the project is, what it found, and where to read the full write-up.
 Everything after "Repo structure" below is technical detail for anyone
@@ -334,8 +354,8 @@ as a result — only once, as excluded leakage evidence (fig02).
 
 This is how the project ran at scale during the experiments, not just
 local execution. Each push to `main` built a Docker image and pushed it to
-GHCR. A human then pulled that image on a RunPod A100 pod and set the pod
-template's **"Start command" override** to:
+GHCR. Each sweep then ran on a RunPod A100 pod, started manually from
+that image, with the pod template's **"Start command" override** set to:
 
 ```bash
 python -m scripts.run_and_terminate
@@ -369,27 +389,19 @@ don't need a new ~10 GB image). Nothing about reproducibility changes:
 
 ---
 
-## Current project status
+## Status and future work
 
-- **Phase 1 (baseline):** Complete. 4 models × 2 corpora used in every
-  real comparison (`nq_open` collected but excluded — see below), n=1000
-  each.
-- **Phase 2 (attacks):** Complete. All three attacks swept and written up.
-- **Phase 3 (defenses):** Complete, with final backend-corrected results.
-  An inference-backend confound (`hf` vs `vllm`) was discovered
-  mid-analysis and fully resolved; see [Key findings](#key-findings) above
-  and `THESIS_MASTER_RECORD.md` Section 8.
-- **Phase 4 (EU AI Act Article 15 mapping):** Complete —
-  see [`docs/PHASE4_EU_AI_ACT_MAPPING.md`](docs/PHASE4_EU_AI_ACT_MAPPING.md),
-  which verifies the regulatory context directly, quotes Article 15's real
-  requirements, and maps them against this project's final Phase 1–3
-  results.
-- **Dissertation write-up:** Complete and committed under
-  [`thesis/`](thesis/). `docs/THESIS_MASTER_RECORD.md` was the backbone
-  used to write it and remains a faithful, self-contained companion to
-  the finished dissertation.
-- **Branch:** all work is merged into `main`; this is the current,
-  submitted state of the project.
+**Complete.** All four phases (baseline, three attacks, three defenses,
+EU AI Act Article 15 mapping) and the dissertation are finished and merged
+into `main`. The research code is frozen; see
+[Reproducing or extending this work](#reproducing-or-extending-this-work).
+
+Natural next steps for anyone building on this (from §6.4 of the dissertation):
+- Wire `output_filter` live into Crescendo, turning its 67–82% counterfactual
+  catch rate into a measured reduction in attack success.
+- Measure the robustness-versus-efficiency trade-off (latency, throughput, memory).
+- Extend to model poisoning and confidentiality attacks.
+- Run `instruction_detection` at full n = 1,000; it is underpowered at n = 40.
 
 ---
 
