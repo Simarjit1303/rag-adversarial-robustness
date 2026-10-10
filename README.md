@@ -416,6 +416,24 @@ stated inclusion policy.
 
 ---
 
+## Responsible use
+
+This repository contains working attack implementations (indirect prompt
+injection, PoisonedRAG, Crescendo) and the raw outputs they produced. They
+are published for defensive research and evaluation, so that others can
+reproduce the results and test their own defenses.
+
+- Use the attack code only against models and systems you own or are
+  explicitly authorised to test.
+- The Crescendo result files contain unredacted harmful model outputs (see
+  the content notice above); keep them in a research context and do not
+  redistribute their contents.
+- If you build on this work, cite the dissertation (see below or GitHub's
+  "Cite this repository" button). The MIT license also requires keeping the
+  copyright notice in any copy or substantial portion of the code.
+
+---
+
 ## How to cite this work
 
 If you use this benchmark, its results, or its methodology in your own

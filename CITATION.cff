@@ -1,0 +1,32 @@
+cff-version: 1.2.0
+message: "If you use this benchmark, its results, or its methodology, please cite the dissertation as below."
+title: "Adversarial Robustness of Open-Source RAG Pipelines"
+type: software
+authors:
+  - family-names: Singh
+    given-names: Simarjit
+    orcid: "https://orcid.org/0009-0000-0917-3934"
+license: MIT
+repository-code: "https://github.com/Simarjit1303/rag-adversarial-robustness"
+keywords:
+  - retrieval-augmented generation
+  - adversarial robustness
+  - prompt injection
+  - knowledge poisoning
+  - jailbreak
+  - LLM security
+  - EU AI Act
+preferred-citation:
+  type: thesis
+  thesis-type: "MSc dissertation"
+  title: "Adversarial Robustness of Open-Source RAG Pipelines"
+  authors:
+    - family-names: Singh
+      given-names: Simarjit
+      orcid: "https://orcid.org/0009-0000-0917-3934"
+  institution:
+    name: "GISMA University of Applied Sciences"
+    city: Berlin
+    country: DE
+  year: 2026
+  url: "https://github.com/Simarjit1303/rag-adversarial-robustness"
