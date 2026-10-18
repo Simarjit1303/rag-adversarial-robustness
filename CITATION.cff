@@ -6,6 +6,7 @@ authors:
   - family-names: Singh
     given-names: Simarjit
     orcid: "https://orcid.org/0009-0000-0917-3934"
+    affiliation: "GISMA University of Applied Sciences"
 license: MIT
 repository-code: "https://github.com/Simarjit1303/rag-adversarial-robustness"
 keywords:

@@ -1,5 +1,7 @@
 # Adversarial Robustness of Open-Source RAG Pipelines
 
+**Author:** Simarjit Singh ([ORCID 0009-0000-0917-3934](https://orcid.org/0009-0000-0917-3934)) · GISMA University of Applied Sciences
+
 **MSc dissertation (GISMA University of Applied Sciences) benchmarking the
 adversarial robustness of small-to-mid-size (4–12B parameter) open-source
 LLMs deployed in a retrieval-augmented generation (RAG) pipeline, mapped
@@ -450,6 +452,7 @@ work, please cite the dissertation directly.
 ```bibtex
 @mastersthesis{singh2026ragrobustness,
   author = {Singh, Simarjit},
+  orcid  = {0009-0000-0917-3934},
   title  = {Adversarial Robustness of Open-Source RAG Pipelines},
   school = {GISMA University of Applied Sciences},
   year   = {2026},
